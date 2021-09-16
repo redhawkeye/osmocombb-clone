@@ -1,0 +1,388 @@
+   1              		.file	"rffe_gta0x_triband.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text.rffe_mode,"ax",%progbits
+  12              		.align	2
+  13              		.global	rffe_mode
+  15              	rffe_mode:
+  16              	.LFB3:
+  17              		.file 1 "board/gta0x/rffe_gta0x_triband.c"
+   1:board/gta0x/rffe_gta0x_triband.c **** #include <stdint.h>
+   2:board/gta0x/rffe_gta0x_triband.c **** #include <stdio.h>
+   3:board/gta0x/rffe_gta0x_triband.c **** 
+   4:board/gta0x/rffe_gta0x_triband.c **** #include <debug.h>
+   5:board/gta0x/rffe_gta0x_triband.c **** #include <memory.h>
+   6:board/gta0x/rffe_gta0x_triband.c **** #include <rffe.h>
+   7:board/gta0x/rffe_gta0x_triband.c **** #include <calypso/tsp.h>
+   8:board/gta0x/rffe_gta0x_triband.c **** #include <rf/trf6151.h>
+   9:board/gta0x/rffe_gta0x_triband.c **** 
+  10:board/gta0x/rffe_gta0x_triband.c **** /* This is a value that has been measured on the C123 by Harald: 71dBm,
+  11:board/gta0x/rffe_gta0x_triband.c ****    it is the difference between the input level at the antenna and what
+  12:board/gta0x/rffe_gta0x_triband.c ****    the DSP reports, subtracted by the total gain of the TRF6151 */
+  13:board/gta0x/rffe_gta0x_triband.c **** #define SYSTEM_INHERENT_GAIN	71
+  14:board/gta0x/rffe_gta0x_triband.c **** 
+  15:board/gta0x/rffe_gta0x_triband.c **** /* describe how the RF frontend is wired on the Openmoko GTA0x boards */
+  16:board/gta0x/rffe_gta0x_triband.c **** 
+  17:board/gta0x/rffe_gta0x_triband.c **** #define		RITA_RESET	TSPACT(0)	/* Reset of the Rita TRF6151 */
+  18:board/gta0x/rffe_gta0x_triband.c **** #define		PA_ENABLE	TSPACT(9)	/* Enable the Power Amplifier */
+  19:board/gta0x/rffe_gta0x_triband.c **** #define		GSM_TXEN	TSPACT(3)	/* PA GSM switch, low-active */
+  20:board/gta0x/rffe_gta0x_triband.c **** 
+  21:board/gta0x/rffe_gta0x_triband.c **** /* All VCn controls are low-active */
+  22:board/gta0x/rffe_gta0x_triband.c **** #define		ASM_VC1		TSPACT(2)	/* Antenna switch VC1 */
+  23:board/gta0x/rffe_gta0x_triband.c **** #define		ASM_VC2		TSPACT(1)	/* Antenna switch VC2 */
+  24:board/gta0x/rffe_gta0x_triband.c **** #define		ASM_VC3		TSPACT(4)	/* Antenna switch VC3 */
+  25:board/gta0x/rffe_gta0x_triband.c **** 
+  26:board/gta0x/rffe_gta0x_triband.c **** #define		IOTA_STROBE	TSPEN(0)	/* Strobe for the Iota TSP */
+  27:board/gta0x/rffe_gta0x_triband.c **** #define		RITA_STROBE	TSPEN(2)	/* Strobe for the Rita TSP */
+  28:board/gta0x/rffe_gta0x_triband.c **** 
+  29:board/gta0x/rffe_gta0x_triband.c **** /* switch RF Frontend Mode */
+  30:board/gta0x/rffe_gta0x_triband.c **** void rffe_mode(enum gsm_band band, int tx)
+  31:board/gta0x/rffe_gta0x_triband.c **** {
+  18              		.loc 1 31 0
+  19              		.cfi_startproc
+  20              		@ args = 0, pretend = 0, frame = 0
+  21              		@ frame_needed = 0, uses_anonymous_args = 0
+  22              	.LVL0:
+  23 0000 10402DE9 		stmfd	sp!, {r4, lr}
+  24              	.LCFI0:
+  25              		.cfi_def_cfa_offset 8
+  26              		.loc 1 31 0
+  27 0004 0040A0E1 		mov	r4, r0
+  28              		.cfi_offset 14, -4
+  29              		.cfi_offset 4, -8
+  32:board/gta0x/rffe_gta0x_triband.c **** 	uint16_t tspact = tsp_act_state();
+  30              		.loc 1 32 0
+  31 0008 FEFFFFEB 		bl	tsp_act_state
+  32              	.LVL1:
+  33:board/gta0x/rffe_gta0x_triband.c **** 
+  34:board/gta0x/rffe_gta0x_triband.c **** 	/* First we mask off all bits from the state cache */
+  35:board/gta0x/rffe_gta0x_triband.c **** 	tspact &= ~PA_ENABLE;
+  36:board/gta0x/rffe_gta0x_triband.c **** 	tspact &= ~GSM_TXEN;
+  33              		.loc 1 36 0
+  34 000c 14309FE5 		ldr	r3, .L4
+  35 0010 033000E0 		and	r3, r0, r3
+  36              	.LVL2:
+  37:board/gta0x/rffe_gta0x_triband.c **** 	tspact |= ASM_VC1 | ASM_VC2 | ASM_VC3; /* low-active */
+  37              		.loc 1 37 0
+  38 0014 160083E3 		orr	r0, r3, #22
+  39              	.LVL3:
+  38:board/gta0x/rffe_gta0x_triband.c **** 
+  39:board/gta0x/rffe_gta0x_triband.c **** 	switch (band) {
+  40              		.loc 1 39 0
+  41 0018 080054E3 		cmp	r4, #8
+  40:board/gta0x/rffe_gta0x_triband.c **** 	case GSM_BAND_850:
+  41:board/gta0x/rffe_gta0x_triband.c **** 	case GSM_BAND_900:
+  42:board/gta0x/rffe_gta0x_triband.c **** 	case GSM_BAND_1800:
+  43:board/gta0x/rffe_gta0x_triband.c **** 		break;
+  44:board/gta0x/rffe_gta0x_triband.c **** 	case GSM_BAND_1900:
+  45:board/gta0x/rffe_gta0x_triband.c **** 		tspact &= ~ASM_VC2;
+  42              		.loc 1 45 0
+  43 001c 0200C003 		biceq	r0, r0, #2
+  44              	.LVL4:
+  46:board/gta0x/rffe_gta0x_triband.c **** 		break;
+  47:board/gta0x/rffe_gta0x_triband.c **** 	default:
+  48:board/gta0x/rffe_gta0x_triband.c **** 		/* TODO return/signal error here */
+  49:board/gta0x/rffe_gta0x_triband.c **** 		break;
+  50:board/gta0x/rffe_gta0x_triband.c **** 	}
+  51:board/gta0x/rffe_gta0x_triband.c **** 
+  52:board/gta0x/rffe_gta0x_triband.c **** #ifdef CONFIG_TX_ENABLE
+  53:board/gta0x/rffe_gta0x_triband.c **** 	/* Then we selectively set the bits on, if required */
+  54:board/gta0x/rffe_gta0x_triband.c **** 	if (tx) {
+  55:board/gta0x/rffe_gta0x_triband.c **** 		switch (band) {
+  56:board/gta0x/rffe_gta0x_triband.c **** 		case GSM_BAND_850:
+  57:board/gta0x/rffe_gta0x_triband.c **** 		case GSM_BAND_900:
+  58:board/gta0x/rffe_gta0x_triband.c **** 			tspact &= ~ASM_VC3;
+  59:board/gta0x/rffe_gta0x_triband.c **** 			break;
+  60:board/gta0x/rffe_gta0x_triband.c **** 		case GSM_BAND_1800:
+  61:board/gta0x/rffe_gta0x_triband.c **** 		case GSM_BAND_1900:
+  62:board/gta0x/rffe_gta0x_triband.c **** 			tspact &= ~ASM_VC1;
+  63:board/gta0x/rffe_gta0x_triband.c **** 			tspact |= ASM_VC2;
+  64:board/gta0x/rffe_gta0x_triband.c **** 			tspact |= GSM_TXEN;
+  65:board/gta0x/rffe_gta0x_triband.c **** 			break;
+  66:board/gta0x/rffe_gta0x_triband.c **** 		default:
+  67:board/gta0x/rffe_gta0x_triband.c **** 			break;
+  68:board/gta0x/rffe_gta0x_triband.c **** 		}
+  69:board/gta0x/rffe_gta0x_triband.c **** 		tspact |= PA_ENABLE;
+  70:board/gta0x/rffe_gta0x_triband.c **** 	}
+  71:board/gta0x/rffe_gta0x_triband.c **** #endif /* TRANSMIT_SUPPORT */
+  72:board/gta0x/rffe_gta0x_triband.c **** 
+  73:board/gta0x/rffe_gta0x_triband.c **** 	tsp_act_update(tspact);
+  74:board/gta0x/rffe_gta0x_triband.c **** }
+  45              		.loc 1 74 0
+  46 0020 1040BDE8 		ldmfd	sp!, {r4, lr}
+  73:board/gta0x/rffe_gta0x_triband.c **** 	tsp_act_update(tspact);
+  47              		.loc 1 73 0
+  48 0024 FEFFFFEA 		b	tsp_act_update
+  49              	.LVL5:
+  50              	.L5:
+  51              		.align	2
+  52              	.L4:
+  53 0028 F7FD0000 		.word	65015
+  54              		.cfi_endproc
+  55              	.LFE3:
+  57              		.section	.text.rffe_get_rx_ports,"ax",%progbits
+  58              		.align	2
+  59              		.global	rffe_get_rx_ports
+  61              	rffe_get_rx_ports:
+  62              	.LFB4:
+  75:board/gta0x/rffe_gta0x_triband.c **** 
+  76:board/gta0x/rffe_gta0x_triband.c **** /* Returns RF wiring */
+  77:board/gta0x/rffe_gta0x_triband.c **** uint32_t rffe_get_rx_ports(void)
+  78:board/gta0x/rffe_gta0x_triband.c **** {
+  63              		.loc 1 78 0
+  64              		.cfi_startproc
+  65              		@ args = 0, pretend = 0, frame = 0
+  66              		@ frame_needed = 0, uses_anonymous_args = 0
+  67              		@ link register save eliminated.
+  79:board/gta0x/rffe_gta0x_triband.c **** 	return (1 << PORT_LO) | (1 << PORT_DCS1800) | (1 << PORT_PCS1900);
+  80:board/gta0x/rffe_gta0x_triband.c **** }
+  68              		.loc 1 80 0
+  69 0000 3100A0E3 		mov	r0, #49
+  70 0004 1EFF2FE1 		bx	lr
+  71              		.cfi_endproc
+  72              	.LFE4:
+  74              		.section	.text.rffe_get_tx_ports,"ax",%progbits
+  75              		.align	2
+  76              		.global	rffe_get_tx_ports
+  78              	rffe_get_tx_ports:
+  79              	.LFB5:
+  81:board/gta0x/rffe_gta0x_triband.c **** 
+  82:board/gta0x/rffe_gta0x_triband.c **** uint32_t rffe_get_tx_ports(void)
+  83:board/gta0x/rffe_gta0x_triband.c **** {
+  80              		.loc 1 83 0
+  81              		.cfi_startproc
+  82              		@ args = 0, pretend = 0, frame = 0
+  83              		@ frame_needed = 0, uses_anonymous_args = 0
+  84              		@ link register save eliminated.
+  84:board/gta0x/rffe_gta0x_triband.c **** 	return (1 << PORT_LO) | (1 << PORT_HI);
+  85:board/gta0x/rffe_gta0x_triband.c **** }
+  85              		.loc 1 85 0
+  86 0000 0300A0E3 		mov	r0, #3
+  87 0004 1EFF2FE1 		bx	lr
+  88              		.cfi_endproc
+  89              	.LFE5:
+  91              		.section	.text.rffe_init,"ax",%progbits
+  92              		.align	2
+  93              		.global	rffe_init
+  95              	rffe_init:
+  96              	.LFB6:
+  86:board/gta0x/rffe_gta0x_triband.c **** 
+  87:board/gta0x/rffe_gta0x_triband.c **** 
+  88:board/gta0x/rffe_gta0x_triband.c **** #define MCU_SW_TRACE	0xfffef00e
+  89:board/gta0x/rffe_gta0x_triband.c **** #define ARM_CONF_REG	0xfffef006
+  90:board/gta0x/rffe_gta0x_triband.c **** 
+  91:board/gta0x/rffe_gta0x_triband.c **** void rffe_init(void)
+  92:board/gta0x/rffe_gta0x_triband.c **** {
+  97              		.loc 1 92 0
+  98              		.cfi_startproc
+  99              		@ args = 0, pretend = 0, frame = 0
+ 100              		@ frame_needed = 0, uses_anonymous_args = 0
+  93:board/gta0x/rffe_gta0x_triband.c **** 	uint16_t reg;
+  94:board/gta0x/rffe_gta0x_triband.c **** 
+  95:board/gta0x/rffe_gta0x_triband.c **** 	reg = readw(ARM_CONF_REG);
+ 101              		.loc 1 95 0
+ 102 0000 44309FE5 		ldr	r3, .L9
+  96:board/gta0x/rffe_gta0x_triband.c **** 	reg &= ~ (1 << 7);	/* TSPACT4 I/O function, not nRDYMEM */
+ 103              		.loc 1 96 0
+ 104 0004 44209FE5 		ldr	r2, .L9+4
+  95:board/gta0x/rffe_gta0x_triband.c **** 	reg = readw(ARM_CONF_REG);
+ 105              		.loc 1 95 0
+ 106 0008 B91F53E1 		ldrh	r1, [r3, #-249]
+ 107              	.LVL6:
+ 108              		.loc 1 96 0
+ 109 000c 022001E0 		and	r2, r1, r2
+ 110              	.LVL7:
+  92:board/gta0x/rffe_gta0x_triband.c **** {
+ 111              		.loc 1 92 0
+ 112 0010 04E02DE5 		str	lr, [sp, #-4]!
+ 113              	.LCFI1:
+ 114              		.cfi_def_cfa_offset 4
+  97:board/gta0x/rffe_gta0x_triband.c **** 	writew(reg, ARM_CONF_REG);
+ 115              		.loc 1 97 0
+ 116 0014 B92F43E1 		strh	r2, [r3, #-249]	@ movhi
+  98:board/gta0x/rffe_gta0x_triband.c **** 
+  99:board/gta0x/rffe_gta0x_triband.c **** 	reg = readw(MCU_SW_TRACE);
+ 100:board/gta0x/rffe_gta0x_triband.c **** 	reg &= ~(1 << 1);	/* TSPACT9 I/O function, not MAS(1) */
+ 117              		.loc 1 100 0
+ 118 0018 34209FE5 		ldr	r2, .L9+8
+ 119              	.LVL8:
+  99:board/gta0x/rffe_gta0x_triband.c **** 	reg = readw(MCU_SW_TRACE);
+ 120              		.loc 1 99 0
+ 121 001c B11F53E1 		ldrh	r1, [r3, #-241]
+ 122              	.LVL9:
+ 101:board/gta0x/rffe_gta0x_triband.c **** 	writew(reg, MCU_SW_TRACE);
+ 102:board/gta0x/rffe_gta0x_triband.c **** 
+ 103:board/gta0x/rffe_gta0x_triband.c **** 	/* Configure the TSPEN which is connected to the TWL3025 */
+ 104:board/gta0x/rffe_gta0x_triband.c **** 	tsp_setup(IOTA_STROBE, 1, 0, 0);
+ 123              		.loc 1 104 0
+ 124 0020 0000A0E3 		mov	r0, #0
+ 100:board/gta0x/rffe_gta0x_triband.c **** 	reg &= ~(1 << 1);	/* TSPACT9 I/O function, not MAS(1) */
+ 125              		.loc 1 100 0
+ 126 0024 022001E0 		and	r2, r1, r2
+ 127              	.LVL10:
+ 101:board/gta0x/rffe_gta0x_triband.c **** 	writew(reg, MCU_SW_TRACE);
+ 128              		.loc 1 101 0
+ 129 0028 B12F43E1 		strh	r2, [r3, #-241]	@ movhi
+ 130              		.loc 1 104 0
+ 131 002c 0110A0E3 		mov	r1, #1
+ 132 0030 0020A0E1 		mov	r2, r0
+ 133              	.LVL11:
+ 134 0034 0030A0E1 		mov	r3, r0
+ 135              		.cfi_offset 14, -4
+ 136 0038 FEFFFFEB 		bl	tsp_setup
+ 105:board/gta0x/rffe_gta0x_triband.c **** 
+ 106:board/gta0x/rffe_gta0x_triband.c **** 	trf6151_init(RITA_STROBE, RITA_RESET);
+ 137              		.loc 1 106 0
+ 138 003c 0200A0E3 		mov	r0, #2
+ 139 0040 0110A0E3 		mov	r1, #1
+ 107:board/gta0x/rffe_gta0x_triband.c **** }
+ 140              		.loc 1 107 0
+ 141 0044 04E09DE4 		ldr	lr, [sp], #4
+ 106:board/gta0x/rffe_gta0x_triband.c **** 	trf6151_init(RITA_STROBE, RITA_RESET);
+ 142              		.loc 1 106 0
+ 143 0048 FEFFFFEA 		b	trf6151_init
+ 144              	.L10:
+ 145              		.align	2
+ 146              	.L9:
+ 147 004c FFF0FEFF 		.word	-69377
+ 148 0050 7FFF0000 		.word	65407
+ 149 0054 FDFF0000 		.word	65533
+ 150              		.cfi_endproc
+ 151              	.LFE6:
+ 153              		.section	.text.rffe_get_gain,"ax",%progbits
+ 154              		.align	2
+ 155              		.global	rffe_get_gain
+ 157              	rffe_get_gain:
+ 158              	.LFB7:
+ 108:board/gta0x/rffe_gta0x_triband.c **** 
+ 109:board/gta0x/rffe_gta0x_triband.c **** uint8_t rffe_get_gain(void)
+ 110:board/gta0x/rffe_gta0x_triband.c **** {
+ 159              		.loc 1 110 0
+ 160              		.cfi_startproc
+ 161              		@ args = 0, pretend = 0, frame = 0
+ 162              		@ frame_needed = 0, uses_anonymous_args = 0
+ 163              		@ link register save eliminated.
+ 111:board/gta0x/rffe_gta0x_triband.c **** 	return trf6151_get_gain();
+ 112:board/gta0x/rffe_gta0x_triband.c **** }
+ 164              		.loc 1 112 0
+ 111:board/gta0x/rffe_gta0x_triband.c **** 	return trf6151_get_gain();
+ 165              		.loc 1 111 0
+ 166 0000 FEFFFFEA 		b	trf6151_get_gain
+ 167              		.cfi_endproc
+ 168              	.LFE7:
+ 170              		.section	.text.rffe_set_gain,"ax",%progbits
+ 171              		.align	2
+ 172              		.global	rffe_set_gain
+ 174              	rffe_set_gain:
+ 175              	.LFB8:
+ 113:board/gta0x/rffe_gta0x_triband.c **** 
+ 114:board/gta0x/rffe_gta0x_triband.c **** void rffe_set_gain(uint8_t dbm)
+ 115:board/gta0x/rffe_gta0x_triband.c **** {
+ 176              		.loc 1 115 0
+ 177              		.cfi_startproc
+ 178              		@ args = 0, pretend = 0, frame = 0
+ 179              		@ frame_needed = 0, uses_anonymous_args = 0
+ 180              		@ link register save eliminated.
+ 181              	.LVL12:
+ 182              		.loc 1 115 0
+ 183 0000 FF0000E2 		and	r0, r0, #255
+ 184              	.LVL13:
+ 116:board/gta0x/rffe_gta0x_triband.c **** 	trf6151_set_gain(dbm);
+ 117:board/gta0x/rffe_gta0x_triband.c **** }
+ 185              		.loc 1 117 0
+ 116:board/gta0x/rffe_gta0x_triband.c **** 	trf6151_set_gain(dbm);
+ 186              		.loc 1 116 0
+ 187 0004 FEFFFFEA 		b	trf6151_set_gain
+ 188              		.cfi_endproc
+ 189              	.LFE8:
+ 191              		.section	.text.rffe_compute_gain,"ax",%progbits
+ 192              		.align	2
+ 193              		.global	rffe_compute_gain
+ 195              	rffe_compute_gain:
+ 196              	.LFB9:
+ 118:board/gta0x/rffe_gta0x_triband.c **** 
+ 119:board/gta0x/rffe_gta0x_triband.c **** const uint8_t system_inherent_gain = SYSTEM_INHERENT_GAIN;
+ 120:board/gta0x/rffe_gta0x_triband.c **** 
+ 121:board/gta0x/rffe_gta0x_triband.c **** /* Given the expected input level of exp_inp dBm/8 and the target of target_bb
+ 122:board/gta0x/rffe_gta0x_triband.c ****  * dBm8, configure the RF Frontend with the respective gain */
+ 123:board/gta0x/rffe_gta0x_triband.c **** void rffe_compute_gain(int16_t exp_inp, int16_t target_bb)
+ 124:board/gta0x/rffe_gta0x_triband.c **** {
+ 197              		.loc 1 124 0
+ 198              		.cfi_startproc
+ 199              		@ args = 0, pretend = 0, frame = 0
+ 200              		@ frame_needed = 0, uses_anonymous_args = 0
+ 201              		@ link register save eliminated.
+ 202              	.LVL14:
+ 203              		.loc 1 124 0
+ 204 0000 0008A0E1 		mov	r0, r0, asl #16
+ 205              	.LVL15:
+ 206 0004 0118A0E1 		mov	r1, r1, asl #16
+ 207              	.LVL16:
+ 125:board/gta0x/rffe_gta0x_triband.c **** 	trf6151_compute_gain(exp_inp, target_bb);
+ 208              		.loc 1 125 0
+ 209 0008 4008A0E1 		mov	r0, r0, asr #16
+ 210 000c 4118A0E1 		mov	r1, r1, asr #16
+ 126:board/gta0x/rffe_gta0x_triband.c **** }
+ 211              		.loc 1 126 0
+ 125:board/gta0x/rffe_gta0x_triband.c **** 	trf6151_compute_gain(exp_inp, target_bb);
+ 212              		.loc 1 125 0
+ 213 0010 FEFFFFEA 		b	trf6151_compute_gain
+ 214              		.cfi_endproc
+ 215              	.LFE9:
+ 217              		.section	.text.rffe_rx_win_ctrl,"ax",%progbits
+ 218              		.align	2
+ 219              		.global	rffe_rx_win_ctrl
+ 221              	rffe_rx_win_ctrl:
+ 222              	.LFB10:
+ 127:board/gta0x/rffe_gta0x_triband.c **** 
+ 128:board/gta0x/rffe_gta0x_triband.c **** void rffe_rx_win_ctrl(int16_t exp_inp, int16_t target_bb)
+ 129:board/gta0x/rffe_gta0x_triband.c **** {
+ 223              		.loc 1 129 0
+ 224              		.cfi_startproc
+ 225              		@ args = 0, pretend = 0, frame = 0
+ 226              		@ frame_needed = 0, uses_anonymous_args = 0
+ 227              		@ link register save eliminated.
+ 228              	.LVL17:
+ 130:board/gta0x/rffe_gta0x_triband.c **** 	/* FIXME */
+ 131:board/gta0x/rffe_gta0x_triband.c **** }
+ 229              		.loc 1 131 0
+ 230 0000 1EFF2FE1 		bx	lr
+ 231              		.cfi_endproc
+ 232              	.LFE10:
+ 234              		.global	system_inherent_gain
+ 235              		.section	.rodata
+ 238              	system_inherent_gain:
+ 239 0000 47       		.byte	71
+ 240              		.text
+ 241              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 rffe_gta0x_triband.c
+     /tmp/ccQq5qON.s:12     .text.rffe_mode:0000000000000000 $a
+     /tmp/ccQq5qON.s:15     .text.rffe_mode:0000000000000000 rffe_mode
+     /tmp/ccQq5qON.s:53     .text.rffe_mode:0000000000000028 $d
+     /tmp/ccQq5qON.s:58     .text.rffe_get_rx_ports:0000000000000000 $a
+     /tmp/ccQq5qON.s:61     .text.rffe_get_rx_ports:0000000000000000 rffe_get_rx_ports
+     /tmp/ccQq5qON.s:75     .text.rffe_get_tx_ports:0000000000000000 $a
+     /tmp/ccQq5qON.s:78     .text.rffe_get_tx_ports:0000000000000000 rffe_get_tx_ports
+     /tmp/ccQq5qON.s:92     .text.rffe_init:0000000000000000 $a
+     /tmp/ccQq5qON.s:95     .text.rffe_init:0000000000000000 rffe_init
+     /tmp/ccQq5qON.s:147    .text.rffe_init:000000000000004c $d
+     /tmp/ccQq5qON.s:154    .text.rffe_get_gain:0000000000000000 $a
+     /tmp/ccQq5qON.s:157    .text.rffe_get_gain:0000000000000000 rffe_get_gain
+     /tmp/ccQq5qON.s:171    .text.rffe_set_gain:0000000000000000 $a
+     /tmp/ccQq5qON.s:174    .text.rffe_set_gain:0000000000000000 rffe_set_gain
+     /tmp/ccQq5qON.s:192    .text.rffe_compute_gain:0000000000000000 $a
+     /tmp/ccQq5qON.s:195    .text.rffe_compute_gain:0000000000000000 rffe_compute_gain
+     /tmp/ccQq5qON.s:218    .text.rffe_rx_win_ctrl:0000000000000000 $a
+     /tmp/ccQq5qON.s:221    .text.rffe_rx_win_ctrl:0000000000000000 rffe_rx_win_ctrl
+     /tmp/ccQq5qON.s:238    .rodata:0000000000000000 system_inherent_gain
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+tsp_act_state
+tsp_act_update
+tsp_setup
+trf6151_init
+trf6151_get_gain
+trf6151_set_gain
+trf6151_compute_gain

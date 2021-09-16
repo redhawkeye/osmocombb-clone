@@ -1,0 +1,772 @@
+   1              		.file	"console.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text.cons_rb_pull,"ax",%progbits
+  12              		.align	2
+  14              	cons_rb_pull:
+  15              	.LFB2:
+  16              		.file 1 "lib/console.c"
+   1:lib/console.c **** /* Ringbuffer based serial console layer, imported from OpenPCD */
+   2:lib/console.c **** 
+   3:lib/console.c **** /* (C) 2006-2010 by Harald Welte <laforge@gnumonks.org>
+   4:lib/console.c ****  *
+   5:lib/console.c ****  * All Rights Reserved
+   6:lib/console.c ****  *
+   7:lib/console.c ****  * This program is free software; you can redistribute it and/or modify
+   8:lib/console.c ****  * it under the terms of the GNU General Public License as published by
+   9:lib/console.c ****  * the Free Software Foundation; either version 2 of the License, or
+  10:lib/console.c ****  * (at your option) any later version.
+  11:lib/console.c ****  *
+  12:lib/console.c ****  * This program is distributed in the hope that it will be useful,
+  13:lib/console.c ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  14:lib/console.c ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  15:lib/console.c ****  * GNU General Public License for more details.
+  16:lib/console.c ****  *
+  17:lib/console.c ****  * You should have received a copy of the GNU General Public License along
+  18:lib/console.c ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  19:lib/console.c ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  20:lib/console.c ****  *
+  21:lib/console.c ****  */
+  22:lib/console.c **** 
+  23:lib/console.c **** #include <stdint.h>
+  24:lib/console.c **** #include <string.h>
+  25:lib/console.c **** #include <console.h>
+  26:lib/console.c **** #include <uart.h>
+  27:lib/console.c **** 
+  28:lib/console.c **** #include <asm/system.h>
+  29:lib/console.c **** 
+  30:lib/console.c **** struct cons {
+  31:lib/console.c **** 	char buf[CONS_RB_SIZE];
+  32:lib/console.c **** 	char *next_inbyte;
+  33:lib/console.c **** 	char *next_outbyte;
+  34:lib/console.c **** 	int initialized;
+  35:lib/console.c **** };
+  36:lib/console.c **** static struct cons cons;
+  37:lib/console.c **** 
+  38:lib/console.c **** void cons_init(void)
+  39:lib/console.c **** {
+  40:lib/console.c **** 	memset(cons.buf, 0, sizeof(cons.buf));
+  41:lib/console.c **** 	cons.next_inbyte = &cons.buf[0];
+  42:lib/console.c **** 	cons.next_outbyte = &cons.buf[0];
+  43:lib/console.c **** 	cons.initialized = 1;
+  44:lib/console.c **** }
+  45:lib/console.c **** 
+  46:lib/console.c **** /* determine how many bytes are left in the ringbuffer without overwriting
+  47:lib/console.c ****    bytes that haven't been written to the console yet */
+  48:lib/console.c **** static int __cons_rb_space(void)
+  49:lib/console.c **** {
+  50:lib/console.c **** 	if (cons.next_inbyte == cons.next_outbyte)
+  51:lib/console.c **** 		return sizeof(cons.buf)-1;
+  52:lib/console.c **** 	else if (cons.next_outbyte > cons.next_inbyte)
+  53:lib/console.c **** 		return (cons.next_outbyte - cons.next_inbyte) -1;
+  54:lib/console.c **** 	else
+  55:lib/console.c **** 		return sizeof(cons.buf) - 1 - (cons.next_inbyte - cons.next_outbyte);
+  56:lib/console.c **** }
+  57:lib/console.c **** 
+  58:lib/console.c **** /* pull one char out of debug ring buffer */
+  59:lib/console.c **** static int cons_rb_pull(char *ret)
+  60:lib/console.c **** {
+  17              		.loc 1 60 0
+  18              		.cfi_startproc
+  19              		@ args = 0, pretend = 0, frame = 0
+  20              		@ frame_needed = 0, uses_anonymous_args = 0
+  21              	.LVL0:
+  22 0000 10402DE9 		stmfd	sp!, {r4, lr}
+  23              	.LCFI0:
+  24              		.cfi_def_cfa_offset 8
+  25              	.LBB10:
+  61:lib/console.c **** 	unsigned long flags;
+  62:lib/console.c **** 
+  63:lib/console.c **** 	local_irq_save(flags);
+  26              		.loc 1 63 0
+  27              	@ 63 "lib/console.c" 1
+  28 0004 00100FE1 		mrs	r1, cpsr		@ local_irq_save
+  29 0008 803081E3 		orr	r3, r1, #128
+  30 000c 03F021E1 		msr	cpsr_c, r3
+  31              	@ 0 "" 2
+  32              	.LBE10:
+  64:lib/console.c **** 
+  65:lib/console.c **** 	if (cons.next_outbyte == cons.next_inbyte) {
+  33              		.loc 1 65 0
+  34 0010 4C309FE5 		ldr	r3, .L5
+  35 0014 4C209FE5 		ldr	r2, .L5+4
+  36 0018 014AA0E3 		mov	r4, #4096
+  37              		.cfi_offset 14, -4
+  38              		.cfi_offset 4, -8
+  39 001c 02C093E7 		ldr	ip, [r3, r2]
+  40 0020 044093E7 		ldr	r4, [r3, r4]
+  41 0024 04005CE1 		cmp	ip, r4
+  42 0028 0200001A 		bne	.L2
+  66:lib/console.c **** 		local_irq_restore(flags);
+  43              		.loc 1 66 0
+  44              	@ 66 "lib/console.c" 1
+  45 002c 01F021E1 		msr	cpsr_c, r1		@ local_irq_restore
+  46              	
+  47              	@ 0 "" 2
+  67:lib/console.c **** 		return -1;
+  48              		.loc 1 67 0
+  49 0030 0000E0E3 		mvn	r0, #0
+  50              	.LVL1:
+  51 0034 1080BDE8 		ldmfd	sp!, {r4, pc}
+  52              	.LVL2:
+  53              	.L2:
+  68:lib/console.c **** 	}
+  69:lib/console.c **** 
+  70:lib/console.c **** 	*ret = *cons.next_outbyte;
+  54              		.loc 1 70 0
+  55 0038 00C0DCE5 		ldrb	ip, [ip, #0]	@ zero_extendqisi2
+  56 003c 00C0C0E5 		strb	ip, [r0, #0]
+  71:lib/console.c **** 
+  72:lib/console.c **** 	cons.next_outbyte++;
+  57              		.loc 1 72 0
+  58 0040 020093E7 		ldr	r0, [r3, r2]
+  59              	.LVL3:
+  73:lib/console.c **** 	if (cons.next_outbyte >= &cons.buf[0]+sizeof(cons.buf)) {
+  60              		.loc 1 73 0
+  61 0044 01CA83E2 		add	ip, r3, #4096
+  72:lib/console.c **** 	cons.next_outbyte++;
+  62              		.loc 1 72 0
+  63 0048 010080E2 		add	r0, r0, #1
+  64              		.loc 1 73 0
+  65 004c 0C0050E1 		cmp	r0, ip
+  72:lib/console.c **** 	cons.next_outbyte++;
+  66              		.loc 1 72 0
+  67 0050 020083E7 		str	r0, [r3, r2]
+  74:lib/console.c **** 		cons.next_outbyte = &cons.buf[0];
+  68              		.loc 1 74 0
+  69 0054 02308327 		strcs	r3, [r3, r2]
+  75:lib/console.c **** 	}
+  76:lib/console.c **** #if 0
+  77:lib/console.c **** 	 else if (cons.next_outbyte > &cons.buf[0]+sizeof(cons.buf)) {
+  78:lib/console.c **** 		cons.next_outbyte -= sizeof(cons.buf);
+  79:lib/console.c **** 	}
+  80:lib/console.c **** #endif
+  81:lib/console.c **** 
+  82:lib/console.c **** 	local_irq_restore(flags);
+  70              		.loc 1 82 0
+  71              	@ 82 "lib/console.c" 1
+  72 0058 01F021E1 		msr	cpsr_c, r1		@ local_irq_restore
+  73              	
+  74              	@ 0 "" 2
+  83:lib/console.c **** 
+  84:lib/console.c **** 	return 0;
+  75              		.loc 1 84 0
+  76 005c 0000A0E3 		mov	r0, #0
+  85:lib/console.c **** }
+  77              		.loc 1 85 0
+  78 0060 1080BDE8 		ldmfd	sp!, {r4, pc}
+  79              	.L6:
+  80              		.align	2
+  81              	.L5:
+  82 0064 00000000 		.word	.LANCHOR0
+  83 0068 04100000 		.word	4100
+  84              		.cfi_endproc
+  85              	.LFE2:
+  87              		.section	.text.__cons_rb_append,"ax",%progbits
+  88              		.align	2
+  90              	__cons_rb_append:
+  91              	.LFB6:
+  86:lib/console.c **** 
+  87:lib/console.c **** /* returns if everything was flushed (1) or if there's more to flush (0) */
+  88:lib/console.c **** static void __rb_flush_wait(void)
+  89:lib/console.c **** {
+  90:lib/console.c **** 	char ch;
+  91:lib/console.c **** 	while (cons_rb_pull(&ch) >= 0)
+  92:lib/console.c **** 		uart_putchar_wait(CONS_UART_NR, ch);
+  93:lib/console.c **** }
+  94:lib/console.c **** 
+  95:lib/console.c **** /* returns if everything was flushed (1) or if there's more to flush (0) */
+  96:lib/console.c **** static int __rb_flush(void)
+  97:lib/console.c **** {
+  98:lib/console.c **** 	while (!uart_tx_busy(CONS_UART_NR)) {
+  99:lib/console.c **** 		char ch;
+ 100:lib/console.c **** 		if (cons_rb_pull(&ch) < 0) {
+ 101:lib/console.c **** 			/* no more data to write, disable interest in Tx FIFO interrupts */
+ 102:lib/console.c **** 			return 1;
+ 103:lib/console.c **** 		}
+ 104:lib/console.c **** 		uart_putchar_nb(CONS_UART_NR, ch);
+ 105:lib/console.c **** 	}
+ 106:lib/console.c **** 
+ 107:lib/console.c **** 	/* if we reach here, UART Tx FIFO is busy again */
+ 108:lib/console.c **** 	return 0;
+ 109:lib/console.c **** }
+ 110:lib/console.c **** 
+ 111:lib/console.c **** /* flush pending data from debug ring buffer to serial port */
+ 112:lib/console.c **** int cons_rb_flush(void)
+ 113:lib/console.c **** {
+ 114:lib/console.c **** 	return __rb_flush();
+ 115:lib/console.c **** }
+ 116:lib/console.c **** 
+ 117:lib/console.c **** /* Append bytes to ring buffer, not more than we have left! */
+ 118:lib/console.c **** static void __cons_rb_append(const char *data, int len)
+ 119:lib/console.c **** {
+  92              		.loc 1 119 0
+  93              		.cfi_startproc
+  94              		@ args = 0, pretend = 0, frame = 0
+  95              		@ frame_needed = 0, uses_anonymous_args = 0
+  96              	.LVL4:
+  97 0000 F0412DE9 		stmfd	sp!, {r4, r5, r6, r7, r8, lr}
+  98              	.LCFI1:
+  99              		.cfi_def_cfa_offset 24
+ 120:lib/console.c **** 	if (cons.next_inbyte + len >= &cons.buf[0]+sizeof(cons.buf)) {
+ 100              		.loc 1 120 0
+ 101 0004 60609FE5 		ldr	r6, .L9
+ 102              		.cfi_offset 14, -4
+ 103              		.cfi_offset 8, -8
+ 104              		.cfi_offset 7, -12
+ 105              		.cfi_offset 6, -16
+ 106              		.cfi_offset 5, -20
+ 107              		.cfi_offset 4, -24
+ 108 0008 018AA0E3 		mov	r8, #4096
+ 119:lib/console.c **** {
+ 109              		.loc 1 119 0
+ 110 000c 0050A0E1 		mov	r5, r0
+ 111              		.loc 1 120 0
+ 112 0010 080096E7 		ldr	r0, [r6, r8]
+ 113              	.LVL5:
+ 114 0014 087086E0 		add	r7, r6, r8
+ 115 0018 013080E0 		add	r3, r0, r1
+ 116 001c 070053E1 		cmp	r3, r7
+ 119:lib/console.c **** {
+ 117              		.loc 1 119 0
+ 118 0020 0140A0E1 		mov	r4, r1
+ 119              		.loc 1 120 0
+ 120 0024 0600003A 		bcc	.L8
+ 121              	.LBB11:
+ 121:lib/console.c **** 		int before_tail = (&cons.buf[0]+sizeof(cons.buf)) - cons.next_inbyte;
+ 122              		.loc 1 121 0
+ 123 0028 077060E0 		rsb	r7, r0, r7
+ 124              	.LVL6:
+ 122:lib/console.c **** 		/* copy the first part before we wrap */
+ 123:lib/console.c **** 		memcpy(cons.next_inbyte, data, before_tail);
+ 125              		.loc 1 123 0
+ 126 002c 0510A0E1 		mov	r1, r5
+ 127              	.LVL7:
+ 128 0030 0720A0E1 		mov	r2, r7
+ 129 0034 FEFFFFEB 		bl	memcpy
+ 124:lib/console.c **** 		data += before_tail;
+ 125:lib/console.c **** 		len -= before_tail;
+ 126:lib/console.c **** 		/* reset the buffer */
+ 127:lib/console.c **** 		cons.next_inbyte = &cons.buf[0];
+ 130              		.loc 1 127 0
+ 131 0038 086086E7 		str	r6, [r6, r8]
+ 124:lib/console.c **** 		data += before_tail;
+ 132              		.loc 1 124 0
+ 133 003c 075085E0 		add	r5, r5, r7
+ 134              	.LVL8:
+ 125:lib/console.c **** 		len -= before_tail;
+ 135              		.loc 1 125 0
+ 136 0040 044067E0 		rsb	r4, r7, r4
+ 137              	.LVL9:
+ 138              	.L8:
+ 139              	.LBE11:
+ 128:lib/console.c **** 	}
+ 129:lib/console.c **** 	memcpy(cons.next_inbyte, data, len);
+ 140              		.loc 1 129 0
+ 141 0044 20709FE5 		ldr	r7, .L9
+ 142 0048 016AA0E3 		mov	r6, #4096
+ 143 004c 0420A0E1 		mov	r2, r4
+ 144 0050 060097E7 		ldr	r0, [r7, r6]
+ 145 0054 0510A0E1 		mov	r1, r5
+ 146 0058 FEFFFFEB 		bl	memcpy
+ 130:lib/console.c **** 	cons.next_inbyte += len;
+ 147              		.loc 1 130 0
+ 148 005c 063097E7 		ldr	r3, [r7, r6]
+ 149 0060 044083E0 		add	r4, r3, r4
+ 150              	.LVL10:
+ 151 0064 064087E7 		str	r4, [r7, r6]
+ 131:lib/console.c **** }
+ 152              		.loc 1 131 0
+ 153 0068 F081BDE8 		ldmfd	sp!, {r4, r5, r6, r7, r8, pc}
+ 154              	.L10:
+ 155              		.align	2
+ 156              	.L9:
+ 157 006c 00000000 		.word	.LANCHOR0
+ 158              		.cfi_endproc
+ 159              	.LFE6:
+ 161              		.section	.text.cons_init,"ax",%progbits
+ 162              		.align	2
+ 163              		.global	cons_init
+ 165              	cons_init:
+ 166              	.LFB0:
+  39:lib/console.c **** {
+ 167              		.loc 1 39 0
+ 168              		.cfi_startproc
+ 169              		@ args = 0, pretend = 0, frame = 0
+ 170              		@ frame_needed = 0, uses_anonymous_args = 0
+ 171 0000 30402DE9 		stmfd	sp!, {r4, r5, lr}
+ 172              	.LCFI2:
+ 173              		.cfi_def_cfa_offset 12
+  40:lib/console.c **** 	memset(cons.buf, 0, sizeof(cons.buf));
+ 174              		.loc 1 40 0
+ 175 0004 2C409FE5 		ldr	r4, .L12
+ 176              		.cfi_offset 14, -4
+ 177              		.cfi_offset 5, -8
+ 178              		.cfi_offset 4, -12
+ 179 0008 015AA0E3 		mov	r5, #4096
+ 180 000c 0520A0E1 		mov	r2, r5
+ 181 0010 0400A0E1 		mov	r0, r4
+ 182 0014 0010A0E3 		mov	r1, #0
+ 183 0018 FEFFFFEB 		bl	memset
+  42:lib/console.c **** 	cons.next_outbyte = &cons.buf[0];
+ 184              		.loc 1 42 0
+ 185 001c 18309FE5 		ldr	r3, .L12+4
+  43:lib/console.c **** 	cons.initialized = 1;
+ 186              		.loc 1 43 0
+ 187 0020 0120A0E3 		mov	r2, #1
+  42:lib/console.c **** 	cons.next_outbyte = &cons.buf[0];
+ 188              		.loc 1 42 0
+ 189 0024 034084E7 		str	r4, [r4, r3]
+  43:lib/console.c **** 	cons.initialized = 1;
+ 190              		.loc 1 43 0
+ 191 0028 043083E2 		add	r3, r3, #4
+  41:lib/console.c **** 	cons.next_inbyte = &cons.buf[0];
+ 192              		.loc 1 41 0
+ 193 002c 054084E7 		str	r4, [r4, r5]
+  43:lib/console.c **** 	cons.initialized = 1;
+ 194              		.loc 1 43 0
+ 195 0030 032084E7 		str	r2, [r4, r3]
+  44:lib/console.c **** }
+ 196              		.loc 1 44 0
+ 197 0034 3080BDE8 		ldmfd	sp!, {r4, r5, pc}
+ 198              	.L13:
+ 199              		.align	2
+ 200              	.L12:
+ 201 0038 00000000 		.word	.LANCHOR0
+ 202 003c 04100000 		.word	4100
+ 203              		.cfi_endproc
+ 204              	.LFE0:
+ 206              		.section	.text.cons_rb_flush,"ax",%progbits
+ 207              		.align	2
+ 208              		.global	cons_rb_flush
+ 210              	cons_rb_flush:
+ 211              	.LFB5:
+ 113:lib/console.c **** {
+ 212              		.loc 1 113 0
+ 213              		.cfi_startproc
+ 214              		@ args = 0, pretend = 0, frame = 4
+ 215              		@ frame_needed = 0, uses_anonymous_args = 0
+ 216 0000 31402DE9 		stmfd	sp!, {r0, r4, r5, lr}
+ 217              	.LCFI3:
+ 218              		.cfi_def_cfa_offset 16
+ 219              	.LBB12:
+ 220              	.LBB13:
+ 221              	.LBB14:
+ 100:lib/console.c **** 		if (cons_rb_pull(&ch) < 0) {
+ 222              		.loc 1 100 0
+ 223 0004 03408DE2 		add	r4, sp, #3
+ 224              		.cfi_offset 14, -4
+ 225              		.cfi_offset 5, -8
+ 226              		.cfi_offset 4, -12
+ 227              		.cfi_offset 0, -16
+ 228 0008 060000EA 		b	.L15
+ 229              	.LVL11:
+ 230              	.L17:
+ 231 000c 0400A0E1 		mov	r0, r4
+ 232 0010 FEFFFFEB 		bl	cons_rb_pull
+ 233 0014 000050E3 		cmp	r0, #0
+ 234 0018 080000BA 		blt	.L18
+ 104:lib/console.c **** 		uart_putchar_nb(CONS_UART_NR, ch);
+ 235              		.loc 1 104 0
+ 236 001c 0500A0E1 		mov	r0, r5
+ 237 0020 0310DDE5 		ldrb	r1, [sp, #3]	@ zero_extendqisi2
+ 238 0024 FEFFFFEB 		bl	uart_putchar_nb
+ 239              	.L15:
+ 240              	.LBE14:
+  98:lib/console.c **** 	while (!uart_tx_busy(CONS_UART_NR)) {
+ 241              		.loc 1 98 0
+ 242 0028 0000A0E3 		mov	r0, #0
+ 243 002c FEFFFFEB 		bl	uart_tx_busy
+ 244 0030 005050E2 		subs	r5, r0, #0
+ 245 0034 F4FFFF0A 		beq	.L17
+ 108:lib/console.c **** 	return 0;
+ 246              		.loc 1 108 0
+ 247 0038 0000A0E3 		mov	r0, #0
+ 248 003c 000000EA 		b	.L16
+ 249              	.L18:
+ 250              	.LBB15:
+ 102:lib/console.c **** 			return 1;
+ 251              		.loc 1 102 0
+ 252 0040 0100A0E3 		mov	r0, #1
+ 253              	.L16:
+ 254              	.LBE15:
+ 255              	.LBE13:
+ 256              	.LBE12:
+ 115:lib/console.c **** }
+ 257              		.loc 1 115 0
+ 258 0044 3880BDE8 		ldmfd	sp!, {r3, r4, r5, pc}
+ 259              		.cfi_endproc
+ 260              	.LFE5:
+ 262              		.section	.text.cons_rb_append,"ax",%progbits
+ 263              		.align	2
+ 264              		.global	cons_rb_append
+ 266              	cons_rb_append:
+ 267              	.LFB7:
+ 132:lib/console.c **** 
+ 133:lib/console.c **** /* append bytes to the ringbuffer, do one wrap */
+ 134:lib/console.c **** int cons_rb_append(const char *data, int len)
+ 135:lib/console.c **** {
+ 268              		.loc 1 135 0
+ 269              		.cfi_startproc
+ 270              		@ args = 0, pretend = 0, frame = 4
+ 271              		@ frame_needed = 0, uses_anonymous_args = 0
+ 272              	.LVL12:
+ 273 0000 F1412DE9 		stmfd	sp!, {r0, r4, r5, r6, r7, r8, lr}
+ 274              	.LCFI4:
+ 275              		.cfi_def_cfa_offset 28
+ 276              		.loc 1 135 0
+ 277 0004 0070A0E1 		mov	r7, r0
+ 278              		.cfi_offset 14, -4
+ 279              		.cfi_offset 8, -8
+ 280              		.cfi_offset 7, -12
+ 281              		.cfi_offset 6, -16
+ 282              		.cfi_offset 5, -20
+ 283              		.cfi_offset 4, -24
+ 284              		.cfi_offset 0, -28
+ 136:lib/console.c **** 	unsigned long flags;
+ 137:lib/console.c **** 	int bytes_left;
+ 138:lib/console.c **** 	const char *data_cur;
+ 139:lib/console.c **** 
+ 140:lib/console.c **** 	/* we will never be able to write more than the console buffer */
+ 141:lib/console.c **** 	if (len > (int) sizeof(cons.buf))
+ 142:lib/console.c **** 		len = sizeof(cons.buf);
+ 143:lib/console.c **** 
+ 144:lib/console.c **** 	local_irq_save(flags);
+ 145:lib/console.c **** 
+ 146:lib/console.c **** 	bytes_left = __cons_rb_space();
+ 147:lib/console.c **** 	data_cur = data;
+ 285              		.loc 1 147 0
+ 286 0008 010A51E3 		cmp	r1, #4096
+ 287 000c 0140A0B1 		movlt	r4, r1
+ 288 0010 014AA0A3 		movge	r4, #4096
+ 289              	.LVL13:
+ 290              	.LBB16:
+ 144:lib/console.c **** 	local_irq_save(flags);
+ 291              		.loc 1 144 0
+ 292              	@ 144 "lib/console.c" 1
+ 293 0014 00500FE1 		mrs	r5, cpsr		@ local_irq_save
+ 294 0018 803085E3 		orr	r3, r5, #128
+ 295 001c 03F021E1 		msr	cpsr_c, r3
+ 296              	@ 0 "" 2
+ 297              	.LVL14:
+ 298              	.LBE16:
+ 299              	.LBB17:
+ 300              	.LBB18:
+  50:lib/console.c **** 	if (cons.next_inbyte == cons.next_outbyte)
+ 301              		.loc 1 50 0
+ 302 0020 98209FE5 		ldr	r2, .L27
+ 303 0024 98109FE5 		ldr	r1, .L27+4
+ 304 0028 013AA0E3 		mov	r3, #4096
+ 305 002c 016092E7 		ldr	r6, [r2, r1]
+ 306 0030 033092E7 		ldr	r3, [r2, r3]
+ 307 0034 060053E1 		cmp	r3, r6
+  51:lib/console.c **** 		return sizeof(cons.buf)-1;
+ 308              		.loc 1 51 0
+ 309 0038 88609F05 		ldreq	r6, .L27+8
+  50:lib/console.c **** 	if (cons.next_inbyte == cons.next_outbyte)
+ 310              		.loc 1 50 0
+ 311 003c 0500000A 		beq	.L20
+  52:lib/console.c **** 	else if (cons.next_outbyte > cons.next_inbyte)
+ 312              		.loc 1 52 0
+ 313 0040 030056E1 		cmp	r6, r3
+  55:lib/console.c **** 		return sizeof(cons.buf) - 1 - (cons.next_inbyte - cons.next_outbyte);
+ 314              		.loc 1 55 0
+ 315 0044 06606390 		rsbls	r6, r3, r6
+  53:lib/console.c **** 		return (cons.next_outbyte - cons.next_inbyte) -1;
+ 316              		.loc 1 53 0
+ 317 0048 01604682 		subhi	r6, r6, #1
+  55:lib/console.c **** 		return sizeof(cons.buf) - 1 - (cons.next_inbyte - cons.next_outbyte);
+ 318              		.loc 1 55 0
+ 319 004c FF6E8692 		addls	r6, r6, #4080
+  53:lib/console.c **** 		return (cons.next_outbyte - cons.next_inbyte) -1;
+ 320              		.loc 1 53 0
+ 321 0050 06606380 		rsbhi	r6, r3, r6
+  55:lib/console.c **** 		return sizeof(cons.buf) - 1 - (cons.next_inbyte - cons.next_outbyte);
+ 322              		.loc 1 55 0
+ 323 0054 0F608692 		addls	r6, r6, #15
+ 324              	.L20:
+ 325              	.LVL15:
+ 326              	.LBE18:
+ 327              	.LBE17:
+ 148:lib/console.c **** 
+ 149:lib/console.c **** 	if (len > bytes_left) {
+ 328              		.loc 1 149 0
+ 329 0058 060054E1 		cmp	r4, r6
+ 147:lib/console.c **** 	data_cur = data;
+ 330              		.loc 1 147 0
+ 331 005c 0700A0D1 		movle	r0, r7
+ 332              	.LVL16:
+ 333              		.loc 1 149 0
+ 334 0060 0D0000DA 		ble	.L22
+ 150:lib/console.c **** 		/* append what we can */
+ 151:lib/console.c **** 		__cons_rb_append(data_cur, bytes_left);
+ 335              		.loc 1 151 0
+ 336 0064 0700A0E1 		mov	r0, r7
+ 337 0068 0610A0E1 		mov	r1, r6
+ 338 006c FEFFFFEB 		bl	__cons_rb_append
+ 339              	.LBB19:
+ 340              	.LBB20:
+  91:lib/console.c **** 	while (cons_rb_pull(&ch) >= 0)
+ 341              		.loc 1 91 0
+ 342 0070 03808DE2 		add	r8, sp, #3
+ 343 0074 020000EA 		b	.L23
+ 344              	.LVL17:
+ 345              	.L24:
+  92:lib/console.c **** 		uart_putchar_wait(CONS_UART_NR, ch);
+ 346              		.loc 1 92 0
+ 347 0078 0000A0E3 		mov	r0, #0
+ 348 007c 0310DDE5 		ldrb	r1, [sp, #3]	@ zero_extendqisi2
+ 349 0080 FEFFFFEB 		bl	uart_putchar_wait
+ 350              	.L23:
+  91:lib/console.c **** 	while (cons_rb_pull(&ch) >= 0)
+ 351              		.loc 1 91 0
+ 352 0084 0800A0E1 		mov	r0, r8
+ 353 0088 FEFFFFEB 		bl	cons_rb_pull
+ 354 008c 000050E3 		cmp	r0, #0
+ 355 0090 F8FFFFAA 		bge	.L24
+ 356              	.LBE20:
+ 357              	.LBE19:
+ 152:lib/console.c **** 		/* busy-wait for all characters to be transmitted */
+ 153:lib/console.c **** 		__rb_flush_wait();
+ 154:lib/console.c **** 		/* fill it with the remaining bytes */
+ 155:lib/console.c **** 		len -= bytes_left;
+ 358              		.loc 1 155 0
+ 359 0094 044066E0 		rsb	r4, r6, r4
+ 360              	.LVL18:
+ 156:lib/console.c **** 		data_cur += bytes_left;
+ 361              		.loc 1 156 0
+ 362 0098 060087E0 		add	r0, r7, r6
+ 363              	.LVL19:
+ 364              	.L22:
+ 157:lib/console.c **** 	}
+ 158:lib/console.c **** 	__cons_rb_append(data_cur, len);
+ 365              		.loc 1 158 0
+ 366 009c 0410A0E1 		mov	r1, r4
+ 367 00a0 FEFFFFEB 		bl	__cons_rb_append
+ 368              	.LVL20:
+ 159:lib/console.c **** 
+ 160:lib/console.c **** 	/* we want to get Tx FIFO interrupts */
+ 161:lib/console.c **** 	uart_irq_enable(CONS_UART_NR, UART_IRQ_TX_EMPTY, 1);
+ 369              		.loc 1 161 0
+ 370 00a4 0000A0E3 		mov	r0, #0
+ 371 00a8 0010A0E1 		mov	r1, r0
+ 372 00ac 0120A0E3 		mov	r2, #1
+ 373 00b0 FEFFFFEB 		bl	uart_irq_enable
+ 162:lib/console.c **** 
+ 163:lib/console.c **** 	local_irq_restore(flags);
+ 374              		.loc 1 163 0
+ 375              	@ 163 "lib/console.c" 1
+ 376 00b4 05F021E1 		msr	cpsr_c, r5		@ local_irq_restore
+ 377              	
+ 378              	@ 0 "" 2
+ 164:lib/console.c **** 
+ 165:lib/console.c **** 	return len;
+ 166:lib/console.c **** }
+ 379              		.loc 1 166 0
+ 380 00b8 0400A0E1 		mov	r0, r4
+ 381 00bc F881BDE8 		ldmfd	sp!, {r3, r4, r5, r6, r7, r8, pc}
+ 382              	.L28:
+ 383              		.align	2
+ 384              	.L27:
+ 385 00c0 00000000 		.word	.LANCHOR0
+ 386 00c4 04100000 		.word	4100
+ 387 00c8 FF0F0000 		.word	4095
+ 388              		.cfi_endproc
+ 389              	.LFE7:
+ 391              		.section	.text.cons_puts,"ax",%progbits
+ 392              		.align	2
+ 393              		.global	cons_puts
+ 395              	cons_puts:
+ 396              	.LFB8:
+ 167:lib/console.c **** 
+ 168:lib/console.c **** int cons_puts(const char *s)
+ 169:lib/console.c **** {
+ 397              		.loc 1 169 0
+ 398              		.cfi_startproc
+ 399              		@ args = 0, pretend = 0, frame = 0
+ 400              		@ frame_needed = 0, uses_anonymous_args = 0
+ 401              	.LVL21:
+ 170:lib/console.c **** 	if (cons.initialized) {
+ 402              		.loc 1 170 0
+ 403 0000 5C309FE5 		ldr	r3, .L33
+ 404 0004 5C209FE5 		ldr	r2, .L33+4
+ 405 0008 033092E7 		ldr	r3, [r2, r3]
+ 406 000c 000053E3 		cmp	r3, #0
+ 169:lib/console.c **** {
+ 407              		.loc 1 169 0
+ 408 0010 70402DE9 		stmfd	sp!, {r4, r5, r6, lr}
+ 409              	.LCFI5:
+ 410              		.cfi_def_cfa_offset 16
+ 169:lib/console.c **** {
+ 411              		.loc 1 169 0
+ 412 0014 0060A0E1 		mov	r6, r0
+ 413              		.cfi_offset 14, -4
+ 414              		.cfi_offset 6, -8
+ 415              		.cfi_offset 5, -12
+ 416              		.cfi_offset 4, -16
+ 417              		.loc 1 170 0
+ 418 0018 0400000A 		beq	.L30
+ 171:lib/console.c **** 		return cons_rb_append(s, strlen(s));
+ 419              		.loc 1 171 0
+ 420 001c FEFFFFEB 		bl	strlen
+ 421              	.LVL22:
+ 422 0020 0010A0E1 		mov	r1, r0
+ 423 0024 0600A0E1 		mov	r0, r6
+ 172:lib/console.c **** 	} else {
+ 173:lib/console.c **** 		/* if the console is not active yet, we need to fall back */
+ 174:lib/console.c **** 		int i = strlen(s);
+ 175:lib/console.c **** 		while (i--)
+ 176:lib/console.c **** 			uart_putchar_wait(CONS_UART_NR, *s++);
+ 177:lib/console.c **** 		return i;
+ 178:lib/console.c **** 	}
+ 179:lib/console.c **** }
+ 424              		.loc 1 179 0
+ 425 0028 7040BDE8 		ldmfd	sp!, {r4, r5, r6, lr}
+ 171:lib/console.c **** 		return cons_rb_append(s, strlen(s));
+ 426              		.loc 1 171 0
+ 427 002c FEFFFFEA 		b	cons_rb_append
+ 428              	.L30:
+ 429              	.LBB21:
+ 174:lib/console.c **** 		int i = strlen(s);
+ 430              		.loc 1 174 0
+ 431 0030 FEFFFFEB 		bl	strlen
+ 432 0034 0040A0E1 		mov	r4, r0
+ 433              	.LVL23:
+ 175:lib/console.c **** 		while (i--)
+ 434              		.loc 1 175 0
+ 435 0038 0050A0E1 		mov	r5, r0
+ 436 003c 030000EA 		b	.L31
+ 437              	.LVL24:
+ 438              	.L32:
+ 176:lib/console.c **** 			uart_putchar_wait(CONS_UART_NR, *s++);
+ 439              		.loc 1 176 0
+ 440 0040 0000A0E3 		mov	r0, #0
+ 441 0044 0110D6E4 		ldrb	r1, [r6], #1	@ zero_extendqisi2
+ 442              	.LVL25:
+ 443 0048 FEFFFFEB 		bl	uart_putchar_wait
+ 444 004c 015045E2 		sub	r5, r5, #1
+ 445              	.LVL26:
+ 446              	.L31:
+ 175:lib/console.c **** 		while (i--)
+ 447              		.loc 1 175 0 discriminator 1
+ 448 0050 000055E3 		cmp	r5, #0
+ 449 0054 F9FFFF1A 		bne	.L32
+ 168:lib/console.c **** int cons_puts(const char *s)
+ 450              		.loc 1 168 0
+ 451 0058 010044E2 		sub	r0, r4, #1
+ 452              	.LBE21:
+ 453              		.loc 1 179 0
+ 454 005c 000064E0 		rsb	r0, r4, r0
+ 455 0060 7080BDE8 		ldmfd	sp!, {r4, r5, r6, pc}
+ 456              	.L34:
+ 457              		.align	2
+ 458              	.L33:
+ 459 0064 08100000 		.word	4104
+ 460 0068 00000000 		.word	.LANCHOR0
+ 461              		.cfi_endproc
+ 462              	.LFE8:
+ 464              		.section	.text.cons_putchar,"ax",%progbits
+ 465              		.align	2
+ 466              		.global	cons_putchar
+ 468              	cons_putchar:
+ 469              	.LFB9:
+ 180:lib/console.c **** 
+ 181:lib/console.c **** int cons_putchar(char c)
+ 182:lib/console.c **** {
+ 470              		.loc 1 182 0
+ 471              		.cfi_startproc
+ 472              		@ args = 0, pretend = 0, frame = 4
+ 473              		@ frame_needed = 0, uses_anonymous_args = 0
+ 474              	.LVL27:
+ 475 0000 11402DE9 		stmfd	sp!, {r0, r4, lr}
+ 476              	.LCFI6:
+ 477              		.cfi_def_cfa_offset 12
+ 183:lib/console.c **** 	if (cons.initialized)
+ 478              		.loc 1 183 0
+ 479 0004 34309FE5 		ldr	r3, .L38
+ 480 0008 34209FE5 		ldr	r2, .L38+4
+ 481 000c 034092E7 		ldr	r4, [r2, r3]
+ 482              		.cfi_offset 14, -4
+ 483              		.cfi_offset 4, -8
+ 484              		.cfi_offset 0, -12
+ 485 0010 000054E3 		cmp	r4, #0
+ 182:lib/console.c **** {
+ 486              		.loc 1 182 0
+ 487 0014 0000CDE5 		strb	r0, [sp, #0]
+ 488              		.loc 1 183 0
+ 489 0018 0300000A 		beq	.L36
+ 184:lib/console.c **** 		return cons_rb_append(&c, 1);
+ 490              		.loc 1 184 0
+ 491 001c 0D00A0E1 		mov	r0, sp
+ 492              	.LVL28:
+ 493 0020 0110A0E3 		mov	r1, #1
+ 494 0024 FEFFFFEB 		bl	cons_rb_append
+ 495 0028 030000EA 		b	.L37
+ 496              	.L36:
+ 185:lib/console.c **** 	else {
+ 186:lib/console.c **** 		/* if the console is not active yet, we need to fall back */
+ 187:lib/console.c **** 		uart_putchar_wait(CONS_UART_NR, c);
+ 497              		.loc 1 187 0
+ 498 002c 0400A0E1 		mov	r0, r4
+ 499 0030 0010DDE5 		ldrb	r1, [sp, #0]	@ zero_extendqisi2
+ 500 0034 FEFFFFEB 		bl	uart_putchar_wait
+ 188:lib/console.c **** 		return 0;
+ 501              		.loc 1 188 0
+ 502 0038 0400A0E1 		mov	r0, r4
+ 503              	.L37:
+ 189:lib/console.c **** 	}
+ 190:lib/console.c **** }
+ 504              		.loc 1 190 0
+ 505 003c 1880BDE8 		ldmfd	sp!, {r3, r4, pc}
+ 506              	.L39:
+ 507              		.align	2
+ 508              	.L38:
+ 509 0040 08100000 		.word	4104
+ 510 0044 00000000 		.word	.LANCHOR0
+ 511              		.cfi_endproc
+ 512              	.LFE9:
+ 514              		.bss
+ 515              		.align	2
+ 516              		.set	.LANCHOR0,. + 0
+ 519              	cons:
+ 520 0000 00000000 		.space	4108
+ 520      00000000 
+ 520      00000000 
+ 520      00000000 
+ 520      00000000 
+ 521              		.text
+ 522              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 console.c
+     /tmp/ccTpYRZQ.s:12     .text.cons_rb_pull:0000000000000000 $a
+     /tmp/ccTpYRZQ.s:14     .text.cons_rb_pull:0000000000000000 cons_rb_pull
+     /tmp/ccTpYRZQ.s:82     .text.cons_rb_pull:0000000000000064 $d
+     /tmp/ccTpYRZQ.s:88     .text.__cons_rb_append:0000000000000000 $a
+     /tmp/ccTpYRZQ.s:90     .text.__cons_rb_append:0000000000000000 __cons_rb_append
+     /tmp/ccTpYRZQ.s:157    .text.__cons_rb_append:000000000000006c $d
+     /tmp/ccTpYRZQ.s:162    .text.cons_init:0000000000000000 $a
+     /tmp/ccTpYRZQ.s:165    .text.cons_init:0000000000000000 cons_init
+     /tmp/ccTpYRZQ.s:201    .text.cons_init:0000000000000038 $d
+     /tmp/ccTpYRZQ.s:207    .text.cons_rb_flush:0000000000000000 $a
+     /tmp/ccTpYRZQ.s:210    .text.cons_rb_flush:0000000000000000 cons_rb_flush
+     /tmp/ccTpYRZQ.s:263    .text.cons_rb_append:0000000000000000 $a
+     /tmp/ccTpYRZQ.s:266    .text.cons_rb_append:0000000000000000 cons_rb_append
+     /tmp/ccTpYRZQ.s:385    .text.cons_rb_append:00000000000000c0 $d
+     /tmp/ccTpYRZQ.s:392    .text.cons_puts:0000000000000000 $a
+     /tmp/ccTpYRZQ.s:395    .text.cons_puts:0000000000000000 cons_puts
+     /tmp/ccTpYRZQ.s:459    .text.cons_puts:0000000000000064 $d
+     /tmp/ccTpYRZQ.s:465    .text.cons_putchar:0000000000000000 $a
+     /tmp/ccTpYRZQ.s:468    .text.cons_putchar:0000000000000000 cons_putchar
+     /tmp/ccTpYRZQ.s:509    .text.cons_putchar:0000000000000040 $d
+     /tmp/ccTpYRZQ.s:515    .bss:0000000000000000 $d
+     /tmp/ccTpYRZQ.s:519    .bss:0000000000000000 cons
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+memcpy
+memset
+uart_putchar_nb
+uart_tx_busy
+uart_putchar_wait
+uart_irq_enable
+strlen

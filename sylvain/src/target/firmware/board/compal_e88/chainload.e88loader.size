@@ -1,0 +1,2 @@
+   text	   data	    bss	    dec	    hex	filename
+   4126	     32	  24900	  29058	   7182	board/compal_e88/chainload.e88loader.elf

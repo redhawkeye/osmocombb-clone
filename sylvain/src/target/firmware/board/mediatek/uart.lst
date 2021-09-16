@@ -1,0 +1,1401 @@
+   1              		.file	"uart.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text.uart_set_lcr7bit.clone.0,"ax",%progbits
+  12              		.align	2
+  14              	uart_set_lcr7bit.clone.0:
+  15              	.LFB47:
+  16              		.file 1 "board/mediatek/uart.c"
+   1:board/mediatek/uart.c **** /* MediaTek MT62xx internal UART Driver
+   2:board/mediatek/uart.c ****  *
+   3:board/mediatek/uart.c ****  * based on the Calypso driver, so there might be some cruft from it left...
+   4:board/mediatek/uart.c ****  *
+   5:board/mediatek/uart.c ****  * (C) 2010 by Harald Welte <laforge@gnumonks.org>
+   6:board/mediatek/uart.c ****  * (C) 2010 by Ingo Albrecht <prom@berlin.ccc.de>
+   7:board/mediatek/uart.c ****  * (C) 2010 by Steve Markgraf <steve@steve-m.de>
+   8:board/mediatek/uart.c ****  * (C) 2011 by Wolfram Sang <wolfram@the-dreams.de>
+   9:board/mediatek/uart.c ****  *
+  10:board/mediatek/uart.c ****  * All Rights Reserved
+  11:board/mediatek/uart.c ****  *
+  12:board/mediatek/uart.c ****  * This program is free software; you can redistribute it and/or modify
+  13:board/mediatek/uart.c ****  * it under the terms of the GNU General Public License as published by
+  14:board/mediatek/uart.c ****  * the Free Software Foundation; either version 2 of the License, or
+  15:board/mediatek/uart.c ****  * (at your option) any later version.
+  16:board/mediatek/uart.c ****  *
+  17:board/mediatek/uart.c ****  * This program is distributed in the hope that it will be useful,
+  18:board/mediatek/uart.c ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  19:board/mediatek/uart.c ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  20:board/mediatek/uart.c ****  * GNU General Public License for more details.
+  21:board/mediatek/uart.c ****  *
+  22:board/mediatek/uart.c ****  * You should have received a copy of the GNU General Public License along
+  23:board/mediatek/uart.c ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  24:board/mediatek/uart.c ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  25:board/mediatek/uart.c ****  *
+  26:board/mediatek/uart.c ****  */
+  27:board/mediatek/uart.c **** 
+  28:board/mediatek/uart.c **** #include <debug.h>
+  29:board/mediatek/uart.c **** #include <memory.h>
+  30:board/mediatek/uart.c **** #include <stdint.h>
+  31:board/mediatek/uart.c **** #include <string.h>
+  32:board/mediatek/uart.c **** #include <stdio.h>
+  33:board/mediatek/uart.c **** #include <defines.h>
+  34:board/mediatek/uart.c **** #include <uart.h>
+  35:board/mediatek/uart.c **** #include <console.h>
+  36:board/mediatek/uart.c **** 
+  37:board/mediatek/uart.c **** #include <comm/sercomm.h>
+  38:board/mediatek/uart.c **** 
+  39:board/mediatek/uart.c **** /* MT622x */
+  40:board/mediatek/uart.c **** #if 0
+  41:board/mediatek/uart.c **** #define BASE_ADDR_UART1	0x80130000
+  42:board/mediatek/uart.c **** #define BASE_ADDR_UART2	0x80180000
+  43:board/mediatek/uart.c **** #define BASE_ADDR_UART3	0x801b0000
+  44:board/mediatek/uart.c **** #endif
+  45:board/mediatek/uart.c **** 
+  46:board/mediatek/uart.c **** /* MT 6235 */
+  47:board/mediatek/uart.c **** #define BASE_ADDR_UART1	0x81030000
+  48:board/mediatek/uart.c **** 
+  49:board/mediatek/uart.c **** //TODO make UART2 and 3 work
+  50:board/mediatek/uart.c **** #define UART_REG(n,m)	(BASE_ADDR_UART1 + (m))
+  51:board/mediatek/uart.c **** 
+  52:board/mediatek/uart.c **** #define LCR7BIT		0x80
+  53:board/mediatek/uart.c **** #define LCRBFBIT	0x40
+  54:board/mediatek/uart.c **** #define MCR6BIT		0x20
+  55:board/mediatek/uart.c **** #define REG_OFFS(m)	((m) & ~(LCR7BIT|LCRBFBIT|MCR6BIT))
+  56:board/mediatek/uart.c **** /* read access LCR[7] = 0 */
+  57:board/mediatek/uart.c **** enum uart_reg {
+  58:board/mediatek/uart.c **** 	RBR		= 0x00,
+  59:board/mediatek/uart.c **** 	IER		= 0x04,
+  60:board/mediatek/uart.c **** 	IIR		= 0x08,
+  61:board/mediatek/uart.c **** 	LCR		= 0x0c,
+  62:board/mediatek/uart.c **** 	MCR		= 0x10,
+  63:board/mediatek/uart.c **** 	LSR		= 0x14,
+  64:board/mediatek/uart.c **** 	MSR		= 0x18,
+  65:board/mediatek/uart.c **** 	SCR		= 0x1c,
+  66:board/mediatek/uart.c **** 	AUTOBAUD_EN	= 0x20,
+  67:board/mediatek/uart.c **** 	HIGHSPEED	= 0x24,
+  68:board/mediatek/uart.c **** 	SAMPLE_COUNT	= 0x28,
+  69:board/mediatek/uart.c **** 	SAMPLE_POINT	= 0x2c,
+  70:board/mediatek/uart.c **** 	AUTOBAUD_REG	= 0x30,
+  71:board/mediatek/uart.c **** 	RATE_FIX_REG	= 0x34, /* undocumented */
+  72:board/mediatek/uart.c **** 	AUTOBAUDSAMPLE	= 0x38,
+  73:board/mediatek/uart.c **** 	GUARD		= 0x3c,
+  74:board/mediatek/uart.c **** 	ESCAPE_DAT	= 0x40,
+  75:board/mediatek/uart.c **** 	ESCAPE_EN	= 0x44,
+  76:board/mediatek/uart.c **** 	SLEEP_EN	= 0x48,
+  77:board/mediatek/uart.c **** 	VFIFO_EN	= 0x4c,
+  78:board/mediatek/uart.c **** /* read access LCR[7] = 1 */
+  79:board/mediatek/uart.c **** 	DLL	= RBR,
+  80:board/mediatek/uart.c **** 	DLH	= IER,
+  81:board/mediatek/uart.c **** /* read/write access LCR[7:0] = 0xbf */
+  82:board/mediatek/uart.c **** 	EFR	= IIR | LCRBFBIT,
+  83:board/mediatek/uart.c **** 	XON1	= MCR | LCRBFBIT,
+  84:board/mediatek/uart.c **** 	XON2	= LSR | LCRBFBIT,
+  85:board/mediatek/uart.c **** 	XOFF1	= MSR | LCRBFBIT,
+  86:board/mediatek/uart.c **** 	XOFF2 	= SCR | LCRBFBIT,
+  87:board/mediatek/uart.c **** };
+  88:board/mediatek/uart.c **** 
+  89:board/mediatek/uart.c **** enum fcr_bits {
+  90:board/mediatek/uart.c **** 	FIFO_EN		= (1 << 0),
+  91:board/mediatek/uart.c **** 	RX_FIFO_CLEAR	= (1 << 1),
+  92:board/mediatek/uart.c **** 	TX_FIFO_CLEAR	= (1 << 2),
+  93:board/mediatek/uart.c **** 	DMA_MODE	= (1 << 3),
+  94:board/mediatek/uart.c **** };
+  95:board/mediatek/uart.c **** #define TX_FIFO_TRIG_SHIFT	4
+  96:board/mediatek/uart.c **** #define RX_FIFO_TRIG_SHIFT	6
+  97:board/mediatek/uart.c **** 
+  98:board/mediatek/uart.c **** enum iir_bits {
+  99:board/mediatek/uart.c **** 	IIR_INT_PENDING			= 0x01,
+ 100:board/mediatek/uart.c **** 	IIR_INT_TYPE			= 0x3E,
+ 101:board/mediatek/uart.c **** 	IIR_INT_TYPE_RX_STATUS_ERROR 	= 0x06,
+ 102:board/mediatek/uart.c **** 	IIR_INT_TYPE_RX_TIMEOUT		= 0x0C,
+ 103:board/mediatek/uart.c **** 	IIR_INT_TYPE_RBR		= 0x04,
+ 104:board/mediatek/uart.c **** 	IIR_INT_TYPE_THR		= 0x02,
+ 105:board/mediatek/uart.c **** 	IIR_INT_TYPE_MSR		= 0x00,
+ 106:board/mediatek/uart.c **** 	IIR_INT_TYPE_XOFF		= 0x10,
+ 107:board/mediatek/uart.c **** 	IIR_INT_TYPE_FLOW		= 0x20,
+ 108:board/mediatek/uart.c **** 	IIR_FCR0_MIRROR			= 0xC0,
+ 109:board/mediatek/uart.c **** };
+ 110:board/mediatek/uart.c **** 
+ 111:board/mediatek/uart.c **** 
+ 112:board/mediatek/uart.c **** /* enable or disable the divisor latch for access to DLL, DLH */
+ 113:board/mediatek/uart.c **** static void uart_set_lcr7bit(int uart, int on)
+  17              		.loc 1 113 0
+  18              		.cfi_startproc
+  19              		@ args = 0, pretend = 0, frame = 0
+  20              		@ frame_needed = 0, uses_anonymous_args = 0
+  21              		@ link register save eliminated.
+  22              	.LVL0:
+ 114:board/mediatek/uart.c **** {
+ 115:board/mediatek/uart.c **** 	uint8_t reg;
+ 116:board/mediatek/uart.c **** 
+ 117:board/mediatek/uart.c **** 	reg = readb(UART_REG(uart, LCR));
+  23              		.loc 1 117 0
+  24 0000 1C309FE5 		ldr	r3, .L4
+  25 0004 0C30D3E5 		ldrb	r3, [r3, #12]	@ zero_extendqisi2
+ 118:board/mediatek/uart.c **** 	if (on)
+  26              		.loc 1 118 0
+  27 0008 000050E3 		cmp	r0, #0
+ 117:board/mediatek/uart.c **** 	reg = readb(UART_REG(uart, LCR));
+  28              		.loc 1 117 0
+  29 000c FF2003E2 		and	r2, r3, #255
+  30              	.LVL1:
+ 119:board/mediatek/uart.c **** 		reg |= (1 << 7);
+  31              		.loc 1 119 0
+  32 0010 80308213 		orrne	r3, r2, #128
+  33              	.LVL2:
+ 120:board/mediatek/uart.c **** 	else
+ 121:board/mediatek/uart.c **** 		reg &= ~(1 << 7);
+ 122:board/mediatek/uart.c **** 	writeb(reg, UART_REG(uart, LCR));
+  34              		.loc 1 122 0
+  35 0014 08209FE5 		ldr	r2, .L4
+ 121:board/mediatek/uart.c **** 		reg &= ~(1 << 7);
+  36              		.loc 1 121 0
+  37 0018 7F300302 		andeq	r3, r3, #127
+  38              	.LVL3:
+  39              		.loc 1 122 0
+  40 001c 0C30C2E5 		strb	r3, [r2, #12]
+ 123:board/mediatek/uart.c **** }
+  41              		.loc 1 123 0
+  42 0020 1EFF2FE1 		bx	lr
+  43              	.L5:
+  44              		.align	2
+  45              	.L4:
+  46 0024 00000381 		.word	-2130509824
+  47              		.cfi_endproc
+  48              	.LFE47:
+  50              		.section	.text.uart_set_lcr_bf.clone.1,"ax",%progbits
+  51              		.align	2
+  53              	uart_set_lcr_bf.clone.1:
+  54              	.LFB48:
+ 124:board/mediatek/uart.c **** 
+ 125:board/mediatek/uart.c **** static uint8_t old_lcr;
+ 126:board/mediatek/uart.c **** static void uart_set_lcr_bf(int uart, int on)
+  55              		.loc 1 126 0
+  56              		.cfi_startproc
+  57              		@ args = 0, pretend = 0, frame = 0
+  58              		@ frame_needed = 0, uses_anonymous_args = 0
+  59              		@ link register save eliminated.
+  60              	.LVL4:
+ 127:board/mediatek/uart.c **** {
+ 128:board/mediatek/uart.c **** 	if (on) {
+  61              		.loc 1 128 0
+  62 0000 000050E3 		cmp	r0, #0
+ 129:board/mediatek/uart.c **** 		old_lcr = readb(UART_REG(uart, LCR));
+  63              		.loc 1 129 0
+  64 0004 20209F15 		ldrne	r2, .L9
+  65 0008 20309FE5 		ldr	r3, .L9+4
+  66 000c 0C10D215 		ldrneb	r1, [r2, #12]	@ zero_extendqisi2
+ 130:board/mediatek/uart.c **** 		writeb(0xBF, UART_REG(uart, LCR));
+ 131:board/mediatek/uart.c **** 	} else {
+ 132:board/mediatek/uart.c **** 		writeb(old_lcr, UART_REG(uart, LCR));
+  67              		.loc 1 132 0
+  68 0010 0020D305 		ldreqb	r2, [r3, #0]	@ zero_extendqisi2
+  69 0014 10309F05 		ldreq	r3, .L9
+ 129:board/mediatek/uart.c **** 		old_lcr = readb(UART_REG(uart, LCR));
+  70              		.loc 1 129 0
+  71 0018 0010C315 		strneb	r1, [r3, #0]
+ 130:board/mediatek/uart.c **** 		writeb(0xBF, UART_REG(uart, LCR));
+  72              		.loc 1 130 0
+  73 001c 4030E013 		mvnne	r3, #64
+  74 0020 0C30C215 		strneb	r3, [r2, #12]
+  75              		.loc 1 132 0
+  76 0024 0C20C305 		streqb	r2, [r3, #12]
+  77 0028 1EFF2FE1 		bx	lr
+  78              	.L10:
+  79              		.align	2
+  80              	.L9:
+  81 002c 00000381 		.word	-2130509824
+  82 0030 00000000 		.word	.LANCHOR0
+  83              		.cfi_endproc
+  84              	.LFE48:
+  86              		.section	.text.uart_set_mcr6bit.clone.2,"ax",%progbits
+  87              		.align	2
+  89              	uart_set_mcr6bit.clone.2:
+  90              	.LFB49:
+ 133:board/mediatek/uart.c **** 	}
+ 134:board/mediatek/uart.c **** }
+ 135:board/mediatek/uart.c **** 
+ 136:board/mediatek/uart.c **** /* Enable or disable the TCR_TLR latch bit in MCR[6] */
+ 137:board/mediatek/uart.c **** static void uart_set_mcr6bit(int uart, int on)
+  91              		.loc 1 137 0
+  92              		.cfi_startproc
+  93              		@ args = 0, pretend = 0, frame = 0
+  94              		@ frame_needed = 0, uses_anonymous_args = 0
+  95              		@ link register save eliminated.
+  96              	.LVL5:
+ 138:board/mediatek/uart.c **** {
+ 139:board/mediatek/uart.c **** 	uint8_t mcr;
+ 140:board/mediatek/uart.c **** 	/* we assume EFR[4] is always set to 1 */
+ 141:board/mediatek/uart.c **** 	mcr = readb(UART_REG(uart, MCR));
+  97              		.loc 1 141 0
+  98 0000 1C309FE5 		ldr	r3, .L14
+  99 0004 1030D3E5 		ldrb	r3, [r3, #16]	@ zero_extendqisi2
+ 142:board/mediatek/uart.c **** 	if (on)
+ 100              		.loc 1 142 0
+ 101 0008 000050E3 		cmp	r0, #0
+ 141:board/mediatek/uart.c **** 	mcr = readb(UART_REG(uart, MCR));
+ 102              		.loc 1 141 0
+ 103 000c FF2003E2 		and	r2, r3, #255
+ 104              	.LVL6:
+ 143:board/mediatek/uart.c **** 		mcr |= (1 << 6);
+ 105              		.loc 1 143 0
+ 106 0010 40308213 		orrne	r3, r2, #64
+ 107              	.LVL7:
+ 144:board/mediatek/uart.c **** 	else
+ 145:board/mediatek/uart.c **** 		mcr &= ~(1 << 6);
+ 146:board/mediatek/uart.c **** 	writeb(mcr, UART_REG(uart, MCR));
+ 108              		.loc 1 146 0
+ 109 0014 08209FE5 		ldr	r2, .L14
+ 145:board/mediatek/uart.c **** 		mcr &= ~(1 << 6);
+ 110              		.loc 1 145 0
+ 111 0018 BF300302 		andeq	r3, r3, #191
+ 112              	.LVL8:
+ 113              		.loc 1 146 0
+ 114 001c 1030C2E5 		strb	r3, [r2, #16]
+ 147:board/mediatek/uart.c **** }
+ 115              		.loc 1 147 0
+ 116 0020 1EFF2FE1 		bx	lr
+ 117              	.L15:
+ 118              		.align	2
+ 119              	.L14:
+ 120 0024 00000381 		.word	-2130509824
+ 121              		.cfi_endproc
+ 122              	.LFE49:
+ 124              		.section	.text.uart_reg_write.clone.3,"ax",%progbits
+ 125              		.align	2
+ 127              	uart_reg_write.clone.3:
+ 128              	.LFB50:
+ 148:board/mediatek/uart.c **** 
+ 149:board/mediatek/uart.c **** static void uart_reg_write(int uart, enum uart_reg reg, uint8_t val)
+ 129              		.loc 1 149 0
+ 130              		.cfi_startproc
+ 131              		@ args = 0, pretend = 0, frame = 0
+ 132              		@ frame_needed = 0, uses_anonymous_args = 0
+ 133              	.LVL9:
+ 134 0000 70402DE9 		stmfd	sp!, {r4, r5, r6, lr}
+ 135              	.LCFI0:
+ 136              		.cfi_def_cfa_offset 16
+ 150:board/mediatek/uart.c **** {
+ 151:board/mediatek/uart.c **** 	if (reg & LCRBFBIT)
+ 137              		.loc 1 151 0
+ 138 0004 405010E2 		ands	r5, r0, #64
+ 139              		.cfi_offset 14, -4
+ 140              		.cfi_offset 6, -8
+ 141              		.cfi_offset 5, -12
+ 142              		.cfi_offset 4, -16
+ 149:board/mediatek/uart.c **** static void uart_reg_write(int uart, enum uart_reg reg, uint8_t val)
+ 143              		.loc 1 149 0
+ 144 0008 0040A0E1 		mov	r4, r0
+ 145 000c 0160A0E1 		mov	r6, r1
+ 146              		.loc 1 151 0
+ 147 0010 0200000A 		beq	.L17
+ 152:board/mediatek/uart.c **** 		uart_set_lcr_bf(uart, 1);
+ 148              		.loc 1 152 0
+ 149 0014 0100A0E3 		mov	r0, #1
+ 150              	.LVL10:
+ 151 0018 FEFFFFEB 		bl	uart_set_lcr_bf.clone.1
+ 152              	.LVL11:
+ 153 001c 070000EA 		b	.L18
+ 154              	.LVL12:
+ 155              	.L17:
+ 153:board/mediatek/uart.c **** 	else if (reg & LCR7BIT)
+ 156              		.loc 1 153 0
+ 157 0020 800010E3 		tst	r0, #128
+ 158 0024 0200000A 		beq	.L19
+ 154:board/mediatek/uart.c **** 		uart_set_lcr7bit(uart, 1);
+ 159              		.loc 1 154 0
+ 160 0028 0100A0E3 		mov	r0, #1
+ 161 002c FEFFFFEB 		bl	uart_set_lcr7bit.clone.0
+ 162              	.LVL13:
+ 163 0030 020000EA 		b	.L18
+ 164              	.LVL14:
+ 165              	.L19:
+ 155:board/mediatek/uart.c **** 	else if (reg & MCR6BIT)
+ 166              		.loc 1 155 0
+ 167 0034 200010E3 		tst	r0, #32
+ 156:board/mediatek/uart.c **** 		uart_set_mcr6bit(uart, 1);
+ 168              		.loc 1 156 0
+ 169 0038 0100A013 		movne	r0, #1
+ 170 003c FEFFFF1B 		blne	uart_set_mcr6bit.clone.2
+ 171              	.LVL15:
+ 172              	.L18:
+ 157:board/mediatek/uart.c **** 
+ 158:board/mediatek/uart.c **** 	writeb(val, UART_REG(uart, REG_OFFS(reg)));
+ 173              		.loc 1 158 0
+ 174 0040 E030C4E3 		bic	r3, r4, #224
+ 175 0044 813483E2 		add	r3, r3, #-2130706432
+ 176 0048 033883E2 		add	r3, r3, #196608
+ 159:board/mediatek/uart.c **** 
+ 160:board/mediatek/uart.c **** 	if (reg & LCRBFBIT)
+ 177              		.loc 1 160 0
+ 178 004c 000055E3 		cmp	r5, #0
+ 158:board/mediatek/uart.c **** 	writeb(val, UART_REG(uart, REG_OFFS(reg)));
+ 179              		.loc 1 158 0
+ 180 0050 0060C3E5 		strb	r6, [r3, #0]
+ 181              		.loc 1 160 0
+ 182 0054 0200000A 		beq	.L20
+ 161:board/mediatek/uart.c **** 		uart_set_lcr_bf(uart, 0);
+ 183              		.loc 1 161 0
+ 184 0058 0000A0E3 		mov	r0, #0
+ 162:board/mediatek/uart.c **** 	else if (reg & LCR7BIT)
+ 163:board/mediatek/uart.c **** 		uart_set_lcr7bit(uart, 0);
+ 164:board/mediatek/uart.c **** 	else if (reg & MCR6BIT)
+ 165:board/mediatek/uart.c **** 		uart_set_mcr6bit(uart, 0);
+ 166:board/mediatek/uart.c **** }
+ 185              		.loc 1 166 0
+ 186 005c 7040BDE8 		ldmfd	sp!, {r4, r5, r6, lr}
+ 161:board/mediatek/uart.c **** 		uart_set_lcr_bf(uart, 0);
+ 187              		.loc 1 161 0
+ 188 0060 FEFFFFEA 		b	uart_set_lcr_bf.clone.1
+ 189              	.L20:
+ 162:board/mediatek/uart.c **** 	else if (reg & LCR7BIT)
+ 190              		.loc 1 162 0
+ 191 0064 800014E3 		tst	r4, #128
+ 192 0068 0200000A 		beq	.L21
+ 163:board/mediatek/uart.c **** 		uart_set_lcr7bit(uart, 0);
+ 193              		.loc 1 163 0
+ 194 006c 0500A0E1 		mov	r0, r5
+ 195              		.loc 1 166 0
+ 196 0070 7040BDE8 		ldmfd	sp!, {r4, r5, r6, lr}
+ 163:board/mediatek/uart.c **** 		uart_set_lcr7bit(uart, 0);
+ 197              		.loc 1 163 0
+ 198 0074 FEFFFFEA 		b	uart_set_lcr7bit.clone.0
+ 199              	.L21:
+ 164:board/mediatek/uart.c **** 	else if (reg & MCR6BIT)
+ 200              		.loc 1 164 0
+ 201 0078 200014E3 		tst	r4, #32
+ 202 007c 7080BD08 		ldmeqfd	sp!, {r4, r5, r6, pc}
+ 165:board/mediatek/uart.c **** 		uart_set_mcr6bit(uart, 0);
+ 203              		.loc 1 165 0
+ 204 0080 0500A0E1 		mov	r0, r5
+ 205              		.loc 1 166 0
+ 206 0084 7040BDE8 		ldmfd	sp!, {r4, r5, r6, lr}
+ 165:board/mediatek/uart.c **** 		uart_set_mcr6bit(uart, 0);
+ 207              		.loc 1 165 0
+ 208 0088 FEFFFFEA 		b	uart_set_mcr6bit.clone.2
+ 209              		.cfi_endproc
+ 210              	.LFE50:
+ 212              		.section	.text.uart_reg_read.clone.4,"ax",%progbits
+ 213              		.align	2
+ 215              	uart_reg_read.clone.4:
+ 216              	.LFB51:
+ 167:board/mediatek/uart.c **** 
+ 168:board/mediatek/uart.c **** /* read from a UART register, applying any required latch bits */
+ 169:board/mediatek/uart.c **** static uint8_t uart_reg_read(int uart, enum uart_reg reg)
+ 217              		.loc 1 169 0
+ 218              		.cfi_startproc
+ 219              		@ args = 0, pretend = 0, frame = 0
+ 220              		@ frame_needed = 0, uses_anonymous_args = 0
+ 221              	.LVL16:
+ 222 0000 70402DE9 		stmfd	sp!, {r4, r5, r6, lr}
+ 223              	.LCFI1:
+ 224              		.cfi_def_cfa_offset 16
+ 170:board/mediatek/uart.c **** {
+ 171:board/mediatek/uart.c **** 	uint8_t ret;
+ 172:board/mediatek/uart.c **** 
+ 173:board/mediatek/uart.c **** 	if (reg & LCRBFBIT)
+ 225              		.loc 1 173 0
+ 226 0004 405010E2 		ands	r5, r0, #64
+ 227              		.cfi_offset 14, -4
+ 228              		.cfi_offset 6, -8
+ 229              		.cfi_offset 5, -12
+ 230              		.cfi_offset 4, -16
+ 169:board/mediatek/uart.c **** static uint8_t uart_reg_read(int uart, enum uart_reg reg)
+ 231              		.loc 1 169 0
+ 232 0008 0040A0E1 		mov	r4, r0
+ 233              		.loc 1 173 0
+ 234 000c 0200000A 		beq	.L24
+ 174:board/mediatek/uart.c **** 		uart_set_lcr_bf(uart, 1);
+ 235              		.loc 1 174 0
+ 236 0010 0100A0E3 		mov	r0, #1
+ 237              	.LVL17:
+ 238 0014 FEFFFFEB 		bl	uart_set_lcr_bf.clone.1
+ 239 0018 070000EA 		b	.L25
+ 240              	.L24:
+ 175:board/mediatek/uart.c **** 	else if (reg & LCR7BIT)
+ 241              		.loc 1 175 0
+ 242 001c 800010E3 		tst	r0, #128
+ 243 0020 0200000A 		beq	.L26
+ 176:board/mediatek/uart.c **** 		uart_set_lcr7bit(uart, 1);
+ 244              		.loc 1 176 0
+ 245 0024 0100A0E3 		mov	r0, #1
+ 246 0028 FEFFFFEB 		bl	uart_set_lcr7bit.clone.0
+ 247 002c 020000EA 		b	.L25
+ 248              	.L26:
+ 177:board/mediatek/uart.c **** 	else if (reg & MCR6BIT)
+ 249              		.loc 1 177 0
+ 250 0030 200010E3 		tst	r0, #32
+ 178:board/mediatek/uart.c **** 		uart_set_mcr6bit(uart, 1);
+ 251              		.loc 1 178 0
+ 252 0034 0100A013 		movne	r0, #1
+ 253 0038 FEFFFF1B 		blne	uart_set_mcr6bit.clone.2
+ 254              	.L25:
+ 179:board/mediatek/uart.c **** 
+ 180:board/mediatek/uart.c **** 	ret = readb(UART_REG(uart, REG_OFFS(reg)));
+ 255              		.loc 1 180 0
+ 256 003c E030C4E3 		bic	r3, r4, #224
+ 257 0040 813483E2 		add	r3, r3, #-2130706432
+ 258 0044 033883E2 		add	r3, r3, #196608
+ 259 0048 0060D3E5 		ldrb	r6, [r3, #0]	@ zero_extendqisi2
+ 181:board/mediatek/uart.c **** 
+ 182:board/mediatek/uart.c **** 	if (reg & LCRBFBIT)
+ 260              		.loc 1 182 0
+ 261 004c 000055E3 		cmp	r5, #0
+ 180:board/mediatek/uart.c **** 	ret = readb(UART_REG(uart, REG_OFFS(reg)));
+ 262              		.loc 1 180 0
+ 263 0050 FF6006E2 		and	r6, r6, #255
+ 264              	.LVL18:
+ 265              		.loc 1 182 0
+ 266 0054 0200000A 		beq	.L27
+ 183:board/mediatek/uart.c **** 		uart_set_lcr_bf(uart, 0);
+ 267              		.loc 1 183 0
+ 268 0058 0000A0E3 		mov	r0, #0
+ 269 005c FEFFFFEB 		bl	uart_set_lcr_bf.clone.1
+ 270 0060 070000EA 		b	.L28
+ 271              	.L27:
+ 184:board/mediatek/uart.c **** 	else if (reg & LCR7BIT)
+ 272              		.loc 1 184 0
+ 273 0064 800014E3 		tst	r4, #128
+ 274 0068 0200000A 		beq	.L29
+ 185:board/mediatek/uart.c **** 		uart_set_lcr7bit(uart, 0);
+ 275              		.loc 1 185 0
+ 276 006c 0500A0E1 		mov	r0, r5
+ 277 0070 FEFFFFEB 		bl	uart_set_lcr7bit.clone.0
+ 278 0074 020000EA 		b	.L28
+ 279              	.L29:
+ 186:board/mediatek/uart.c **** 	else if (reg & MCR6BIT)
+ 280              		.loc 1 186 0
+ 281 0078 200014E3 		tst	r4, #32
+ 187:board/mediatek/uart.c **** 		uart_set_mcr6bit(uart, 0);
+ 282              		.loc 1 187 0
+ 283 007c 0500A011 		movne	r0, r5
+ 284 0080 FEFFFF1B 		blne	uart_set_mcr6bit.clone.2
+ 285              	.L28:
+ 188:board/mediatek/uart.c **** 
+ 189:board/mediatek/uart.c **** 	return ret;
+ 190:board/mediatek/uart.c **** }
+ 286              		.loc 1 190 0
+ 287 0084 0600A0E1 		mov	r0, r6
+ 288 0088 7080BDE8 		ldmfd	sp!, {r4, r5, r6, pc}
+ 289              		.cfi_endproc
+ 290              	.LFE51:
+ 292              		.section	.text.uart_irq_enable,"ax",%progbits
+ 293              		.align	2
+ 294              		.global	uart_irq_enable
+ 296              	uart_irq_enable:
+ 297              	.LFB41:
+ 191:board/mediatek/uart.c **** 
+ 192:board/mediatek/uart.c **** static void uart_irq_handler_cons(__unused int irqnr)
+ 193:board/mediatek/uart.c **** {
+ 194:board/mediatek/uart.c **** 	const uint8_t uart = CONS_UART_NR;
+ 195:board/mediatek/uart.c **** 	uint8_t iir;
+ 196:board/mediatek/uart.c **** 
+ 197:board/mediatek/uart.c **** 	//uart_putchar_nb(uart, 'U');
+ 198:board/mediatek/uart.c **** 
+ 199:board/mediatek/uart.c **** 	iir = uart_reg_read(uart, IIR);
+ 200:board/mediatek/uart.c **** 	if (iir & IIR_INT_PENDING)
+ 201:board/mediatek/uart.c **** 		return;
+ 202:board/mediatek/uart.c **** 
+ 203:board/mediatek/uart.c **** 	switch (iir & IIR_INT_TYPE) {
+ 204:board/mediatek/uart.c **** 	case IIR_INT_TYPE_RBR:
+ 205:board/mediatek/uart.c **** 		break;
+ 206:board/mediatek/uart.c **** 	case IIR_INT_TYPE_THR:
+ 207:board/mediatek/uart.c **** 		if (cons_rb_flush() == 1) {
+ 208:board/mediatek/uart.c **** 			/* everything was flushed, disable RBR IRQ */
+ 209:board/mediatek/uart.c **** 			uint8_t ier = uart_reg_read(uart, IER);
+ 210:board/mediatek/uart.c **** 			ier &= ~(1 << 1);
+ 211:board/mediatek/uart.c **** 			uart_reg_write(uart, IER, ier);
+ 212:board/mediatek/uart.c **** 		}
+ 213:board/mediatek/uart.c **** 		break;
+ 214:board/mediatek/uart.c **** 	case IIR_INT_TYPE_MSR:
+ 215:board/mediatek/uart.c **** 		break;
+ 216:board/mediatek/uart.c **** 	case IIR_INT_TYPE_RX_STATUS_ERROR:
+ 217:board/mediatek/uart.c **** 		break;
+ 218:board/mediatek/uart.c **** 	case IIR_INT_TYPE_RX_TIMEOUT:
+ 219:board/mediatek/uart.c **** 		break;
+ 220:board/mediatek/uart.c **** 	case IIR_INT_TYPE_XOFF:
+ 221:board/mediatek/uart.c **** 		break;
+ 222:board/mediatek/uart.c **** 	}
+ 223:board/mediatek/uart.c **** }
+ 224:board/mediatek/uart.c **** 
+ 225:board/mediatek/uart.c **** static void uart_irq_handler_sercomm(__unused int irqnr)
+ 226:board/mediatek/uart.c **** {
+ 227:board/mediatek/uart.c **** 	const uint8_t uart = SERCOMM_UART_NR;
+ 228:board/mediatek/uart.c **** 	uint8_t iir, ch;
+ 229:board/mediatek/uart.c **** 
+ 230:board/mediatek/uart.c **** 	//uart_putchar_nb(uart, 'U');
+ 231:board/mediatek/uart.c **** 
+ 232:board/mediatek/uart.c **** 	iir = uart_reg_read(uart, IIR);
+ 233:board/mediatek/uart.c **** 	if (iir & IIR_INT_PENDING)
+ 234:board/mediatek/uart.c **** 		return;
+ 235:board/mediatek/uart.c **** 
+ 236:board/mediatek/uart.c **** 	switch (iir & IIR_INT_TYPE) {
+ 237:board/mediatek/uart.c **** 	case IIR_INT_TYPE_RX_TIMEOUT:
+ 238:board/mediatek/uart.c **** 	case IIR_INT_TYPE_RBR:
+ 239:board/mediatek/uart.c **** 		/* as long as we have rx data available */
+ 240:board/mediatek/uart.c **** 		while (uart_getchar_nb(uart, &ch)) {
+ 241:board/mediatek/uart.c **** 			if (sercomm_drv_rx_char(ch) < 0) {
+ 242:board/mediatek/uart.c **** 				/* sercomm cannot receive more data right now */
+ 243:board/mediatek/uart.c **** 				uart_irq_enable(uart, UART_IRQ_RX_CHAR, 0);
+ 244:board/mediatek/uart.c **** 			}
+ 245:board/mediatek/uart.c **** 		}
+ 246:board/mediatek/uart.c **** 		break;
+ 247:board/mediatek/uart.c **** 	case IIR_INT_TYPE_THR:
+ 248:board/mediatek/uart.c **** 		/* as long as we have space in the FIFO */
+ 249:board/mediatek/uart.c **** 		while (!uart_tx_busy(uart)) {
+ 250:board/mediatek/uart.c **** 			/* get a byte from sercomm */
+ 251:board/mediatek/uart.c **** 			if (!sercomm_drv_pull(&ch)) {
+ 252:board/mediatek/uart.c **** 				/* no more bytes in sercomm, stop TX interrupts */
+ 253:board/mediatek/uart.c **** 				uart_irq_enable(uart, UART_IRQ_TX_EMPTY, 0);
+ 254:board/mediatek/uart.c **** 				break;
+ 255:board/mediatek/uart.c **** 			}
+ 256:board/mediatek/uart.c **** 			/* write the byte into the TX FIFO */
+ 257:board/mediatek/uart.c **** 			uart_putchar_nb(uart, ch);
+ 258:board/mediatek/uart.c **** 		}
+ 259:board/mediatek/uart.c **** 		break;
+ 260:board/mediatek/uart.c **** 	case IIR_INT_TYPE_MSR:
+ 261:board/mediatek/uart.c **** 		printf("UART IRQ MSR\n");
+ 262:board/mediatek/uart.c **** 		break;
+ 263:board/mediatek/uart.c **** 	case IIR_INT_TYPE_RX_STATUS_ERROR:
+ 264:board/mediatek/uart.c **** 		printf("UART IRQ RX_SE\n");
+ 265:board/mediatek/uart.c **** 		break;
+ 266:board/mediatek/uart.c **** 	case IIR_INT_TYPE_XOFF:
+ 267:board/mediatek/uart.c **** 		printf("UART IRQXOFF\n");
+ 268:board/mediatek/uart.c **** 		break;
+ 269:board/mediatek/uart.c **** 	}
+ 270:board/mediatek/uart.c **** }
+ 271:board/mediatek/uart.c **** 
+ 272:board/mediatek/uart.c **** void uart_init(uint8_t uart, __unused uint8_t interrupts)
+ 273:board/mediatek/uart.c **** {
+ 274:board/mediatek/uart.c **** 	/* no interrupts, only polling so far */
+ 275:board/mediatek/uart.c **** 
+ 276:board/mediatek/uart.c **** 	uart_reg_write(uart, IER, 0x00);
+ 277:board/mediatek/uart.c **** 	if (uart == CONS_UART_NR) {
+ 278:board/mediatek/uart.c **** 		cons_init();
+ 279:board/mediatek/uart.c **** 	} else {
+ 280:board/mediatek/uart.c **** 		sercomm_init();
+ 281:board/mediatek/uart.c **** 		uart_irq_enable(uart, UART_IRQ_RX_CHAR, 1);
+ 282:board/mediatek/uart.c **** 	}
+ 283:board/mediatek/uart.c **** 
+ 284:board/mediatek/uart.c **** 	uart_reg_write(uart, AUTOBAUD_EN, 0x00); /* disable AUTOBAUD */
+ 285:board/mediatek/uart.c **** 	uart_reg_write(uart,   EFR, 0x10); /* Enhanced Features Register */
+ 286:board/mediatek/uart.c **** 
+ 287:board/mediatek/uart.c **** 	/* no XON/XOFF flow control, ENHANCED_EN, no auto-RTS/CTS */
+ 288:board/mediatek/uart.c **** 	uart_reg_write(uart, EFR, (1 << 4));
+ 289:board/mediatek/uart.c **** 	/* enable Tx/Rx FIFO, Tx trigger at 56 spaces, Rx trigger at 60 chars */
+ 290:board/mediatek/uart.c **** 	//FIXME check those FIFO settings
+ 291:board/mediatek/uart.c **** 	uart_reg_write(uart, IIR, FIFO_EN | RX_FIFO_CLEAR | TX_FIFO_CLEAR |
+ 292:board/mediatek/uart.c **** 			(3 << TX_FIFO_TRIG_SHIFT) | (1 << RX_FIFO_TRIG_SHIFT));
+ 293:board/mediatek/uart.c **** 
+ 294:board/mediatek/uart.c **** 	/* RBR interrupt only when TX FIFO and TX shift register are empty */
+ 295:board/mediatek/uart.c **** 	uart_reg_write(uart, SCR, (1 << 0));// | (1 << 3));
+ 296:board/mediatek/uart.c **** 
+ 297:board/mediatek/uart.c **** 	/* 8 bit, 1 stop bit, no parity, no break */
+ 298:board/mediatek/uart.c **** 	uart_reg_write(uart, LCR, 0x03);
+ 299:board/mediatek/uart.c **** 
+ 300:board/mediatek/uart.c **** 	uart_set_lcr7bit(uart, 0);
+ 301:board/mediatek/uart.c **** }
+ 302:board/mediatek/uart.c **** 
+ 303:board/mediatek/uart.c **** void uart_poll(uint8_t uart) {
+ 304:board/mediatek/uart.c **** 	if(uart == CONS_UART_NR) {
+ 305:board/mediatek/uart.c **** 		uart_irq_handler_cons(0);
+ 306:board/mediatek/uart.c **** 	} else {
+ 307:board/mediatek/uart.c **** 		uart_irq_handler_sercomm(0);
+ 308:board/mediatek/uart.c **** 	}
+ 309:board/mediatek/uart.c **** }
+ 310:board/mediatek/uart.c **** 
+ 311:board/mediatek/uart.c **** void uart_irq_enable(uint8_t uart, enum uart_irq irq, int on)
+ 312:board/mediatek/uart.c **** {
+ 298              		.loc 1 312 0
+ 299              		.cfi_startproc
+ 300              		@ args = 0, pretend = 0, frame = 0
+ 301              		@ frame_needed = 0, uses_anonymous_args = 0
+ 302              	.LVL19:
+ 303 0000 30402DE9 		stmfd	sp!, {r4, r5, lr}
+ 304              	.LCFI2:
+ 305              		.cfi_def_cfa_offset 12
+ 313:board/mediatek/uart.c **** 	uint8_t ier = uart_reg_read(uart, IER);
+ 306              		.loc 1 313 0
+ 307 0004 0400A0E3 		mov	r0, #4
+ 308              	.LVL20:
+ 312:board/mediatek/uart.c **** {
+ 309              		.loc 1 312 0
+ 310 0008 0140A0E1 		mov	r4, r1
+ 311              		.cfi_offset 14, -4
+ 312              		.cfi_offset 5, -8
+ 313              		.cfi_offset 4, -12
+ 314 000c 0250A0E1 		mov	r5, r2
+ 315              		.loc 1 313 0
+ 316 0010 FEFFFFEB 		bl	uart_reg_read.clone.4
+ 317              	.LVL21:
+ 318 0014 010054E3 		cmp	r4, #1
+ 319 0018 20309F95 		ldrls	r3, .L36
+ 320 001c 0430D397 		ldrlsb	r3, [r3, r4]	@ zero_extendqisi2
+ 321 0020 0030A083 		movhi	r3, #0
+ 322              	.LVL22:
+ 314:board/mediatek/uart.c **** 	uint8_t mask = 0;
+ 315:board/mediatek/uart.c **** 
+ 316:board/mediatek/uart.c **** 	switch (irq) {
+ 317:board/mediatek/uart.c **** 	case UART_IRQ_TX_EMPTY:
+ 318:board/mediatek/uart.c **** 		mask = (1 << 1);
+ 319:board/mediatek/uart.c **** 		break;
+ 320:board/mediatek/uart.c **** 	case UART_IRQ_RX_CHAR:
+ 321:board/mediatek/uart.c **** 		mask = (1 << 0);
+ 322:board/mediatek/uart.c **** 		break;
+ 323:board/mediatek/uart.c **** 	}
+ 324:board/mediatek/uart.c **** 
+ 325:board/mediatek/uart.c **** 	if (on)
+ 323              		.loc 1 325 0
+ 324 0024 000055E3 		cmp	r5, #0
+ 326:board/mediatek/uart.c **** 		ier |= mask;
+ 325              		.loc 1 326 0
+ 326 0028 00108311 		orrne	r1, r3, r0
+ 327:board/mediatek/uart.c **** 	else
+ 328:board/mediatek/uart.c **** 		ier &= ~mask;
+ 327              		.loc 1 328 0
+ 328 002c 0310C001 		biceq	r1, r0, r3
+ 329 0030 FF1001E2 		and	r1, r1, #255
+ 330              	.LVL23:
+ 329:board/mediatek/uart.c **** 
+ 330:board/mediatek/uart.c **** 	uart_reg_write(uart, IER, ier);
+ 331              		.loc 1 330 0
+ 332 0034 0400A0E3 		mov	r0, #4
+ 331:board/mediatek/uart.c **** }
+ 333              		.loc 1 331 0
+ 334 0038 3040BDE8 		ldmfd	sp!, {r4, r5, lr}
+ 330:board/mediatek/uart.c **** 	uart_reg_write(uart, IER, ier);
+ 335              		.loc 1 330 0
+ 336 003c FEFFFFEA 		b	uart_reg_write.clone.3
+ 337              	.LVL24:
+ 338              	.L37:
+ 339              		.align	2
+ 340              	.L36:
+ 341 0040 00000000 		.word	.LANCHOR1
+ 342              		.cfi_endproc
+ 343              	.LFE41:
+ 345              		.section	.text.uart_init,"ax",%progbits
+ 346              		.align	2
+ 347              		.global	uart_init
+ 349              	uart_init:
+ 350              	.LFB39:
+ 273:board/mediatek/uart.c **** {
+ 351              		.loc 1 273 0
+ 352              		.cfi_startproc
+ 353              		@ args = 0, pretend = 0, frame = 0
+ 354              		@ frame_needed = 0, uses_anonymous_args = 0
+ 355              	.LVL25:
+ 356 0000 10402DE9 		stmfd	sp!, {r4, lr}
+ 357              	.LCFI3:
+ 358              		.cfi_def_cfa_offset 8
+ 276:board/mediatek/uart.c **** 	uart_reg_write(uart, IER, 0x00);
+ 359              		.loc 1 276 0
+ 360 0004 0010A0E3 		mov	r1, #0
+ 361              	.LVL26:
+ 273:board/mediatek/uart.c **** {
+ 362              		.loc 1 273 0
+ 363 0008 FF4000E2 		and	r4, r0, #255
+ 364              		.cfi_offset 14, -4
+ 365              		.cfi_offset 4, -8
+ 276:board/mediatek/uart.c **** 	uart_reg_write(uart, IER, 0x00);
+ 366              		.loc 1 276 0
+ 367 000c 0400A0E3 		mov	r0, #4
+ 368              	.LVL27:
+ 369 0010 FEFFFFEB 		bl	uart_reg_write.clone.3
+ 277:board/mediatek/uart.c **** 	if (uart == CONS_UART_NR) {
+ 370              		.loc 1 277 0
+ 371 0014 000054E3 		cmp	r4, #0
+ 372 0018 0100001A 		bne	.L39
+ 278:board/mediatek/uart.c **** 		cons_init();
+ 373              		.loc 1 278 0
+ 374 001c FEFFFFEB 		bl	cons_init
+ 375 0020 040000EA 		b	.L40
+ 376              	.L39:
+ 280:board/mediatek/uart.c **** 		sercomm_init();
+ 377              		.loc 1 280 0
+ 378 0024 FEFFFFEB 		bl	sercomm_init
+ 281:board/mediatek/uart.c **** 		uart_irq_enable(uart, UART_IRQ_RX_CHAR, 1);
+ 379              		.loc 1 281 0
+ 380 0028 0110A0E3 		mov	r1, #1
+ 381 002c 0400A0E1 		mov	r0, r4
+ 382 0030 0120A0E1 		mov	r2, r1
+ 383 0034 FEFFFFEB 		bl	uart_irq_enable
+ 384              	.L40:
+ 284:board/mediatek/uart.c **** 	uart_reg_write(uart, AUTOBAUD_EN, 0x00); /* disable AUTOBAUD */
+ 385              		.loc 1 284 0
+ 386 0038 2000A0E3 		mov	r0, #32
+ 387 003c 0010A0E3 		mov	r1, #0
+ 388 0040 FEFFFFEB 		bl	uart_reg_write.clone.3
+ 285:board/mediatek/uart.c **** 	uart_reg_write(uart,   EFR, 0x10); /* Enhanced Features Register */
+ 389              		.loc 1 285 0
+ 390 0044 4800A0E3 		mov	r0, #72
+ 391 0048 1010A0E3 		mov	r1, #16
+ 392 004c FEFFFFEB 		bl	uart_reg_write.clone.3
+ 288:board/mediatek/uart.c **** 	uart_reg_write(uart, EFR, (1 << 4));
+ 393              		.loc 1 288 0
+ 394 0050 4800A0E3 		mov	r0, #72
+ 395 0054 1010A0E3 		mov	r1, #16
+ 396 0058 FEFFFFEB 		bl	uart_reg_write.clone.3
+ 291:board/mediatek/uart.c **** 	uart_reg_write(uart, IIR, FIFO_EN | RX_FIFO_CLEAR | TX_FIFO_CLEAR |
+ 397              		.loc 1 291 0
+ 398 005c 0800A0E3 		mov	r0, #8
+ 399 0060 7710A0E3 		mov	r1, #119
+ 400 0064 FEFFFFEB 		bl	uart_reg_write.clone.3
+ 295:board/mediatek/uart.c **** 	uart_reg_write(uart, SCR, (1 << 0));// | (1 << 3));
+ 401              		.loc 1 295 0
+ 402 0068 1C00A0E3 		mov	r0, #28
+ 403 006c 0110A0E3 		mov	r1, #1
+ 404 0070 FEFFFFEB 		bl	uart_reg_write.clone.3
+ 298:board/mediatek/uart.c **** 	uart_reg_write(uart, LCR, 0x03);
+ 405              		.loc 1 298 0
+ 406 0074 0C00A0E3 		mov	r0, #12
+ 407 0078 0310A0E3 		mov	r1, #3
+ 408 007c FEFFFFEB 		bl	uart_reg_write.clone.3
+ 300:board/mediatek/uart.c **** 	uart_set_lcr7bit(uart, 0);
+ 409              		.loc 1 300 0
+ 410 0080 0000A0E3 		mov	r0, #0
+ 301:board/mediatek/uart.c **** }
+ 411              		.loc 1 301 0
+ 412 0084 1040BDE8 		ldmfd	sp!, {r4, lr}
+ 300:board/mediatek/uart.c **** 	uart_set_lcr7bit(uart, 0);
+ 413              		.loc 1 300 0
+ 414 0088 FEFFFFEA 		b	uart_set_lcr7bit.clone.0
+ 415              		.cfi_endproc
+ 416              	.LFE39:
+ 418              		.section	.text.uart_putchar_wait,"ax",%progbits
+ 419              		.align	2
+ 420              		.global	uart_putchar_wait
+ 422              	uart_putchar_wait:
+ 423              	.LFB42:
+ 332:board/mediatek/uart.c **** 
+ 333:board/mediatek/uart.c **** 
+ 334:board/mediatek/uart.c **** void uart_putchar_wait(uint8_t uart, int c)
+ 335:board/mediatek/uart.c **** {
+ 424              		.loc 1 335 0
+ 425              		.cfi_startproc
+ 426              		@ args = 0, pretend = 0, frame = 0
+ 427              		@ frame_needed = 0, uses_anonymous_args = 0
+ 428              		@ link register save eliminated.
+ 429              	.LVL28:
+ 336:board/mediatek/uart.c **** 	/* wait while TX FIFO indicates full */
+ 337:board/mediatek/uart.c **** 	while (~readb(UART_REG(uart, LSR)) & 0x20) { }
+ 430              		.loc 1 337 0
+ 431 0000 18309FE5 		ldr	r3, .L44
+ 432              	.L42:
+ 433              		.loc 1 337 0 is_stmt 0 discriminator 1
+ 434 0004 1420D3E5 		ldrb	r2, [r3, #20]	@ zero_extendqisi2
+ 435 0008 200012E3 		tst	r2, #32
+ 436 000c FCFFFF0A 		beq	.L42
+ 338:board/mediatek/uart.c **** 
+ 339:board/mediatek/uart.c **** 	/* put character in TX FIFO */
+ 340:board/mediatek/uart.c **** 	writeb(c, UART_REG(uart, RBR));
+ 437              		.loc 1 340 0 is_stmt 1
+ 438 0010 08309FE5 		ldr	r3, .L44
+ 439 0014 FF1001E2 		and	r1, r1, #255
+ 440              	.LVL29:
+ 441 0018 0010C3E5 		strb	r1, [r3, #0]
+ 341:board/mediatek/uart.c **** }
+ 442              		.loc 1 341 0
+ 443 001c 1EFF2FE1 		bx	lr
+ 444              	.L45:
+ 445              		.align	2
+ 446              	.L44:
+ 447 0020 00000381 		.word	-2130509824
+ 448              		.cfi_endproc
+ 449              	.LFE42:
+ 451              		.section	.text.uart_putchar_nb,"ax",%progbits
+ 452              		.align	2
+ 453              		.global	uart_putchar_nb
+ 455              	uart_putchar_nb:
+ 456              	.LFB43:
+ 342:board/mediatek/uart.c **** 
+ 343:board/mediatek/uart.c **** int uart_putchar_nb(uint8_t uart, int c)
+ 344:board/mediatek/uart.c **** {
+ 457              		.loc 1 344 0
+ 458              		.cfi_startproc
+ 459              		@ args = 0, pretend = 0, frame = 0
+ 460              		@ frame_needed = 0, uses_anonymous_args = 0
+ 461              		@ link register save eliminated.
+ 462              	.LVL30:
+ 345:board/mediatek/uart.c **** 	/* if TX FIFO indicates full, abort */
+ 346:board/mediatek/uart.c **** 	if (~readb(UART_REG(uart, LSR)) & 0x20)
+ 463              		.loc 1 346 0
+ 464 0000 14309FE5 		ldr	r3, .L49
+ 465 0004 1400D3E5 		ldrb	r0, [r3, #20]	@ zero_extendqisi2
+ 466              	.LVL31:
+ 467 0008 200010E2 		ands	r0, r0, #32
+ 347:board/mediatek/uart.c **** 		return 0;
+ 348:board/mediatek/uart.c **** 
+ 349:board/mediatek/uart.c **** 	writeb(c, UART_REG(uart, RBR));
+ 468              		.loc 1 349 0
+ 469 000c FF100112 		andne	r1, r1, #255
+ 470              	.LVL32:
+ 471 0010 0010C315 		strneb	r1, [r3, #0]
+ 350:board/mediatek/uart.c **** 	return 1;
+ 472              		.loc 1 350 0
+ 473 0014 0100A013 		movne	r0, #1
+ 351:board/mediatek/uart.c **** }
+ 474              		.loc 1 351 0
+ 475 0018 1EFF2FE1 		bx	lr
+ 476              	.L50:
+ 477              		.align	2
+ 478              	.L49:
+ 479 001c 00000381 		.word	-2130509824
+ 480              		.cfi_endproc
+ 481              	.LFE43:
+ 483              		.section	.text.uart_getchar_nb,"ax",%progbits
+ 484              		.align	2
+ 485              		.global	uart_getchar_nb
+ 487              	uart_getchar_nb:
+ 488              	.LFB44:
+ 352:board/mediatek/uart.c **** 
+ 353:board/mediatek/uart.c **** int uart_getchar_nb(uint8_t uart, uint8_t *ch)
+ 354:board/mediatek/uart.c **** {
+ 489              		.loc 1 354 0
+ 490              		.cfi_startproc
+ 491              		@ args = 0, pretend = 0, frame = 0
+ 492              		@ frame_needed = 0, uses_anonymous_args = 0
+ 493              	.LVL33:
+ 494 0000 30402DE9 		stmfd	sp!, {r4, r5, lr}
+ 495              	.LCFI4:
+ 496              		.cfi_def_cfa_offset 12
+ 355:board/mediatek/uart.c **** 	uint8_t lsr;
+ 356:board/mediatek/uart.c **** 
+ 357:board/mediatek/uart.c **** 	lsr = readb(UART_REG(uart, LSR));
+ 497              		.loc 1 357 0
+ 498 0004 5C309FE5 		ldr	r3, .L59
+ 499 0008 1430D3E5 		ldrb	r3, [r3, #20]	@ zero_extendqisi2
+ 358:board/mediatek/uart.c **** 
+ 359:board/mediatek/uart.c **** 	/* something strange happened */
+ 360:board/mediatek/uart.c **** 	if (lsr & 0x02)
+ 500              		.loc 1 360 0
+ 501 000c 020013E3 		tst	r3, #2
+ 354:board/mediatek/uart.c **** {
+ 502              		.loc 1 354 0
+ 503 0010 0150A0E1 		mov	r5, r1
+ 504              		.cfi_offset 14, -4
+ 505              		.cfi_offset 5, -8
+ 506              		.cfi_offset 4, -12
+ 357:board/mediatek/uart.c **** 	lsr = readb(UART_REG(uart, LSR));
+ 507              		.loc 1 357 0
+ 508 0014 FF4003E2 		and	r4, r3, #255
+ 509              	.LVL34:
+ 510              		.loc 1 360 0
+ 361:board/mediatek/uart.c **** 		printf("LSR RX_OE\n");
+ 511              		.loc 1 361 0
+ 512 0018 4C009F15 		ldrne	r0, .L59+4
+ 513              	.LVL35:
+ 514 001c FEFFFF1B 		blne	puts
+ 515              	.LVL36:
+ 516              	.L52:
+ 362:board/mediatek/uart.c **** 	if (lsr & 0x04)
+ 517              		.loc 1 362 0
+ 518 0020 040014E3 		tst	r4, #4
+ 363:board/mediatek/uart.c **** 		printf("LSR RX_PE\n");
+ 519              		.loc 1 363 0
+ 520 0024 44009F15 		ldrne	r0, .L59+8
+ 521 0028 FEFFFF1B 		blne	puts
+ 522              	.L53:
+ 364:board/mediatek/uart.c **** 	if (lsr & 0x08)
+ 523              		.loc 1 364 0
+ 524 002c 080014E3 		tst	r4, #8
+ 365:board/mediatek/uart.c **** 		printf("LSR RX_FE\n");
+ 525              		.loc 1 365 0
+ 526 0030 3C009F15 		ldrne	r0, .L59+12
+ 527 0034 FEFFFF1B 		blne	puts
+ 528              	.L54:
+ 366:board/mediatek/uart.c **** 	if (lsr & 0x10)
+ 529              		.loc 1 366 0
+ 530 0038 100014E3 		tst	r4, #16
+ 367:board/mediatek/uart.c **** 		printf("LSR RX_BI\n");
+ 531              		.loc 1 367 0
+ 532 003c 34009F15 		ldrne	r0, .L59+16
+ 533 0040 FEFFFF1B 		blne	puts
+ 534              	.L55:
+ 368:board/mediatek/uart.c **** 	if (lsr & 0x80)
+ 535              		.loc 1 368 0
+ 536 0044 800014E3 		tst	r4, #128
+ 369:board/mediatek/uart.c **** 		printf("LSR RX_FIFO_STS\n");
+ 537              		.loc 1 369 0
+ 538 0048 2C009F15 		ldrne	r0, .L59+20
+ 539 004c FEFFFF1B 		blne	puts
+ 540              	.L56:
+ 370:board/mediatek/uart.c **** 
+ 371:board/mediatek/uart.c **** 	/* is the Rx FIFO empty? */
+ 372:board/mediatek/uart.c **** 	if (!(lsr & 0x01))
+ 541              		.loc 1 372 0
+ 542 0050 010014E2 		ands	r0, r4, #1
+ 373:board/mediatek/uart.c **** 		return 0;
+ 374:board/mediatek/uart.c **** 
+ 375:board/mediatek/uart.c **** 	*ch = readb(UART_REG(uart, RBR));
+ 543              		.loc 1 375 0
+ 544 0054 0C309F15 		ldrne	r3, .L59
+ 545 0058 0030D315 		ldrneb	r3, [r3, #0]	@ zero_extendqisi2
+ 376:board/mediatek/uart.c **** 	//printf("getchar_nb(%u) = %02x\n", uart, *ch);
+ 377:board/mediatek/uart.c **** 	return 1;
+ 546              		.loc 1 377 0
+ 547 005c 0100A013 		movne	r0, #1
+ 375:board/mediatek/uart.c **** 	*ch = readb(UART_REG(uart, RBR));
+ 548              		.loc 1 375 0
+ 549 0060 0030C515 		strneb	r3, [r5, #0]
+ 378:board/mediatek/uart.c **** }
+ 550              		.loc 1 378 0
+ 551 0064 3080BDE8 		ldmfd	sp!, {r4, r5, pc}
+ 552              	.L60:
+ 553              		.align	2
+ 554              	.L59:
+ 555 0068 00000381 		.word	-2130509824
+ 556 006c 00000000 		.word	.LC0
+ 557 0070 0A000000 		.word	.LC1
+ 558 0074 14000000 		.word	.LC2
+ 559 0078 1E000000 		.word	.LC3
+ 560 007c 28000000 		.word	.LC4
+ 561              		.cfi_endproc
+ 562              	.LFE44:
+ 564              		.section	.text.uart_tx_busy,"ax",%progbits
+ 565              		.align	2
+ 566              		.global	uart_tx_busy
+ 568              	uart_tx_busy:
+ 569              	.LFB45:
+ 379:board/mediatek/uart.c **** 
+ 380:board/mediatek/uart.c **** int uart_tx_busy(uint8_t uart)
+ 381:board/mediatek/uart.c **** {
+ 570              		.loc 1 381 0
+ 571              		.cfi_startproc
+ 572              		@ args = 0, pretend = 0, frame = 0
+ 573              		@ frame_needed = 0, uses_anonymous_args = 0
+ 574              		@ link register save eliminated.
+ 575              	.LVL37:
+ 382:board/mediatek/uart.c **** 	/* Check THRE bit (LSR[5]) to see if FIFO is full */
+ 383:board/mediatek/uart.c **** 	if (~readb(UART_REG(uart, LSR)) & 0x20)
+ 576              		.loc 1 383 0
+ 577 0000 10309FE5 		ldr	r3, .L62
+ 578 0004 1430D3E5 		ldrb	r3, [r3, #20]	@ zero_extendqisi2
+ 384:board/mediatek/uart.c **** 		return 1;
+ 579              		.loc 1 384 0
+ 580 0008 200013E3 		tst	r3, #32
+ 385:board/mediatek/uart.c **** 	return 0;
+ 386:board/mediatek/uart.c **** }
+ 581              		.loc 1 386 0
+ 582 000c 0000A013 		movne	r0, #0
+ 583 0010 0100A003 		moveq	r0, #1
+ 584              	.LVL38:
+ 585 0014 1EFF2FE1 		bx	lr
+ 586              	.L63:
+ 587              		.align	2
+ 588              	.L62:
+ 589 0018 00000381 		.word	-2130509824
+ 590              		.cfi_endproc
+ 591              	.LFE45:
+ 593              		.section	.text.uart_poll,"ax",%progbits
+ 594              		.align	2
+ 595              		.global	uart_poll
+ 597              	uart_poll:
+ 598              	.LFB40:
+ 303:board/mediatek/uart.c **** void uart_poll(uint8_t uart) {
+ 599              		.loc 1 303 0
+ 600              		.cfi_startproc
+ 601              		@ args = 0, pretend = 0, frame = 4
+ 602              		@ frame_needed = 0, uses_anonymous_args = 0
+ 603              	.LVL39:
+ 304:board/mediatek/uart.c **** 	if(uart == CONS_UART_NR) {
+ 604              		.loc 1 304 0
+ 605 0000 FF0010E3 		tst	r0, #255
+ 303:board/mediatek/uart.c **** void uart_poll(uint8_t uart) {
+ 606              		.loc 1 303 0
+ 607 0004 11402DE9 		stmfd	sp!, {r0, r4, lr}
+ 608              	.LCFI5:
+ 609              		.cfi_def_cfa_offset 12
+ 304:board/mediatek/uart.c **** 	if(uart == CONS_UART_NR) {
+ 610              		.loc 1 304 0
+ 611 0008 0F00001A 		bne	.L65
+ 612              		.cfi_offset 14, -4
+ 613              		.cfi_offset 4, -8
+ 614              		.cfi_offset 0, -12
+ 615              	.LVL40:
+ 616              	.LBB12:
+ 617              	.LBB13:
+ 199:board/mediatek/uart.c **** 	iir = uart_reg_read(uart, IIR);
+ 618              		.loc 1 199 0
+ 619 000c 0800A0E3 		mov	r0, #8
+ 620              	.LVL41:
+ 621 0010 FEFFFFEB 		bl	uart_reg_read.clone.4
+ 622              	.LVL42:
+ 200:board/mediatek/uart.c **** 	if (iir & IIR_INT_PENDING)
+ 623              		.loc 1 200 0
+ 624 0014 010010E3 		tst	r0, #1
+ 625 0018 4C00001A 		bne	.L64
+ 203:board/mediatek/uart.c **** 	switch (iir & IIR_INT_TYPE) {
+ 626              		.loc 1 203 0
+ 627 001c 3E0000E2 		and	r0, r0, #62
+ 628              	.LVL43:
+ 629 0020 020050E3 		cmp	r0, #2
+ 630 0024 4900001A 		bne	.L64
+ 207:board/mediatek/uart.c **** 		if (cons_rb_flush() == 1) {
+ 631              		.loc 1 207 0
+ 632 0028 FEFFFFEB 		bl	cons_rb_flush
+ 633 002c 010050E3 		cmp	r0, #1
+ 634 0030 4600001A 		bne	.L64
+ 635              	.LBB14:
+ 209:board/mediatek/uart.c **** 			uint8_t ier = uart_reg_read(uart, IER);
+ 636              		.loc 1 209 0
+ 637 0034 030080E2 		add	r0, r0, #3
+ 638 0038 FEFFFFEB 		bl	uart_reg_read.clone.4
+ 639              	.LVL44:
+ 211:board/mediatek/uart.c **** 			uart_reg_write(uart, IER, ier);
+ 640              		.loc 1 211 0
+ 641 003c FD1000E2 		and	r1, r0, #253
+ 642 0040 0400A0E3 		mov	r0, #4
+ 643              	.LVL45:
+ 644 0044 FEFFFFEB 		bl	uart_reg_write.clone.3
+ 645 0048 400000EA 		b	.L64
+ 646              	.LVL46:
+ 647              	.L65:
+ 648              	.LBE14:
+ 649              	.LBE13:
+ 650              	.LBE12:
+ 651              	.LBB15:
+ 652              	.LBB16:
+ 232:board/mediatek/uart.c **** 	iir = uart_reg_read(uart, IIR);
+ 653              		.loc 1 232 0
+ 654 004c 0800A0E3 		mov	r0, #8
+ 655              	.LVL47:
+ 656 0050 FEFFFFEB 		bl	uart_reg_read.clone.4
+ 657              	.LVL48:
+ 233:board/mediatek/uart.c **** 	if (iir & IIR_INT_PENDING)
+ 658              		.loc 1 233 0
+ 659 0054 010010E3 		tst	r0, #1
+ 660 0058 3C00001A 		bne	.L64
+ 236:board/mediatek/uart.c **** 	switch (iir & IIR_INT_TYPE) {
+ 661              		.loc 1 236 0
+ 662 005c 3E0000E2 		and	r0, r0, #62
+ 663              	.LVL49:
+ 664 0060 100050E3 		cmp	r0, #16
+ 665 0064 00F19F97 		ldrls	pc, [pc, r0, asl #2]
+ 666 0068 380000EA 		b	.L64
+ 667              	.L73:
+ 668 006c 38010000 		.word	.L68
+ 669 0070 50010000 		.word	.L64
+ 670 0074 20010000 		.word	.L69
+ 671 0078 50010000 		.word	.L64
+ 672 007c D4000000 		.word	.L79
+ 673 0080 50010000 		.word	.L64
+ 674 0084 40010000 		.word	.L71
+ 675 0088 50010000 		.word	.L64
+ 676 008c 50010000 		.word	.L64
+ 677 0090 50010000 		.word	.L64
+ 678 0094 50010000 		.word	.L64
+ 679 0098 50010000 		.word	.L64
+ 680 009c D4000000 		.word	.L79
+ 681 00a0 50010000 		.word	.L64
+ 682 00a4 50010000 		.word	.L64
+ 683 00a8 50010000 		.word	.L64
+ 684 00ac 48010000 		.word	.L72
+ 685              	.LVL50:
+ 686              	.L75:
+ 241:board/mediatek/uart.c **** 			if (sercomm_drv_rx_char(ch) < 0) {
+ 687              		.loc 1 241 0
+ 688 00b0 0300DDE5 		ldrb	r0, [sp, #3]	@ zero_extendqisi2
+ 689 00b4 FEFFFFEB 		bl	sercomm_drv_rx_char
+ 690 00b8 000050E3 		cmp	r0, #0
+ 691 00bc 050000AA 		bge	.L81
+ 243:board/mediatek/uart.c **** 				uart_irq_enable(uart, UART_IRQ_RX_CHAR, 0);
+ 692              		.loc 1 243 0
+ 693 00c0 0100A0E3 		mov	r0, #1
+ 694 00c4 0010A0E1 		mov	r1, r0
+ 695 00c8 0020A0E3 		mov	r2, #0
+ 696 00cc FEFFFFEB 		bl	uart_irq_enable
+ 697 00d0 000000EA 		b	.L81
+ 698              	.LVL51:
+ 699              	.L79:
+ 240:board/mediatek/uart.c **** 		while (uart_getchar_nb(uart, &ch)) {
+ 700              		.loc 1 240 0
+ 701 00d4 03408DE2 		add	r4, sp, #3
+ 702              	.LVL52:
+ 703              	.L81:
+ 704 00d8 0100A0E3 		mov	r0, #1
+ 705 00dc 0410A0E1 		mov	r1, r4
+ 706 00e0 FEFFFFEB 		bl	uart_getchar_nb
+ 707 00e4 000050E3 		cmp	r0, #0
+ 708 00e8 F0FFFF1A 		bne	.L75
+ 709 00ec 170000EA 		b	.L64
+ 710              	.L77:
+ 251:board/mediatek/uart.c **** 			if (!sercomm_drv_pull(&ch)) {
+ 711              		.loc 1 251 0
+ 712 00f0 0400A0E1 		mov	r0, r4
+ 713 00f4 FEFFFFEB 		bl	sercomm_drv_pull
+ 714 00f8 001050E2 		subs	r1, r0, #0
+ 715 00fc 0300001A 		bne	.L76
+ 253:board/mediatek/uart.c **** 				uart_irq_enable(uart, UART_IRQ_TX_EMPTY, 0);
+ 716              		.loc 1 253 0
+ 717 0100 010080E2 		add	r0, r0, #1
+ 718 0104 0120A0E1 		mov	r2, r1
+ 719 0108 FEFFFFEB 		bl	uart_irq_enable
+ 720 010c 0F0000EA 		b	.L64
+ 721              	.L76:
+ 257:board/mediatek/uart.c **** 			uart_putchar_nb(uart, ch);
+ 722              		.loc 1 257 0
+ 723 0110 0310DDE5 		ldrb	r1, [sp, #3]	@ zero_extendqisi2
+ 724 0114 0100A0E3 		mov	r0, #1
+ 725 0118 FEFFFFEB 		bl	uart_putchar_nb
+ 726 011c 000000EA 		b	.L82
+ 727              	.LVL53:
+ 728              	.L69:
+ 251:board/mediatek/uart.c **** 			if (!sercomm_drv_pull(&ch)) {
+ 729              		.loc 1 251 0
+ 730 0120 03408DE2 		add	r4, sp, #3
+ 731              	.LVL54:
+ 732              	.L82:
+ 249:board/mediatek/uart.c **** 		while (!uart_tx_busy(uart)) {
+ 733              		.loc 1 249 0
+ 734 0124 0100A0E3 		mov	r0, #1
+ 735 0128 FEFFFFEB 		bl	uart_tx_busy
+ 736 012c 000050E3 		cmp	r0, #0
+ 737 0130 EEFFFF0A 		beq	.L77
+ 738 0134 050000EA 		b	.L64
+ 739              	.LVL55:
+ 740              	.L68:
+ 261:board/mediatek/uart.c **** 		printf("UART IRQ MSR\n");
+ 741              		.loc 1 261 0
+ 742 0138 14009FE5 		ldr	r0, .L84
+ 743 013c 020000EA 		b	.L83
+ 744              	.L71:
+ 264:board/mediatek/uart.c **** 		printf("UART IRQ RX_SE\n");
+ 745              		.loc 1 264 0
+ 746 0140 10009FE5 		ldr	r0, .L84+4
+ 747 0144 000000EA 		b	.L83
+ 748              	.L72:
+ 267:board/mediatek/uart.c **** 		printf("UART IRQXOFF\n");
+ 749              		.loc 1 267 0
+ 750 0148 0C009FE5 		ldr	r0, .L84+8
+ 751              	.L83:
+ 752 014c FEFFFFEB 		bl	puts
+ 753              	.LVL56:
+ 754              	.L64:
+ 755              	.LBE16:
+ 756              	.LBE15:
+ 309:board/mediatek/uart.c **** }
+ 757              		.loc 1 309 0
+ 758 0150 1880BDE8 		ldmfd	sp!, {r3, r4, pc}
+ 759              	.L85:
+ 760              		.align	2
+ 761              	.L84:
+ 762 0154 38000000 		.word	.LC5
+ 763 0158 45000000 		.word	.LC6
+ 764 015c 54000000 		.word	.LC7
+ 765              		.cfi_endproc
+ 766              	.LFE40:
+ 768              		.section	.text.uart_baudrate,"ax",%progbits
+ 769              		.align	2
+ 770              		.global	uart_baudrate
+ 772              	uart_baudrate:
+ 773              	.LFB46:
+ 387:board/mediatek/uart.c **** 
+ 388:board/mediatek/uart.c **** #if 0
+ 389:board/mediatek/uart.c **** /* 26MHz clock input (used when no PLL initialized directly after poweron) */
+ 390:board/mediatek/uart.c **** static const uint16_t divider[] = {
+ 391:board/mediatek/uart.c **** 	[UART_38400]	= 42,
+ 392:board/mediatek/uart.c **** 	[UART_57600]	= 28,
+ 393:board/mediatek/uart.c **** 	[UART_115200]	= 14,
+ 394:board/mediatek/uart.c **** 	[UART_230400]	= 7,
+ 395:board/mediatek/uart.c **** 	[UART_460800]	= 14,	/* would need UART_REG(HIGHSPEED) = 1 or 2 */
+ 396:board/mediatek/uart.c **** 	[UART_921600]	= 7,	/* would need UART_REG(HIGHSPEED) = 2 */
+ 397:board/mediatek/uart.c **** };
+ 398:board/mediatek/uart.c **** #endif
+ 399:board/mediatek/uart.c **** 
+ 400:board/mediatek/uart.c **** /* 52MHz clock input (after PLL init) */
+ 401:board/mediatek/uart.c **** static const uint16_t divider[] = {
+ 402:board/mediatek/uart.c **** 	[UART_38400]	= 85,
+ 403:board/mediatek/uart.c **** 	[UART_57600]	= 56,
+ 404:board/mediatek/uart.c **** 	[UART_115200]	= 28,
+ 405:board/mediatek/uart.c **** 	[UART_230400]	= 14,
+ 406:board/mediatek/uart.c **** 	[UART_460800]	= 7,
+ 407:board/mediatek/uart.c **** 	[UART_921600]	= 7,	/* would need UART_REG(HIGHSPEED) = 1 */
+ 408:board/mediatek/uart.c **** };
+ 409:board/mediatek/uart.c **** 
+ 410:board/mediatek/uart.c **** int uart_baudrate(uint8_t uart, enum uart_baudrate bdrt)
+ 411:board/mediatek/uart.c **** {
+ 774              		.loc 1 411 0
+ 775              		.cfi_startproc
+ 776              		@ args = 0, pretend = 0, frame = 0
+ 777              		@ frame_needed = 0, uses_anonymous_args = 0
+ 778              	.LVL57:
+ 412:board/mediatek/uart.c **** 	uint16_t div;
+ 413:board/mediatek/uart.c **** 
+ 414:board/mediatek/uart.c **** 	if (bdrt > ARRAY_SIZE(divider))
+ 779              		.loc 1 414 0
+ 780 0000 070051E3 		cmp	r1, #7
+ 411:board/mediatek/uart.c **** {
+ 781              		.loc 1 411 0
+ 782 0004 10402DE9 		stmfd	sp!, {r4, lr}
+ 783              	.LCFI6:
+ 784              		.cfi_def_cfa_offset 8
+ 785              		.loc 1 414 0
+ 786 0008 0D00008A 		bhi	.L88
+ 787              		.cfi_offset 14, -4
+ 788              		.cfi_offset 4, -8
+ 415:board/mediatek/uart.c **** 		return -1;
+ 416:board/mediatek/uart.c **** 
+ 417:board/mediatek/uart.c **** 	div = divider[bdrt];
+ 789              		.loc 1 417 0
+ 790 000c 38309FE5 		ldr	r3, .L89
+ 791 0010 811083E0 		add	r1, r3, r1, asl #1
+ 792              	.LVL58:
+ 793 0014 B440D1E1 		ldrh	r4, [r1, #4]
+ 794              	.LVL59:
+ 418:board/mediatek/uart.c **** 	uart_set_lcr7bit(uart, 1);
+ 795              		.loc 1 418 0
+ 796 0018 0100A0E3 		mov	r0, #1
+ 797              	.LVL60:
+ 798 001c FEFFFFEB 		bl	uart_set_lcr7bit.clone.0
+ 419:board/mediatek/uart.c **** 	writeb(div & 0xff, UART_REG(uart, DLL));
+ 799              		.loc 1 419 0
+ 800 0020 28309FE5 		ldr	r3, .L89+4
+ 801 0024 FF2004E2 		and	r2, r4, #255
+ 420:board/mediatek/uart.c **** 	writeb(div >> 8, UART_REG(uart, DLH));
+ 802              		.loc 1 420 0
+ 803 0028 2444A0E1 		mov	r4, r4, lsr #8
+ 804              	.LVL61:
+ 419:board/mediatek/uart.c **** 	writeb(div & 0xff, UART_REG(uart, DLL));
+ 805              		.loc 1 419 0
+ 806 002c 0020C3E5 		strb	r2, [r3, #0]
+ 421:board/mediatek/uart.c **** 	uart_set_lcr7bit(uart, 0);
+ 807              		.loc 1 421 0
+ 808 0030 0000A0E3 		mov	r0, #0
+ 420:board/mediatek/uart.c **** 	writeb(div >> 8, UART_REG(uart, DLH));
+ 809              		.loc 1 420 0
+ 810 0034 0440C3E5 		strb	r4, [r3, #4]
+ 811              		.loc 1 421 0
+ 812 0038 FEFFFFEB 		bl	uart_set_lcr7bit.clone.0
+ 422:board/mediatek/uart.c **** 
+ 423:board/mediatek/uart.c **** 	return 0;
+ 813              		.loc 1 423 0
+ 814 003c 0000A0E3 		mov	r0, #0
+ 815 0040 1080BDE8 		ldmfd	sp!, {r4, pc}
+ 816              	.LVL62:
+ 817              	.L88:
+ 415:board/mediatek/uart.c **** 		return -1;
+ 818              		.loc 1 415 0
+ 819 0044 0000E0E3 		mvn	r0, #0
+ 820              	.LVL63:
+ 424:board/mediatek/uart.c **** }
+ 821              		.loc 1 424 0
+ 822 0048 1080BDE8 		ldmfd	sp!, {r4, pc}
+ 823              	.L90:
+ 824              		.align	2
+ 825              	.L89:
+ 826 004c 00000000 		.word	.LANCHOR1
+ 827 0050 00000381 		.word	-2130509824
+ 828              		.cfi_endproc
+ 829              	.LFE46:
+ 831              		.section	.rodata
+ 832              		.align	2
+ 833              		.set	.LANCHOR1,. + 0
+ 836              	CSWTCH.7:
+ 837 0000 02       		.byte	2
+ 838 0001 01       		.byte	1
+ 839 0002 0000     		.space	2
+ 842              	divider:
+ 843 0004 5500     		.short	85
+ 844 0006 3800     		.short	56
+ 845 0008 1C00     		.short	28
+ 846 000a 0E00     		.short	14
+ 847 000c 0700     		.short	7
+ 848 000e 0000     		.space	2
+ 849 0010 0700     		.short	7
+ 850 0012 0000     		.section	.rodata.str1.1,"aMS",%progbits,1
+ 851              	.LC0:
+ 852 0000 4C535220 		.ascii	"LSR RX_OE\000"
+ 852      52585F4F 
+ 852      4500
+ 853              	.LC1:
+ 854 000a 4C535220 		.ascii	"LSR RX_PE\000"
+ 854      52585F50 
+ 854      4500
+ 855              	.LC2:
+ 856 0014 4C535220 		.ascii	"LSR RX_FE\000"
+ 856      52585F46 
+ 856      4500
+ 857              	.LC3:
+ 858 001e 4C535220 		.ascii	"LSR RX_BI\000"
+ 858      52585F42 
+ 858      4900
+ 859              	.LC4:
+ 860 0028 4C535220 		.ascii	"LSR RX_FIFO_STS\000"
+ 860      52585F46 
+ 860      49464F5F 
+ 860      53545300 
+ 861              	.LC5:
+ 862 0038 55415254 		.ascii	"UART IRQ MSR\000"
+ 862      20495251 
+ 862      204D5352 
+ 862      00
+ 863              	.LC6:
+ 864 0045 55415254 		.ascii	"UART IRQ RX_SE\000"
+ 864      20495251 
+ 864      2052585F 
+ 864      534500
+ 865              	.LC7:
+ 866 0054 55415254 		.ascii	"UART IRQXOFF\000"
+ 866      20495251 
+ 866      584F4646 
+ 866      00
+ 867              		.bss
+ 868              		.set	.LANCHOR0,. + 0
+ 871              	old_lcr:
+ 872 0000 00       		.space	1
+ 873              		.text
+ 874              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 uart.c
+     /tmp/ccUzDVbq.s:12     .text.uart_set_lcr7bit.clone.0:0000000000000000 $a
+     /tmp/ccUzDVbq.s:14     .text.uart_set_lcr7bit.clone.0:0000000000000000 uart_set_lcr7bit.clone.0
+     /tmp/ccUzDVbq.s:46     .text.uart_set_lcr7bit.clone.0:0000000000000024 $d
+     /tmp/ccUzDVbq.s:51     .text.uart_set_lcr_bf.clone.1:0000000000000000 $a
+     /tmp/ccUzDVbq.s:53     .text.uart_set_lcr_bf.clone.1:0000000000000000 uart_set_lcr_bf.clone.1
+     /tmp/ccUzDVbq.s:81     .text.uart_set_lcr_bf.clone.1:000000000000002c $d
+     /tmp/ccUzDVbq.s:87     .text.uart_set_mcr6bit.clone.2:0000000000000000 $a
+     /tmp/ccUzDVbq.s:89     .text.uart_set_mcr6bit.clone.2:0000000000000000 uart_set_mcr6bit.clone.2
+     /tmp/ccUzDVbq.s:120    .text.uart_set_mcr6bit.clone.2:0000000000000024 $d
+     /tmp/ccUzDVbq.s:125    .text.uart_reg_write.clone.3:0000000000000000 $a
+     /tmp/ccUzDVbq.s:127    .text.uart_reg_write.clone.3:0000000000000000 uart_reg_write.clone.3
+     /tmp/ccUzDVbq.s:213    .text.uart_reg_read.clone.4:0000000000000000 $a
+     /tmp/ccUzDVbq.s:215    .text.uart_reg_read.clone.4:0000000000000000 uart_reg_read.clone.4
+     /tmp/ccUzDVbq.s:293    .text.uart_irq_enable:0000000000000000 $a
+     /tmp/ccUzDVbq.s:296    .text.uart_irq_enable:0000000000000000 uart_irq_enable
+     /tmp/ccUzDVbq.s:341    .text.uart_irq_enable:0000000000000040 $d
+     /tmp/ccUzDVbq.s:346    .text.uart_init:0000000000000000 $a
+     /tmp/ccUzDVbq.s:349    .text.uart_init:0000000000000000 uart_init
+     /tmp/ccUzDVbq.s:419    .text.uart_putchar_wait:0000000000000000 $a
+     /tmp/ccUzDVbq.s:422    .text.uart_putchar_wait:0000000000000000 uart_putchar_wait
+     /tmp/ccUzDVbq.s:447    .text.uart_putchar_wait:0000000000000020 $d
+     /tmp/ccUzDVbq.s:452    .text.uart_putchar_nb:0000000000000000 $a
+     /tmp/ccUzDVbq.s:455    .text.uart_putchar_nb:0000000000000000 uart_putchar_nb
+     /tmp/ccUzDVbq.s:479    .text.uart_putchar_nb:000000000000001c $d
+     /tmp/ccUzDVbq.s:484    .text.uart_getchar_nb:0000000000000000 $a
+     /tmp/ccUzDVbq.s:487    .text.uart_getchar_nb:0000000000000000 uart_getchar_nb
+     /tmp/ccUzDVbq.s:555    .text.uart_getchar_nb:0000000000000068 $d
+     /tmp/ccUzDVbq.s:565    .text.uart_tx_busy:0000000000000000 $a
+     /tmp/ccUzDVbq.s:568    .text.uart_tx_busy:0000000000000000 uart_tx_busy
+     /tmp/ccUzDVbq.s:589    .text.uart_tx_busy:0000000000000018 $d
+     /tmp/ccUzDVbq.s:594    .text.uart_poll:0000000000000000 $a
+     /tmp/ccUzDVbq.s:597    .text.uart_poll:0000000000000000 uart_poll
+     /tmp/ccUzDVbq.s:668    .text.uart_poll:000000000000006c $d
+     /tmp/ccUzDVbq.s:688    .text.uart_poll:00000000000000b0 $a
+     /tmp/ccUzDVbq.s:762    .text.uart_poll:0000000000000154 $d
+     /tmp/ccUzDVbq.s:769    .text.uart_baudrate:0000000000000000 $a
+     /tmp/ccUzDVbq.s:772    .text.uart_baudrate:0000000000000000 uart_baudrate
+     /tmp/ccUzDVbq.s:826    .text.uart_baudrate:000000000000004c $d
+     /tmp/ccUzDVbq.s:832    .rodata:0000000000000000 $d
+     /tmp/ccUzDVbq.s:836    .rodata:0000000000000000 CSWTCH.7
+     /tmp/ccUzDVbq.s:842    .rodata:0000000000000004 divider
+     /tmp/ccUzDVbq.s:871    .bss:0000000000000000 old_lcr
+     /tmp/ccUzDVbq.s:872    .bss:0000000000000000 $d
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+cons_init
+sercomm_init
+puts
+cons_rb_flush
+sercomm_drv_rx_char
+sercomm_drv_pull

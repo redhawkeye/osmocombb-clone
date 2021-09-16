@@ -1,0 +1,144 @@
+   1              		.file	"display.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text.display_puts,"ax",%progbits
+  12              		.align	2
+  13              		.global	display_puts
+  15              	display_puts:
+  16              	.LFB5:
+  17              		.file 1 "display/display.c"
+   1:display/display.c **** 
+   2:display/display.c **** #include <stdint.h>
+   3:display/display.c **** 
+   4:display/display.c **** #include <display.h>
+   5:display/display.c **** 
+   6:display/display.c **** struct display_driver *display;
+   7:display/display.c **** 
+   8:display/display.c **** int display_puts(const char *str)
+   9:display/display.c **** {
+  18              		.loc 1 9 0
+  19              		.cfi_startproc
+  20              		@ args = 0, pretend = 0, frame = 0
+  21              		@ frame_needed = 0, uses_anonymous_args = 0
+  22              	.LVL0:
+  10:display/display.c **** 	char c;
+  11:display/display.c **** 
+  12:display/display.c **** 	if (display->puts)
+  23              		.loc 1 12 0
+  24 0000 48309FE5 		ldr	r3, .L8
+  25 0004 002093E5 		ldr	r2, [r3, #0]
+  26 0008 202092E5 		ldr	r2, [r2, #32]
+  27 000c 000052E3 		cmp	r2, #0
+   9:display/display.c **** {
+  28              		.loc 1 9 0
+  29 0010 30402DE9 		stmfd	sp!, {r4, r5, lr}
+  30              	.LCFI0:
+  31              		.cfi_def_cfa_offset 12
+   9:display/display.c **** {
+  32              		.loc 1 9 0
+  33 0014 0040A0E1 		mov	r4, r0
+  34              		.cfi_offset 14, -4
+  35              		.cfi_offset 5, -8
+  36              		.cfi_offset 4, -12
+  37              		.loc 1 12 0
+  38 0018 0600000A 		beq	.L6
+  13:display/display.c **** 		display->puts(str);
+  39              		.loc 1 13 0
+  40 001c 0FE0A0E1 		mov	lr, pc
+  41 0020 12FF2FE1 		bx	r2
+  42              	.LVL1:
+  43 0024 070000EA 		b	.L4
+  44              	.LVL2:
+  45              	.L5:
+  46              	.LBB4:
+  47              	.LBB5:
+  48              		.file 2 "include/display.h"
+   1:include/display.h **** #ifndef _DISPLAY_DRIVER_H
+   2:include/display.h **** #define _DISPLAY_DRIVER_H
+   3:include/display.h **** 
+   4:include/display.h **** enum display_attr {
+   5:include/display.h **** 	DISP_ATTR_INVERT	= 0x0001,
+   6:include/display.h **** };
+   7:include/display.h **** 
+   8:include/display.h **** struct display_driver {
+   9:include/display.h **** 	char *name;
+  10:include/display.h **** 	void (*init)(void);
+  11:include/display.h **** 	void (*set_attr)(unsigned long attr);
+  12:include/display.h **** 	void (*unset_attr)(unsigned long attr);
+  13:include/display.h **** 	void (*clrscr)(void);
+  14:include/display.h **** 	void (*goto_xy)(int xpos, int ypos);
+  15:include/display.h **** 	void (*set_color)(int fgcolor, int bgcolor);
+  16:include/display.h **** 	int (*putc)(unsigned char c);
+  17:include/display.h **** 	int (*puts)(const char *str);
+  18:include/display.h **** };
+  19:include/display.h **** 
+  20:include/display.h **** extern struct display_driver *display;
+  21:include/display.h **** 
+  22:include/display.h **** static inline void display_init(void)
+  23:include/display.h **** {
+  24:include/display.h **** 	display->init();
+  25:include/display.h **** }
+  26:include/display.h **** static inline void display_set_attr(unsigned long attr)
+  27:include/display.h **** {
+  28:include/display.h **** 	display->set_attr(attr);
+  29:include/display.h **** }
+  30:include/display.h **** static inline void display_unset_attr(unsigned long attr)
+  31:include/display.h **** {
+  32:include/display.h **** 	display->unset_attr(attr);
+  33:include/display.h **** }
+  34:include/display.h **** static inline void display_clrscr(void)
+  35:include/display.h **** {
+  36:include/display.h **** 	display->clrscr();
+  37:include/display.h **** }
+  38:include/display.h **** static inline int display_putchar(unsigned char c)
+  39:include/display.h **** {
+  40:include/display.h **** 	return display->putc(c);
+  49              		.loc 2 40 0
+  50 0028 003095E5 		ldr	r3, [r5, #0]
+  51 002c 0FE0A0E1 		mov	lr, pc
+  52 0030 1CF093E5 		ldr	pc, [r3, #28]
+  53              	.LVL3:
+  54 0034 000000EA 		b	.L7
+  55              	.LVL4:
+  56              	.L6:
+  57              		.loc 2 40 0 is_stmt 0 discriminator 1
+  58 0038 0350A0E1 		mov	r5, r3
+  59              	.LVL5:
+  60              	.L7:
+  61              	.LBE5:
+  62              	.LBE4:
+  14:display/display.c **** 	else {
+  15:display/display.c **** 		while ((c = *str++))
+  63              		.loc 1 15 0 is_stmt 1 discriminator 1
+  64 003c 0100D4E4 		ldrb	r0, [r4], #1	@ zero_extendqisi2
+  65              	.LVL6:
+  66 0040 000050E3 		cmp	r0, #0
+  67 0044 F7FFFF1A 		bne	.L5
+  68              	.LVL7:
+  69              	.L4:
+  16:display/display.c **** 			display_putchar(c);
+  17:display/display.c **** 	}
+  18:display/display.c **** 
+  19:display/display.c **** 	return 0;
+  20:display/display.c **** }
+  70              		.loc 1 20 0
+  71 0048 0000A0E3 		mov	r0, #0
+  72 004c 3080BDE8 		ldmfd	sp!, {r4, r5, pc}
+  73              	.L9:
+  74              		.align	2
+  75              	.L8:
+  76 0050 00000000 		.word	display
+  77              		.cfi_endproc
+  78              	.LFE5:
+  80              		.comm	display,4,4
+  81              		.text
+  82              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 display.c
+     /tmp/ccfhYCVL.s:12     .text.display_puts:0000000000000000 $a
+     /tmp/ccfhYCVL.s:15     .text.display_puts:0000000000000000 display_puts
+     /tmp/ccfhYCVL.s:76     .text.display_puts:0000000000000050 $d
+                            *COM*:0000000000000004 display
+                     .debug_frame:0000000000000010 $d
+
+NO UNDEFINED SYMBOLS

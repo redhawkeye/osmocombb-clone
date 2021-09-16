@@ -1,0 +1,82 @@
+timer.lo: ../../src/timer.c \
+ /home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/assert.h \
+ /home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/_ansi.h \
+ /home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/newlib.h \
+ /home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/sys/config.h \
+ /home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/machine/ieeefp.h \
+ /home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/sys/features.h \
+ /home/phd/osmocom-bb-master/src/target/firmware/include/string.h \
+ /home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/sys/types.h \
+ /home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/_ansi.h \
+ /home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/machine/_types.h \
+ /home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/machine/_default_types.h \
+ /home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/sys/_types.h \
+ /home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/sys/lock.h \
+ /home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/include/stddef.h \
+ /home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/machine/types.h \
+ /home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/include-fixed/limits.h \
+ /home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/include-fixed/syslimits.h \
+ /home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/limits.h \
+ ../../include/osmocom/core/timer.h \
+ /home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/sys/time.h \
+ ../../include/osmocom/core/linuxlist.h \
+ ../../include/osmocom/core/linuxrbtree.h \
+ /home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/stdlib.h \
+ /home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/sys/reent.h \
+ /home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/machine/stdlib.h \
+ /home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/alloca.h \
+ ../../include/osmocom/core/timer_compat.h
+
+/home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/assert.h:
+
+/home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/_ansi.h:
+
+/home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/newlib.h:
+
+/home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/sys/config.h:
+
+/home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/machine/ieeefp.h:
+
+/home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/sys/features.h:
+
+/home/phd/osmocom-bb-master/src/target/firmware/include/string.h:
+
+/home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/sys/types.h:
+
+/home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/_ansi.h:
+
+/home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/machine/_types.h:
+
+/home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/machine/_default_types.h:
+
+/home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/sys/_types.h:
+
+/home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/sys/lock.h:
+
+/home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/include/stddef.h:
+
+/home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/machine/types.h:
+
+/home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/include-fixed/limits.h:
+
+/home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/include-fixed/syslimits.h:
+
+/home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/limits.h:
+
+../../include/osmocom/core/timer.h:
+
+/home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/sys/time.h:
+
+../../include/osmocom/core/linuxlist.h:
+
+../../include/osmocom/core/linuxrbtree.h:
+
+/home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/stdlib.h:
+
+/home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/sys/reent.h:
+
+/home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/machine/stdlib.h:
+
+/home/phd/toolchain/install/lib/gcc/arm-elf/4.5.2/../../../../arm-elf/sys-include/alloca.h:
+
+../../include/osmocom/core/timer_compat.h:

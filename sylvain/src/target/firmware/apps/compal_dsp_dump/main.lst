@@ -1,0 +1,153 @@
+   1              		.file	"main.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text.main,"ax",%progbits
+  12              		.align	2
+  13              		.global	main
+  15              	main:
+  16              	.LFB24:
+  17              		.file 1 "apps/compal_dsp_dump/main.c"
+   1:apps/compal_dsp_dump/main.c **** /* main program of Free Software for Calypso Phone */
+   2:apps/compal_dsp_dump/main.c **** 
+   3:apps/compal_dsp_dump/main.c **** /* (C) 2010 Harald Welte <laforge@gnumonks.org>
+   4:apps/compal_dsp_dump/main.c ****  * (C) 2010 Sylvain Munaut <tnt@246tNt.com>
+   5:apps/compal_dsp_dump/main.c ****  *
+   6:apps/compal_dsp_dump/main.c ****  * All Rights Reserved
+   7:apps/compal_dsp_dump/main.c ****  *
+   8:apps/compal_dsp_dump/main.c ****  * This program is free software; you can redistribute it and/or modify
+   9:apps/compal_dsp_dump/main.c ****  * it under the terms of the GNU General Public License as published by
+  10:apps/compal_dsp_dump/main.c ****  * the Free Software Foundation; either version 2 of the License, or
+  11:apps/compal_dsp_dump/main.c ****  * (at your option) any later version.
+  12:apps/compal_dsp_dump/main.c ****  *
+  13:apps/compal_dsp_dump/main.c ****  * This program is distributed in the hope that it will be useful,
+  14:apps/compal_dsp_dump/main.c ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  15:apps/compal_dsp_dump/main.c ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  16:apps/compal_dsp_dump/main.c ****  * GNU General Public License for more details.
+  17:apps/compal_dsp_dump/main.c ****  *
+  18:apps/compal_dsp_dump/main.c ****  * You should have received a copy of the GNU General Public License along
+  19:apps/compal_dsp_dump/main.c ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  20:apps/compal_dsp_dump/main.c ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  21:apps/compal_dsp_dump/main.c ****  *
+  22:apps/compal_dsp_dump/main.c ****  */
+  23:apps/compal_dsp_dump/main.c **** 
+  24:apps/compal_dsp_dump/main.c **** #include <memory.h>
+  25:apps/compal_dsp_dump/main.c **** #include <delay.h>
+  26:apps/compal_dsp_dump/main.c **** #include <stdio.h>
+  27:apps/compal_dsp_dump/main.c **** #include <stdint.h>
+  28:apps/compal_dsp_dump/main.c **** #include <rffe.h>
+  29:apps/compal_dsp_dump/main.c **** #include <keypad.h>
+  30:apps/compal_dsp_dump/main.c **** #include <board.h>
+  31:apps/compal_dsp_dump/main.c **** #include <abb/twl3025.h>
+  32:apps/compal_dsp_dump/main.c **** #include <rf/trf6151.h>
+  33:apps/compal_dsp_dump/main.c **** #include <calypso/clock.h>
+  34:apps/compal_dsp_dump/main.c **** #include <calypso/tpu.h>
+  35:apps/compal_dsp_dump/main.c **** #include <calypso/tsp.h>
+  36:apps/compal_dsp_dump/main.c **** #include <calypso/dsp.h>
+  37:apps/compal_dsp_dump/main.c **** #include <calypso/irq.h>
+  38:apps/compal_dsp_dump/main.c **** #include <calypso/misc.h>
+  39:apps/compal_dsp_dump/main.c **** #include <comm/timer.h>
+  40:apps/compal_dsp_dump/main.c **** 
+  41:apps/compal_dsp_dump/main.c **** /* Main Program */
+  42:apps/compal_dsp_dump/main.c **** const char *hr = "======================================================================\n";
+  43:apps/compal_dsp_dump/main.c **** 
+  44:apps/compal_dsp_dump/main.c **** int main(void)
+  45:apps/compal_dsp_dump/main.c **** {
+  18              		.loc 1 45 0
+  19              		.cfi_startproc
+  20              		@ args = 0, pretend = 0, frame = 0
+  21              		@ frame_needed = 0, uses_anonymous_args = 0
+  22 0000 10402DE9 		stmfd	sp!, {r4, lr}
+  23              	.LCFI0:
+  24              		.cfi_def_cfa_offset 8
+  46:apps/compal_dsp_dump/main.c **** 	board_init();
+  47:apps/compal_dsp_dump/main.c **** 
+  48:apps/compal_dsp_dump/main.c **** 	puts("\n\nOSMOCOM Compal DSP Dumper (revision " GIT_REVISION ")\n");
+  49:apps/compal_dsp_dump/main.c **** 	puts(hr);
+  25              		.loc 1 49 0
+  26 0004 28409FE5 		ldr	r4, .L3
+  27              		.cfi_offset 14, -4
+  28              		.cfi_offset 4, -8
+  46:apps/compal_dsp_dump/main.c **** 	board_init();
+  29              		.loc 1 46 0
+  30 0008 FEFFFFEB 		bl	board_init
+  48:apps/compal_dsp_dump/main.c **** 	puts("\n\nOSMOCOM Compal DSP Dumper (revision " GIT_REVISION ")\n");
+  31              		.loc 1 48 0
+  32 000c 24009FE5 		ldr	r0, .L3+4
+  33 0010 FEFFFFEB 		bl	puts
+  34              		.loc 1 49 0
+  35 0014 000094E5 		ldr	r0, [r4, #0]
+  36 0018 FEFFFFEB 		bl	puts
+  50:apps/compal_dsp_dump/main.c **** 
+  51:apps/compal_dsp_dump/main.c **** 	/* Dump device identification */
+  52:apps/compal_dsp_dump/main.c **** 	dump_dev_id();
+  37              		.loc 1 52 0
+  38 001c FEFFFFEB 		bl	dump_dev_id
+  53:apps/compal_dsp_dump/main.c **** 	puts(hr);
+  39              		.loc 1 53 0
+  40 0020 000094E5 		ldr	r0, [r4, #0]
+  41 0024 FEFFFFEB 		bl	puts
+  54:apps/compal_dsp_dump/main.c **** 
+  55:apps/compal_dsp_dump/main.c **** 	/* Dump DSP content */
+  56:apps/compal_dsp_dump/main.c **** 	dsp_dump();
+  42              		.loc 1 56 0
+  43 0028 FEFFFFEB 		bl	dsp_dump
+  44              	.L2:
+  57:apps/compal_dsp_dump/main.c **** 
+  58:apps/compal_dsp_dump/main.c **** 	while (1) {
+  59:apps/compal_dsp_dump/main.c **** 		update_timers();
+  45              		.loc 1 59 0 discriminator 1
+  46 002c FEFFFFEB 		bl	update_timers
+  47 0030 FDFFFFEA 		b	.L2
+  48              	.L4:
+  49              		.align	2
+  50              	.L3:
+  51 0034 00000000 		.word	.LANCHOR0
+  52 0038 00000000 		.word	.LC0
+  53              		.cfi_endproc
+  54              	.LFE24:
+  56              		.global	hr
+  57              		.section	.rodata.str1.1,"aMS",%progbits,1
+  58              	.LC0:
+  59 0000 0A0A4F53 		.ascii	"\012\012OSMOCOM Compal DSP Dumper (revision osmocon"
+  59      4D4F434F 
+  59      4D20436F 
+  59      6D70616C 
+  59      20445350 
+  60 002d 5F76302E 		.ascii	"_v0.0.0-1205-g07ce6fa)\012\000"
+  60      302E302D 
+  60      31323035 
+  60      2D673037 
+  60      63653666 
+  61              	.LC1:
+  62 0045 3D3D3D3D 		.ascii	"==================================================="
+  62      3D3D3D3D 
+  62      3D3D3D3D 
+  62      3D3D3D3D 
+  62      3D3D3D3D 
+  63 0078 3D3D3D3D 		.ascii	"===================\012\000"
+  63      3D3D3D3D 
+  63      3D3D3D3D 
+  63      3D3D3D3D 
+  63      3D3D3D0A 
+  64              		.data
+  65              		.align	2
+  66              		.set	.LANCHOR0,. + 0
+  69              	hr:
+  70 0000 45000000 		.word	.LC1
+  71              		.text
+  72              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 main.c
+     /tmp/ccfMAZPy.s:12     .text.main:0000000000000000 $a
+     /tmp/ccfMAZPy.s:15     .text.main:0000000000000000 main
+     /tmp/ccfMAZPy.s:51     .text.main:0000000000000034 $d
+     /tmp/ccfMAZPy.s:69     .data:0000000000000000 hr
+     /tmp/ccfMAZPy.s:65     .data:0000000000000000 $d
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+board_init
+puts
+dump_dev_id
+dsp_dump
+update_timers

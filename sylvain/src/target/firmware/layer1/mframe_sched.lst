@@ -1,0 +1,1576 @@
+   1              		.file	"mframe_sched.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text.mframe_task2chan_nr,"ax",%progbits
+  12              		.align	2
+  13              		.global	mframe_task2chan_nr
+  15              	mframe_task2chan_nr:
+  16              	.LFB16:
+  17              		.file 1 "layer1/mframe_sched.c"
+   1:layer1/mframe_sched.c **** /* GSM Multiframe Scheduler Implementation (on top of TDMA sched) */
+   2:layer1/mframe_sched.c **** 
+   3:layer1/mframe_sched.c **** /* (C) 2010 by Harald Welte <laforge@gnumonks.org>
+   4:layer1/mframe_sched.c ****  *
+   5:layer1/mframe_sched.c ****  * All Rights Reserved
+   6:layer1/mframe_sched.c ****  *
+   7:layer1/mframe_sched.c ****  * This program is free software; you can redistribute it and/or modify
+   8:layer1/mframe_sched.c ****  * it under the terms of the GNU General Public License as published by
+   9:layer1/mframe_sched.c ****  * the Free Software Foundation; either version 2 of the License, or
+  10:layer1/mframe_sched.c ****  * (at your option) any later version.
+  11:layer1/mframe_sched.c ****  *
+  12:layer1/mframe_sched.c ****  * This program is distributed in the hope that it will be useful,
+  13:layer1/mframe_sched.c ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  14:layer1/mframe_sched.c ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  15:layer1/mframe_sched.c ****  * GNU General Public License for more details.
+  16:layer1/mframe_sched.c ****  *
+  17:layer1/mframe_sched.c ****  * You should have received a copy of the GNU General Public License along
+  18:layer1/mframe_sched.c ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  19:layer1/mframe_sched.c ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  20:layer1/mframe_sched.c ****  *
+  21:layer1/mframe_sched.c ****  */
+  22:layer1/mframe_sched.c **** 
+  23:layer1/mframe_sched.c **** #include <stdint.h>
+  24:layer1/mframe_sched.c **** #include <stdio.h>
+  25:layer1/mframe_sched.c **** #include <string.h>
+  26:layer1/mframe_sched.c **** 
+  27:layer1/mframe_sched.c **** #include <debug.h>
+  28:layer1/mframe_sched.c **** 
+  29:layer1/mframe_sched.c **** #include <osmocom/gsm/gsm_utils.h>
+  30:layer1/mframe_sched.c **** 
+  31:layer1/mframe_sched.c **** #include <layer1/prim.h>
+  32:layer1/mframe_sched.c **** #include <layer1/sync.h>
+  33:layer1/mframe_sched.c **** #include <layer1/tdma_sched.h>
+  34:layer1/mframe_sched.c **** #include <layer1/mframe_sched.h>
+  35:layer1/mframe_sched.c **** 
+  36:layer1/mframe_sched.c **** /* A multiframe operation which can be scheduled for a multiframe */
+  37:layer1/mframe_sched.c **** struct mframe_sched_item {
+  38:layer1/mframe_sched.c **** 	/* The TDMA scheduler item that shall be scheduled */
+  39:layer1/mframe_sched.c **** 	const struct tdma_sched_item *sched_set;
+  40:layer1/mframe_sched.c **** 	/* Which modulo shall be used on the frame number */
+  41:layer1/mframe_sched.c **** 	uint16_t modulo;
+  42:layer1/mframe_sched.c **** 	/* At which number inside the modulo shall we be scheduled */
+  43:layer1/mframe_sched.c **** 	uint16_t frame_nr;
+  44:layer1/mframe_sched.c **** 	/* bit-mask of flags */
+  45:layer1/mframe_sched.c **** 	uint16_t flags;
+  46:layer1/mframe_sched.c **** };
+  47:layer1/mframe_sched.c **** 
+  48:layer1/mframe_sched.c **** /* FIXME: properly clean this up */
+  49:layer1/mframe_sched.c **** #define NB_QUAD_DL	nb_sched_set
+  50:layer1/mframe_sched.c **** #define NB_QUAD_FH_DL	NB_QUAD_DL
+  51:layer1/mframe_sched.c **** #define NB_QUAD_UL	nb_sched_set_ul
+  52:layer1/mframe_sched.c **** #define NB_QUAD_FH_UL	NB_QUAD_UL
+  53:layer1/mframe_sched.c **** #define NEIGH_PM	neigh_pm_sched_set
+  54:layer1/mframe_sched.c **** 
+  55:layer1/mframe_sched.c **** #define SNIFF_QUAD_DL	sniff_xcch_dl_sched_set
+  56:layer1/mframe_sched.c **** #define SNIFF_QUAD_UL	sniff_xcch_ul_sched_set
+  57:layer1/mframe_sched.c **** #define SNIFF_TCH	sniff_tch_sched_set
+  58:layer1/mframe_sched.c **** 
+  59:layer1/mframe_sched.c **** /* BCCH Normal */
+  60:layer1/mframe_sched.c **** static const struct mframe_sched_item mf_bcch_norm[] = {
+  61:layer1/mframe_sched.c **** 	{ .sched_set = NB_QUAD_DL, .modulo = 51, .frame_nr = 2 },
+  62:layer1/mframe_sched.c **** 	{ .sched_set = NULL }
+  63:layer1/mframe_sched.c **** };
+  64:layer1/mframe_sched.c **** 
+  65:layer1/mframe_sched.c **** /* BCCH Extended */
+  66:layer1/mframe_sched.c **** static const struct mframe_sched_item mf_bcch_ext[] = {
+  67:layer1/mframe_sched.c **** 	{ .sched_set = NB_QUAD_DL, .modulo = 51, .frame_nr = 6 },
+  68:layer1/mframe_sched.c **** 	{ .sched_set = NULL }
+  69:layer1/mframe_sched.c **** };
+  70:layer1/mframe_sched.c **** 
+  71:layer1/mframe_sched.c **** /* Full CCCH in a pure BCCH + CCCH C0T0 */
+  72:layer1/mframe_sched.c **** static const struct mframe_sched_item mf_ccch[] = {
+  73:layer1/mframe_sched.c **** 	{ .sched_set = NB_QUAD_DL, .modulo = 51, .frame_nr = 6 },
+  74:layer1/mframe_sched.c **** 	{ .sched_set = NB_QUAD_DL, .modulo = 51, .frame_nr = 12 },
+  75:layer1/mframe_sched.c **** 	{ .sched_set = NB_QUAD_DL, .modulo = 51, .frame_nr = 16 },
+  76:layer1/mframe_sched.c **** 	{ .sched_set = NB_QUAD_DL, .modulo = 51, .frame_nr = 22 },
+  77:layer1/mframe_sched.c **** 	{ .sched_set = NB_QUAD_DL, .modulo = 51, .frame_nr = 26 },
+  78:layer1/mframe_sched.c **** 	{ .sched_set = NB_QUAD_DL, .modulo = 51, .frame_nr = 32 },
+  79:layer1/mframe_sched.c **** 	{ .sched_set = NB_QUAD_DL, .modulo = 51, .frame_nr = 36 },
+  80:layer1/mframe_sched.c **** 	{ .sched_set = NB_QUAD_DL, .modulo = 51, .frame_nr = 42 },
+  81:layer1/mframe_sched.c **** 	{ .sched_set = NB_QUAD_DL, .modulo = 51, .frame_nr = 46 },
+  82:layer1/mframe_sched.c **** 	{ .sched_set = NULL }
+  83:layer1/mframe_sched.c **** };
+  84:layer1/mframe_sched.c **** 
+  85:layer1/mframe_sched.c **** /* Full CCCH in a combined CCCH on C0T0 */
+  86:layer1/mframe_sched.c **** static const struct mframe_sched_item mf_ccch_comb[] = {
+  87:layer1/mframe_sched.c **** 	{ .sched_set = NB_QUAD_DL, .modulo = 51, .frame_nr = 6 },
+  88:layer1/mframe_sched.c **** 	{ .sched_set = NB_QUAD_DL, .modulo = 51, .frame_nr = 12 },
+  89:layer1/mframe_sched.c **** 	{ .sched_set = NB_QUAD_DL, .modulo = 51, .frame_nr = 16 },
+  90:layer1/mframe_sched.c **** 	{ .sched_set = NULL }
+  91:layer1/mframe_sched.c **** };
+  92:layer1/mframe_sched.c **** 
+  93:layer1/mframe_sched.c **** /* SDCCH/4 in a combined CCCH on C0T0, cannot be FH */
+  94:layer1/mframe_sched.c **** static const struct mframe_sched_item mf_sdcch4_0[] = {
+  95:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_DL, .modulo = 51, .frame_nr = 22 },
+  96:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_UL, .modulo = 51, .frame_nr = 22+15 },
+  97:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_DL, .modulo = 2*51, .frame_nr = 42,
+  98:layer1/mframe_sched.c **** 	  .flags = MF_F_SACCH },
+  99:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_UL, .modulo = 2*51, .frame_nr = 42+15,
+ 100:layer1/mframe_sched.c **** 	  .flags = MF_F_SACCH },
+ 101:layer1/mframe_sched.c **** 	{ .sched_set = NULL }
+ 102:layer1/mframe_sched.c **** };
+ 103:layer1/mframe_sched.c **** static const struct mframe_sched_item mf_sdcch4_1[] = {
+ 104:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_DL, .modulo = 51, .frame_nr = 26 },
+ 105:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_UL, .modulo = 51, .frame_nr = 26+15 },
+ 106:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_DL, .modulo = 2*51, .frame_nr = 46,
+ 107:layer1/mframe_sched.c **** 	  .flags = MF_F_SACCH },
+ 108:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_UL, .modulo = 2*51, .frame_nr = 46+15,
+ 109:layer1/mframe_sched.c **** 	  .flags = MF_F_SACCH },
+ 110:layer1/mframe_sched.c **** 	{ .sched_set = NULL }
+ 111:layer1/mframe_sched.c **** };
+ 112:layer1/mframe_sched.c **** static const struct mframe_sched_item mf_sdcch4_2[] = {
+ 113:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_DL, .modulo = 51, .frame_nr = 32 },
+ 114:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_UL, .modulo = 51, .frame_nr = 32+15 },
+ 115:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_DL, .modulo = 2*51, .frame_nr = 51+42,
+ 116:layer1/mframe_sched.c **** 	  .flags = MF_F_SACCH },
+ 117:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_UL, .modulo = 2*51, .frame_nr = 51+42+15,
+ 118:layer1/mframe_sched.c **** 	  .flags = MF_F_SACCH },
+ 119:layer1/mframe_sched.c **** 	{ .sched_set = NULL }
+ 120:layer1/mframe_sched.c **** };
+ 121:layer1/mframe_sched.c **** static const struct mframe_sched_item mf_sdcch4_3[] = {
+ 122:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_DL, .modulo = 51, .frame_nr = 36 },
+ 123:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_UL, .modulo = 51, .frame_nr = 36+15 },
+ 124:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_DL, .modulo = 2*51, .frame_nr = 51+46,
+ 125:layer1/mframe_sched.c **** 	  .flags = MF_F_SACCH },
+ 126:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_UL, .modulo = 2*51, .frame_nr = 51+46+15,
+ 127:layer1/mframe_sched.c **** 	  .flags = MF_F_SACCH },
+ 128:layer1/mframe_sched.c **** 	{ .sched_set = NULL }
+ 129:layer1/mframe_sched.c **** };
+ 130:layer1/mframe_sched.c **** 
+ 131:layer1/mframe_sched.c **** /* SDCCH/8, can be frequency hopping (FH) */
+ 132:layer1/mframe_sched.c **** static const struct mframe_sched_item mf_sdcch8_0[] = {
+ 133:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_DL, .modulo = 51, .frame_nr = 0 },
+ 134:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_UL, .modulo = 51, .frame_nr = 0+15 },
+ 135:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_DL, .modulo = 2*51, .frame_nr = 32,
+ 136:layer1/mframe_sched.c **** 	  .flags = MF_F_SACCH },
+ 137:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_UL, .modulo = 2*51, .frame_nr = 32+15,
+ 138:layer1/mframe_sched.c **** 	  .flags = MF_F_SACCH },
+ 139:layer1/mframe_sched.c **** 	{ .sched_set = NULL }
+ 140:layer1/mframe_sched.c **** };
+ 141:layer1/mframe_sched.c **** static const struct mframe_sched_item mf_sdcch8_1[] = {
+ 142:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_DL, .modulo = 51, .frame_nr = 4 },
+ 143:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_UL, .modulo = 51, .frame_nr = 4+15 },
+ 144:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_DL, .modulo = 2*51, .frame_nr = 36,
+ 145:layer1/mframe_sched.c **** 	  .flags = MF_F_SACCH },
+ 146:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_UL, .modulo = 2*51, .frame_nr = 36+15,
+ 147:layer1/mframe_sched.c **** 	  .flags = MF_F_SACCH },
+ 148:layer1/mframe_sched.c **** 	{ .sched_set = NULL }
+ 149:layer1/mframe_sched.c **** };
+ 150:layer1/mframe_sched.c **** static const struct mframe_sched_item mf_sdcch8_2[] = {
+ 151:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_DL, .modulo = 51, .frame_nr = 8 },
+ 152:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_UL, .modulo = 51, .frame_nr = 8+15 },
+ 153:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_DL, .modulo = 2*51, .frame_nr = 40,
+ 154:layer1/mframe_sched.c **** 	  .flags = MF_F_SACCH },
+ 155:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_UL, .modulo = 2*51, .frame_nr = 40+15,
+ 156:layer1/mframe_sched.c **** 	  .flags = MF_F_SACCH },
+ 157:layer1/mframe_sched.c **** 	{ .sched_set = NULL }
+ 158:layer1/mframe_sched.c **** };
+ 159:layer1/mframe_sched.c **** static const struct mframe_sched_item mf_sdcch8_3[] = {
+ 160:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_DL, .modulo = 51, .frame_nr = 12 },
+ 161:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_UL, .modulo = 51, .frame_nr = 12+15 },
+ 162:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_DL, .modulo = 2*51, .frame_nr = 44,
+ 163:layer1/mframe_sched.c **** 	  .flags = MF_F_SACCH },
+ 164:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_UL, .modulo = 2*51, .frame_nr = 44+15,
+ 165:layer1/mframe_sched.c **** 	  .flags = MF_F_SACCH },
+ 166:layer1/mframe_sched.c **** 	{ .sched_set = NULL }
+ 167:layer1/mframe_sched.c **** };
+ 168:layer1/mframe_sched.c **** static const struct mframe_sched_item mf_sdcch8_4[] = {
+ 169:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_DL, .modulo = 51, .frame_nr = 16 },
+ 170:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_UL, .modulo = 51, .frame_nr = 16+15 },
+ 171:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_DL, .modulo = 2*51, .frame_nr = 51+32,
+ 172:layer1/mframe_sched.c **** 	  .flags = MF_F_SACCH },
+ 173:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_UL, .modulo = 2*51, .frame_nr = 51+32+15,
+ 174:layer1/mframe_sched.c **** 	  .flags = MF_F_SACCH },
+ 175:layer1/mframe_sched.c **** 	{ .sched_set = NULL }
+ 176:layer1/mframe_sched.c **** };
+ 177:layer1/mframe_sched.c **** static const struct mframe_sched_item mf_sdcch8_5[] = {
+ 178:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_DL, .modulo = 51, .frame_nr = 20 },
+ 179:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_UL, .modulo = 51, .frame_nr = 20+15 },
+ 180:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_DL, .modulo = 2*51, .frame_nr = 51+36,
+ 181:layer1/mframe_sched.c **** 	  .flags = MF_F_SACCH },
+ 182:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_UL, .modulo = 2*51, .frame_nr = 51+36+15,
+ 183:layer1/mframe_sched.c **** 	  .flags = MF_F_SACCH },
+ 184:layer1/mframe_sched.c **** 	{ .sched_set = NULL }
+ 185:layer1/mframe_sched.c **** };
+ 186:layer1/mframe_sched.c **** static const struct mframe_sched_item mf_sdcch8_6[] = {
+ 187:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_DL, .modulo = 51, .frame_nr = 24 },
+ 188:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_UL, .modulo = 51, .frame_nr = 24+15 },
+ 189:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_DL, .modulo = 2*51, .frame_nr = 51+40,
+ 190:layer1/mframe_sched.c **** 	  .flags = MF_F_SACCH },
+ 191:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_UL, .modulo = 2*51, .frame_nr = 51+40+15,
+ 192:layer1/mframe_sched.c **** 	  .flags = MF_F_SACCH },
+ 193:layer1/mframe_sched.c **** 	{ .sched_set = NULL }
+ 194:layer1/mframe_sched.c **** };
+ 195:layer1/mframe_sched.c **** static const struct mframe_sched_item mf_sdcch8_7[] = {
+ 196:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_DL, .modulo = 51, .frame_nr = 28 },
+ 197:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_UL, .modulo = 51, .frame_nr = 28+15 },
+ 198:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_DL, .modulo = 2*51, .frame_nr = 51+44,
+ 199:layer1/mframe_sched.c **** 	  .flags = MF_F_SACCH },
+ 200:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_QUAD_UL, .modulo = 2*51, .frame_nr = 51+44+15,
+ 201:layer1/mframe_sched.c **** 	  .flags = MF_F_SACCH },
+ 202:layer1/mframe_sched.c **** 	{ .sched_set = NULL }
+ 203:layer1/mframe_sched.c **** };
+ 204:layer1/mframe_sched.c **** 
+ 205:layer1/mframe_sched.c **** /* Measurement for MF 51 */
+ 206:layer1/mframe_sched.c **** static const struct mframe_sched_item mf_neigh_pm51[] = {
+ 207:layer1/mframe_sched.c **** 	{ .sched_set = NEIGH_PM   , .modulo = 51, .frame_nr = 50 },
+ 208:layer1/mframe_sched.c **** 	{ .sched_set = NULL }
+ 209:layer1/mframe_sched.c **** };
+ 210:layer1/mframe_sched.c **** 
+ 211:layer1/mframe_sched.c **** /* TCH */
+ 212:layer1/mframe_sched.c **** #define TCH	tch_sched_set
+ 213:layer1/mframe_sched.c **** #define TCH_A	tch_a_sched_set
+ 214:layer1/mframe_sched.c **** #define TCH_D	tch_d_sched_set
+ 215:layer1/mframe_sched.c **** 
+ 216:layer1/mframe_sched.c **** static const struct mframe_sched_item mf_tch_f_even[] = {
+ 217:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  0 },
+ 218:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  1 },
+ 219:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  2 },
+ 220:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  3 },
+ 221:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  4 },
+ 222:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  5 },
+ 223:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  6 },
+ 224:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  7 },
+ 225:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  8 },
+ 226:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  9 },
+ 227:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr = 10 },
+ 228:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr = 11 },
+ 229:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 26, .frame_nr = 12,
+ 230:layer1/mframe_sched.c **** 	  .flags = MF_F_SACCH },
+ 231:layer1/mframe_sched.c **** 	{ .sched_set = NULL }
+ 232:layer1/mframe_sched.c **** };
+ 233:layer1/mframe_sched.c **** 
+ 234:layer1/mframe_sched.c **** static const struct mframe_sched_item mf_tch_f_odd[] = {
+ 235:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  0 },
+ 236:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  1 },
+ 237:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  2 },
+ 238:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  3 },
+ 239:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  4 },
+ 240:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  5 },
+ 241:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  6 },
+ 242:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  7 },
+ 243:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  8 },
+ 244:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  9 },
+ 245:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr = 10 },
+ 246:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr = 11 },
+ 247:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 26, .frame_nr = 25,
+ 248:layer1/mframe_sched.c **** 	  .flags = MF_F_SACCH },
+ 249:layer1/mframe_sched.c **** 	{ .sched_set = NULL }
+ 250:layer1/mframe_sched.c **** };
+ 251:layer1/mframe_sched.c **** 
+ 252:layer1/mframe_sched.c **** static const struct mframe_sched_item mf_tch_h_0[] = {
+ 253:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  0 },
+ 254:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  2 },
+ 255:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  4 },
+ 256:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  6 },
+ 257:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  8 },
+ 258:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr = 10 },
+ 259:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 26, .frame_nr = 12,
+ 260:layer1/mframe_sched.c **** 	  .flags = MF_F_SACCH },
+ 261:layer1/mframe_sched.c **** 	{ .sched_set = NULL }
+ 262:layer1/mframe_sched.c **** };
+ 263:layer1/mframe_sched.c **** 
+ 264:layer1/mframe_sched.c **** static const struct mframe_sched_item mf_tch_h_1[] = {
+ 265:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  1 },
+ 266:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  3 },
+ 267:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  5 },
+ 268:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  7 },
+ 269:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr =  9 },
+ 270:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 13, .frame_nr = 11 },
+ 271:layer1/mframe_sched.c **** 	{ .sched_set = SNIFF_TCH, .modulo = 26, .frame_nr = 25,
+ 272:layer1/mframe_sched.c **** 	  .flags = MF_F_SACCH },
+ 273:layer1/mframe_sched.c **** 	{ .sched_set = NULL }
+ 274:layer1/mframe_sched.c **** };
+ 275:layer1/mframe_sched.c **** 
+ 276:layer1/mframe_sched.c **** /* Measurement for MF 26 */
+ 277:layer1/mframe_sched.c **** static const struct mframe_sched_item mf_neigh_pm26_even[] = {
+ 278:layer1/mframe_sched.c **** 	{ .sched_set = NEIGH_PM   , .modulo = 26, .frame_nr = 25 },
+ 279:layer1/mframe_sched.c **** 	{ .sched_set = NULL }
+ 280:layer1/mframe_sched.c **** };
+ 281:layer1/mframe_sched.c **** static const struct mframe_sched_item mf_neigh_pm26_odd[] = {
+ 282:layer1/mframe_sched.c **** 	{ .sched_set = NEIGH_PM   , .modulo = 26, .frame_nr = 12 },
+ 283:layer1/mframe_sched.c **** 	{ .sched_set = NULL }
+ 284:layer1/mframe_sched.c **** };
+ 285:layer1/mframe_sched.c **** 
+ 286:layer1/mframe_sched.c **** /* Test TX */
+ 287:layer1/mframe_sched.c **** static const struct mframe_sched_item mf_tx_all_nb[] = {
+ 288:layer1/mframe_sched.c **** 	{ .sched_set = NB_QUAD_FH_UL, .modulo = 4, .frame_nr = 0 },
+ 289:layer1/mframe_sched.c **** 	{ .sched_set = NULL }
+ 290:layer1/mframe_sched.c **** };
+ 291:layer1/mframe_sched.c **** 
+ 292:layer1/mframe_sched.c **** static const struct mframe_sched_item *sched_set_for_task[32] = {
+ 293:layer1/mframe_sched.c **** 	[MF_TASK_BCCH_NORM] = mf_bcch_norm,
+ 294:layer1/mframe_sched.c **** 	[MF_TASK_BCCH_EXT] = mf_bcch_ext,
+ 295:layer1/mframe_sched.c **** 	[MF_TASK_CCCH] = mf_ccch,
+ 296:layer1/mframe_sched.c **** 	[MF_TASK_CCCH_COMB] = mf_ccch_comb,
+ 297:layer1/mframe_sched.c **** 
+ 298:layer1/mframe_sched.c **** 	[MF_TASK_SDCCH4_0] = mf_sdcch4_0,
+ 299:layer1/mframe_sched.c **** 	[MF_TASK_SDCCH4_1] = mf_sdcch4_1,
+ 300:layer1/mframe_sched.c **** 	[MF_TASK_SDCCH4_2] = mf_sdcch4_2,
+ 301:layer1/mframe_sched.c **** 	[MF_TASK_SDCCH4_3] = mf_sdcch4_3,
+ 302:layer1/mframe_sched.c **** 
+ 303:layer1/mframe_sched.c **** 	[MF_TASK_SDCCH8_0] = mf_sdcch8_0,
+ 304:layer1/mframe_sched.c **** 	[MF_TASK_SDCCH8_1] = mf_sdcch8_1,
+ 305:layer1/mframe_sched.c **** 	[MF_TASK_SDCCH8_2] = mf_sdcch8_2,
+ 306:layer1/mframe_sched.c **** 	[MF_TASK_SDCCH8_3] = mf_sdcch8_3,
+ 307:layer1/mframe_sched.c **** 	[MF_TASK_SDCCH8_4] = mf_sdcch8_4,
+ 308:layer1/mframe_sched.c **** 	[MF_TASK_SDCCH8_5] = mf_sdcch8_5,
+ 309:layer1/mframe_sched.c **** 	[MF_TASK_SDCCH8_6] = mf_sdcch8_6,
+ 310:layer1/mframe_sched.c **** 	[MF_TASK_SDCCH8_7] = mf_sdcch8_7,
+ 311:layer1/mframe_sched.c **** 
+ 312:layer1/mframe_sched.c **** 	[MF_TASK_TCH_F_EVEN] = mf_tch_f_even,
+ 313:layer1/mframe_sched.c **** 	[MF_TASK_TCH_F_ODD]  = mf_tch_f_odd,
+ 314:layer1/mframe_sched.c **** 	[MF_TASK_TCH_H_0]    = mf_tch_h_0,
+ 315:layer1/mframe_sched.c **** 	[MF_TASK_TCH_H_1]    = mf_tch_h_1,
+ 316:layer1/mframe_sched.c **** 
+ 317:layer1/mframe_sched.c **** 	[MF_TASK_NEIGH_PM51] = mf_neigh_pm51,
+ 318:layer1/mframe_sched.c **** 	[MF_TASK_NEIGH_PM26E] = mf_neigh_pm26_even,
+ 319:layer1/mframe_sched.c **** 	[MF_TASK_NEIGH_PM26O] = mf_neigh_pm26_odd,
+ 320:layer1/mframe_sched.c **** 
+ 321:layer1/mframe_sched.c **** 	[MF_TASK_UL_ALL_NB] = mf_tx_all_nb,
+ 322:layer1/mframe_sched.c **** };
+ 323:layer1/mframe_sched.c **** 
+ 324:layer1/mframe_sched.c **** /* encodes a channel number according to 08.58 Chapter 9.3.1 */
+ 325:layer1/mframe_sched.c **** uint8_t mframe_task2chan_nr(enum mframe_task mft, uint8_t ts)
+ 326:layer1/mframe_sched.c **** {
+  18              		.loc 1 326 0
+  19              		.cfi_startproc
+  20              		@ args = 0, pretend = 0, frame = 0
+  21              		@ frame_needed = 0, uses_anonymous_args = 0
+  22              		@ link register save eliminated.
+  23              	.LVL0:
+  24              		.loc 1 326 0
+  25 0000 FF1001E2 		and	r1, r1, #255
+  26              	.LVL1:
+ 327:layer1/mframe_sched.c **** 	uint8_t cbits;
+ 328:layer1/mframe_sched.c **** 
+ 329:layer1/mframe_sched.c **** 	switch (mft) {
+  27              		.loc 1 329 0
+  28 0004 170050E3 		cmp	r0, #23
+  29 0008 00F19F97 		ldrls	pc, [pc, r0, asl #2]
+  30 000c 3A0000EA 		b	.L3
+  31              	.L21:
+  32 0010 F8000000 		.word	.L22
+  33 0014 F8000000 		.word	.L22
+  34 0018 70000000 		.word	.L4
+  35 001c 70000000 		.word	.L4
+  36 0020 78000000 		.word	.L5
+  37 0024 80000000 		.word	.L6
+  38 0028 88000000 		.word	.L7
+  39 002c 90000000 		.word	.L8
+  40 0030 98000000 		.word	.L9
+  41 0034 A0000000 		.word	.L10
+  42 0038 A8000000 		.word	.L11
+  43 003c B0000000 		.word	.L12
+  44 0040 B8000000 		.word	.L13
+  45 0044 C0000000 		.word	.L14
+  46 0048 C8000000 		.word	.L15
+  47 004c D0000000 		.word	.L16
+  48 0050 D8000000 		.word	.L17
+  49 0054 D8000000 		.word	.L17
+  50 0058 E0000000 		.word	.L18
+  51 005c E8000000 		.word	.L19
+  52 0060 FC000000 		.word	.L3
+  53 0064 FC000000 		.word	.L3
+  54 0068 FC000000 		.word	.L3
+  55 006c F0000000 		.word	.L20
+  56              	.L4:
+  57              	.LVL2:
+ 330:layer1/mframe_sched.c **** 	case MF_TASK_BCCH_NORM:
+ 331:layer1/mframe_sched.c **** 	case MF_TASK_BCCH_EXT:
+ 332:layer1/mframe_sched.c **** 		cbits = 0x10;
+ 333:layer1/mframe_sched.c **** 		break;
+ 334:layer1/mframe_sched.c **** 	case MF_TASK_CCCH:
+ 335:layer1/mframe_sched.c **** 	case MF_TASK_CCCH_COMB:
+ 336:layer1/mframe_sched.c **** 		cbits = 0x12;
+  58              		.loc 1 336 0
+  59 0070 1230A0E3 		mov	r3, #18
+ 337:layer1/mframe_sched.c **** 		break;
+  60              		.loc 1 337 0
+  61 0074 200000EA 		b	.L3
+  62              	.LVL3:
+  63              	.L5:
+ 338:layer1/mframe_sched.c **** 	case MF_TASK_SDCCH4_0:
+ 339:layer1/mframe_sched.c **** 		cbits = 0x04 + 0;
+  64              		.loc 1 339 0
+  65 0078 0430A0E3 		mov	r3, #4
+ 340:layer1/mframe_sched.c **** 		break;
+  66              		.loc 1 340 0
+  67 007c 1E0000EA 		b	.L3
+  68              	.LVL4:
+  69              	.L6:
+ 341:layer1/mframe_sched.c **** 	case MF_TASK_SDCCH4_1:
+ 342:layer1/mframe_sched.c **** 		cbits = 0x04 + 1;
+  70              		.loc 1 342 0
+  71 0080 0530A0E3 		mov	r3, #5
+ 343:layer1/mframe_sched.c **** 		break;
+  72              		.loc 1 343 0
+  73 0084 1C0000EA 		b	.L3
+  74              	.LVL5:
+  75              	.L7:
+ 344:layer1/mframe_sched.c **** 	case MF_TASK_SDCCH4_2:
+ 345:layer1/mframe_sched.c **** 		cbits = 0x04 + 2;
+  76              		.loc 1 345 0
+  77 0088 0630A0E3 		mov	r3, #6
+ 346:layer1/mframe_sched.c **** 		break;
+  78              		.loc 1 346 0
+  79 008c 1A0000EA 		b	.L3
+  80              	.LVL6:
+  81              	.L8:
+ 347:layer1/mframe_sched.c **** 	case MF_TASK_SDCCH4_3:
+ 348:layer1/mframe_sched.c **** 		cbits = 0x04 + 3;
+  82              		.loc 1 348 0
+  83 0090 0730A0E3 		mov	r3, #7
+ 349:layer1/mframe_sched.c **** 		break;
+  84              		.loc 1 349 0
+  85 0094 180000EA 		b	.L3
+  86              	.LVL7:
+  87              	.L9:
+ 350:layer1/mframe_sched.c **** 	case MF_TASK_SDCCH8_0:
+ 351:layer1/mframe_sched.c **** 		cbits = 0x08 + 0;
+  88              		.loc 1 351 0
+  89 0098 0830A0E3 		mov	r3, #8
+ 352:layer1/mframe_sched.c **** 		break;
+  90              		.loc 1 352 0
+  91 009c 160000EA 		b	.L3
+  92              	.LVL8:
+  93              	.L10:
+ 353:layer1/mframe_sched.c **** 	case MF_TASK_SDCCH8_1:
+ 354:layer1/mframe_sched.c **** 		cbits = 0x08 + 1;
+  94              		.loc 1 354 0
+  95 00a0 0930A0E3 		mov	r3, #9
+ 355:layer1/mframe_sched.c **** 		break;
+  96              		.loc 1 355 0
+  97 00a4 140000EA 		b	.L3
+  98              	.LVL9:
+  99              	.L11:
+ 356:layer1/mframe_sched.c **** 	case MF_TASK_SDCCH8_2:
+ 357:layer1/mframe_sched.c **** 		cbits = 0x08 + 2;
+ 100              		.loc 1 357 0
+ 101 00a8 0A30A0E3 		mov	r3, #10
+ 358:layer1/mframe_sched.c **** 		break;
+ 102              		.loc 1 358 0
+ 103 00ac 120000EA 		b	.L3
+ 104              	.LVL10:
+ 105              	.L12:
+ 359:layer1/mframe_sched.c **** 	case MF_TASK_SDCCH8_3:
+ 360:layer1/mframe_sched.c **** 		cbits = 0x08 + 3;
+ 106              		.loc 1 360 0
+ 107 00b0 0B30A0E3 		mov	r3, #11
+ 361:layer1/mframe_sched.c **** 		break;
+ 108              		.loc 1 361 0
+ 109 00b4 100000EA 		b	.L3
+ 110              	.LVL11:
+ 111              	.L13:
+ 362:layer1/mframe_sched.c **** 	case MF_TASK_SDCCH8_4:
+ 363:layer1/mframe_sched.c **** 		cbits = 0x08 + 4;
+ 112              		.loc 1 363 0
+ 113 00b8 0C30A0E3 		mov	r3, #12
+ 364:layer1/mframe_sched.c **** 		break;
+ 114              		.loc 1 364 0
+ 115 00bc 0E0000EA 		b	.L3
+ 116              	.LVL12:
+ 117              	.L14:
+ 365:layer1/mframe_sched.c **** 	case MF_TASK_SDCCH8_5:
+ 366:layer1/mframe_sched.c **** 		cbits = 0x08 + 5;
+ 118              		.loc 1 366 0
+ 119 00c0 0D30A0E3 		mov	r3, #13
+ 367:layer1/mframe_sched.c **** 		break;
+ 120              		.loc 1 367 0
+ 121 00c4 0C0000EA 		b	.L3
+ 122              	.LVL13:
+ 123              	.L15:
+ 368:layer1/mframe_sched.c **** 	case MF_TASK_SDCCH8_6:
+ 369:layer1/mframe_sched.c **** 		cbits = 0x08 + 6;
+ 124              		.loc 1 369 0
+ 125 00c8 0E30A0E3 		mov	r3, #14
+ 370:layer1/mframe_sched.c **** 		break;
+ 126              		.loc 1 370 0
+ 127 00cc 0A0000EA 		b	.L3
+ 128              	.LVL14:
+ 129              	.L16:
+ 371:layer1/mframe_sched.c **** 	case MF_TASK_SDCCH8_7:
+ 372:layer1/mframe_sched.c **** 		cbits = 0x08 + 7;
+ 130              		.loc 1 372 0
+ 131 00d0 0F30A0E3 		mov	r3, #15
+ 373:layer1/mframe_sched.c **** 		break;
+ 132              		.loc 1 373 0
+ 133 00d4 080000EA 		b	.L3
+ 134              	.LVL15:
+ 135              	.L17:
+ 374:layer1/mframe_sched.c **** 	case MF_TASK_TCH_F_EVEN:
+ 375:layer1/mframe_sched.c **** 	case MF_TASK_TCH_F_ODD:
+ 376:layer1/mframe_sched.c **** 		cbits = 0x01;
+ 136              		.loc 1 376 0
+ 137 00d8 0130A0E3 		mov	r3, #1
+ 377:layer1/mframe_sched.c **** 		break;
+ 138              		.loc 1 377 0
+ 139 00dc 060000EA 		b	.L3
+ 140              	.LVL16:
+ 141              	.L18:
+ 378:layer1/mframe_sched.c **** 	case MF_TASK_TCH_H_0:
+ 379:layer1/mframe_sched.c **** 		cbits = 0x02 + 0;
+ 142              		.loc 1 379 0
+ 143 00e0 0230A0E3 		mov	r3, #2
+ 380:layer1/mframe_sched.c **** 		break;
+ 144              		.loc 1 380 0
+ 145 00e4 040000EA 		b	.L3
+ 146              	.LVL17:
+ 147              	.L19:
+ 381:layer1/mframe_sched.c **** 	case MF_TASK_TCH_H_1:
+ 382:layer1/mframe_sched.c **** 		cbits = 0x02 + 1;
+ 148              		.loc 1 382 0
+ 149 00e8 0330A0E3 		mov	r3, #3
+ 383:layer1/mframe_sched.c **** 		break;
+ 150              		.loc 1 383 0
+ 151 00ec 020000EA 		b	.L3
+ 152              	.LVL18:
+ 153              	.L20:
+ 384:layer1/mframe_sched.c **** 	case MF_TASK_UL_ALL_NB:
+ 385:layer1/mframe_sched.c **** 		/* ERROR: cannot express as channel number */
+ 386:layer1/mframe_sched.c **** 		cbits = 0;
+ 154              		.loc 1 386 0
+ 155 00f0 0030A0E3 		mov	r3, #0
+ 387:layer1/mframe_sched.c **** 		break;
+ 156              		.loc 1 387 0
+ 157 00f4 000000EA 		b	.L3
+ 158              	.LVL19:
+ 159              	.L22:
+ 332:layer1/mframe_sched.c **** 		cbits = 0x10;
+ 160              		.loc 1 332 0
+ 161 00f8 1030A0E3 		mov	r3, #16
+ 162              	.L3:
+ 163              	.LVL20:
+ 388:layer1/mframe_sched.c **** 	}
+ 389:layer1/mframe_sched.c **** 
+ 390:layer1/mframe_sched.c **** 	return (cbits << 3) | (ts & 0x7);
+ 164              		.loc 1 390 0
+ 165 00fc 071001E2 		and	r1, r1, #7
+ 166 0100 833181E1 		orr	r3, r1, r3, asl #3
+ 167              	.LVL21:
+ 387:layer1/mframe_sched.c **** 		break;
+ 168              		.loc 1 387 0
+ 169 0104 FF0003E2 		and	r0, r3, #255
+ 170              	.LVL22:
+ 391:layer1/mframe_sched.c **** }
+ 171              		.loc 1 391 0
+ 172 0108 1EFF2FE1 		bx	lr
+ 173              		.cfi_endproc
+ 174              	.LFE16:
+ 176              		.section	.text.mframe_enable,"ax",%progbits
+ 177              		.align	2
+ 178              		.global	mframe_enable
+ 180              	mframe_enable:
+ 181              	.LFB18:
+ 392:layer1/mframe_sched.c **** 
+ 393:layer1/mframe_sched.c **** /* how many TDMA frame ticks should we schedule events ahead? */
+ 394:layer1/mframe_sched.c **** #define SCHEDULE_AHEAD	2
+ 395:layer1/mframe_sched.c **** 
+ 396:layer1/mframe_sched.c **** /* how long do we need to tell the DSP in advance what we want to do? */
+ 397:layer1/mframe_sched.c **** #define SCHEDULE_LATENCY	1
+ 398:layer1/mframe_sched.c **** 
+ 399:layer1/mframe_sched.c **** /* (test and) schedule one particular sched_item_set by means of the TDMA scheduler */
+ 400:layer1/mframe_sched.c **** static void mframe_schedule_set(enum mframe_task task_id)
+ 401:layer1/mframe_sched.c **** {
+ 402:layer1/mframe_sched.c **** 	const struct mframe_sched_item *set = sched_set_for_task[task_id];
+ 403:layer1/mframe_sched.c **** 	const struct mframe_sched_item *si;
+ 404:layer1/mframe_sched.c **** 
+ 405:layer1/mframe_sched.c **** 	for (si = set; si->sched_set != NULL; si++) {
+ 406:layer1/mframe_sched.c **** 		unsigned int trigger = si->frame_nr % si->modulo;
+ 407:layer1/mframe_sched.c **** 		unsigned int current = (l1s.current_time.fn + SCHEDULE_AHEAD) % si->modulo;
+ 408:layer1/mframe_sched.c **** 		if (current == trigger) {
+ 409:layer1/mframe_sched.c **** 			uint32_t fn;
+ 410:layer1/mframe_sched.c **** 			int rv;
+ 411:layer1/mframe_sched.c **** 
+ 412:layer1/mframe_sched.c **** 			/* Schedule the set */
+ 413:layer1/mframe_sched.c **** 			/* FIXME: what to do with SACCH Flag etc? */
+ 414:layer1/mframe_sched.c **** 			rv = tdma_schedule_set(SCHEDULE_AHEAD-SCHEDULE_LATENCY,
+ 415:layer1/mframe_sched.c **** 					  si->sched_set, task_id | (si->flags<<8));
+ 416:layer1/mframe_sched.c **** 
+ 417:layer1/mframe_sched.c **** 			/* Compute the next safe time to queue a DSP command */
+ 418:layer1/mframe_sched.c **** 			fn = l1s.current_time.fn;
+ 419:layer1/mframe_sched.c **** 			ADD_MODULO(fn, rv - 2, GSM_MAX_FN); /* -2 = worst case last dsp command */
+ 420:layer1/mframe_sched.c **** 			if ((fn > l1s.mframe_sched.safe_fn) ||
+ 421:layer1/mframe_sched.c **** 			    (l1s.mframe_sched.safe_fn >= GSM_MAX_FN))
+ 422:layer1/mframe_sched.c **** 				l1s.mframe_sched.safe_fn = fn;
+ 423:layer1/mframe_sched.c **** 		}
+ 424:layer1/mframe_sched.c **** 	}
+ 425:layer1/mframe_sched.c **** }
+ 426:layer1/mframe_sched.c **** 
+ 427:layer1/mframe_sched.c **** /* Enable a specific task */
+ 428:layer1/mframe_sched.c **** void mframe_enable(enum mframe_task task_id)
+ 429:layer1/mframe_sched.c **** {
+ 182              		.loc 1 429 0
+ 183              		.cfi_startproc
+ 184              		@ args = 0, pretend = 0, frame = 0
+ 185              		@ frame_needed = 0, uses_anonymous_args = 0
+ 186              		@ link register save eliminated.
+ 187              	.LVL23:
+ 430:layer1/mframe_sched.c **** 	l1s.mframe_sched.tasks_tgt |= (1 << task_id);
+ 188              		.loc 1 430 0
+ 189 0000 10309FE5 		ldr	r3, .L24
+ 190 0004 382A93E5 		ldr	r2, [r3, #2616]
+ 191 0008 0110A0E3 		mov	r1, #1
+ 192 000c 112082E1 		orr	r2, r2, r1, asl r0
+ 193 0010 382A83E5 		str	r2, [r3, #2616]
+ 431:layer1/mframe_sched.c **** }
+ 194              		.loc 1 431 0
+ 195 0014 1EFF2FE1 		bx	lr
+ 196              	.L25:
+ 197              		.align	2
+ 198              	.L24:
+ 199 0018 00000000 		.word	l1s
+ 200              		.cfi_endproc
+ 201              	.LFE18:
+ 203              		.section	.text.mframe_disable,"ax",%progbits
+ 204              		.align	2
+ 205              		.global	mframe_disable
+ 207              	mframe_disable:
+ 208              	.LFB19:
+ 432:layer1/mframe_sched.c **** 
+ 433:layer1/mframe_sched.c **** /* Disable a specific task */
+ 434:layer1/mframe_sched.c **** void mframe_disable(enum mframe_task task_id)
+ 435:layer1/mframe_sched.c **** {
+ 209              		.loc 1 435 0
+ 210              		.cfi_startproc
+ 211              		@ args = 0, pretend = 0, frame = 0
+ 212              		@ frame_needed = 0, uses_anonymous_args = 0
+ 213              		@ link register save eliminated.
+ 214              	.LVL24:
+ 436:layer1/mframe_sched.c **** 	l1s.mframe_sched.tasks_tgt &= ~(1 << task_id);
+ 215              		.loc 1 436 0
+ 216 0000 10309FE5 		ldr	r3, .L27
+ 217 0004 382A93E5 		ldr	r2, [r3, #2616]
+ 218 0008 0110A0E3 		mov	r1, #1
+ 219 000c 1120C2E1 		bic	r2, r2, r1, asl r0
+ 220 0010 382A83E5 		str	r2, [r3, #2616]
+ 437:layer1/mframe_sched.c **** }
+ 221              		.loc 1 437 0
+ 222 0014 1EFF2FE1 		bx	lr
+ 223              	.L28:
+ 224              		.align	2
+ 225              	.L27:
+ 226 0018 00000000 		.word	l1s
+ 227              		.cfi_endproc
+ 228              	.LFE19:
+ 230              		.section	.text.mframe_set,"ax",%progbits
+ 231              		.align	2
+ 232              		.global	mframe_set
+ 234              	mframe_set:
+ 235              	.LFB20:
+ 438:layer1/mframe_sched.c **** 
+ 439:layer1/mframe_sched.c **** /* Replace the current active set by the new one */
+ 440:layer1/mframe_sched.c **** void mframe_set(uint32_t tasks)
+ 441:layer1/mframe_sched.c **** {
+ 236              		.loc 1 441 0
+ 237              		.cfi_startproc
+ 238              		@ args = 0, pretend = 0, frame = 0
+ 239              		@ frame_needed = 0, uses_anonymous_args = 0
+ 240              		@ link register save eliminated.
+ 241              	.LVL25:
+ 442:layer1/mframe_sched.c **** 	l1s.mframe_sched.tasks_tgt = tasks;
+ 242              		.loc 1 442 0
+ 243 0000 04309FE5 		ldr	r3, .L30
+ 244 0004 380A83E5 		str	r0, [r3, #2616]
+ 443:layer1/mframe_sched.c **** }
+ 245              		.loc 1 443 0
+ 246 0008 1EFF2FE1 		bx	lr
+ 247              	.L31:
+ 248              		.align	2
+ 249              	.L30:
+ 250 000c 00000000 		.word	l1s
+ 251              		.cfi_endproc
+ 252              	.LFE20:
+ 254              		.global	__umodsi3
+ 255              		.section	.text.mframe_schedule,"ax",%progbits
+ 256              		.align	2
+ 257              		.global	mframe_schedule
+ 259              	mframe_schedule:
+ 260              	.LFB21:
+ 444:layer1/mframe_sched.c **** 
+ 445:layer1/mframe_sched.c **** /* Schedule mframe_sched_items according to current MF TASK list */
+ 446:layer1/mframe_sched.c **** void mframe_schedule(void)
+ 447:layer1/mframe_sched.c **** {
+ 261              		.loc 1 447 0
+ 262              		.cfi_startproc
+ 263              		@ args = 0, pretend = 0, frame = 0
+ 264              		@ frame_needed = 0, uses_anonymous_args = 0
+ 448:layer1/mframe_sched.c **** 	unsigned int i;
+ 449:layer1/mframe_sched.c **** 	int fn_diff;
+ 450:layer1/mframe_sched.c **** 
+ 451:layer1/mframe_sched.c **** 	/* Try to enable/disable task to meet target bitmap */
+ 452:layer1/mframe_sched.c **** 	fn_diff = l1s.mframe_sched.safe_fn - l1s.current_time.fn;
+ 265              		.loc 1 452 0
+ 266 0000 08319FE5 		ldr	r3, .L45
+ 267 0004 3C2A93E5 		ldr	r2, [r3, #2620]
+ 268              	.LVL26:
+ 453:layer1/mframe_sched.c **** 	if ((fn_diff <= 0) || (fn_diff >= (GSM_MAX_FN>>1)) ||
+ 269              		.loc 1 453 0
+ 270 0008 001093E5 		ldr	r1, [r3, #0]
+ 452:layer1/mframe_sched.c **** 	fn_diff = l1s.mframe_sched.safe_fn - l1s.current_time.fn;
+ 271              		.loc 1 452 0
+ 272 000c 010042E2 		sub	r0, r2, #1
+ 273              		.loc 1 453 0
+ 274 0010 000061E0 		rsb	r0, r1, r0
+ 275 0014 F8109FE5 		ldr	r1, .L45+4
+ 276 0018 010050E1 		cmp	r0, r1
+ 447:layer1/mframe_sched.c **** {
+ 277              		.loc 1 447 0
+ 278 001c F04F2DE9 		stmfd	sp!, {r4, r5, r6, r7, r8, r9, sl, fp, lr}
+ 279              	.LCFI0:
+ 280              		.cfi_def_cfa_offset 36
+ 281              		.loc 1 453 0
+ 282 0020 0500008A 		bhi	.L33
+ 283              		.cfi_offset 14, -4
+ 284              		.cfi_offset 11, -8
+ 285              		.cfi_offset 10, -12
+ 286              		.cfi_offset 9, -16
+ 287              		.cfi_offset 8, -20
+ 288              		.cfi_offset 7, -24
+ 289              		.cfi_offset 6, -28
+ 290              		.cfi_offset 5, -32
+ 291              		.cfi_offset 4, -36
+ 292              		.loc 1 453 0 is_stmt 0 discriminator 1
+ 293 0024 EC109FE5 		ldr	r1, .L45+8
+ 294 0028 010052E1 		cmp	r2, r1
+ 454:layer1/mframe_sched.c **** 	    (l1s.mframe_sched.safe_fn >= GSM_MAX_FN))
+ 455:layer1/mframe_sched.c **** 		/* If nothing is in the way, enable new tasks */
+ 456:layer1/mframe_sched.c **** 		l1s.mframe_sched.tasks = l1s.mframe_sched.tasks_tgt;
+ 457:layer1/mframe_sched.c **** 	else
+ 458:layer1/mframe_sched.c **** 		/* Else, Disable only */
+ 459:layer1/mframe_sched.c **** 		l1s.mframe_sched.tasks &= l1s.mframe_sched.tasks_tgt;
+ 295              		.loc 1 459 0 is_stmt 1 discriminator 1
+ 296 002c 381A9395 		ldrls	r1, [r3, #2616]
+ 297 0030 342A9395 		ldrls	r2, [r3, #2612]
+ 298 0034 02200190 		andls	r2, r1, r2
+ 453:layer1/mframe_sched.c **** 	if ((fn_diff <= 0) || (fn_diff >= (GSM_MAX_FN>>1)) ||
+ 299              		.loc 1 453 0 discriminator 1
+ 300 0038 0100009A 		bls	.L44
+ 301              	.L33:
+ 456:layer1/mframe_sched.c **** 		l1s.mframe_sched.tasks = l1s.mframe_sched.tasks_tgt;
+ 302              		.loc 1 456 0
+ 303 003c CC309FE5 		ldr	r3, .L45
+ 304 0040 382A93E5 		ldr	r2, [r3, #2616]
+ 305              	.L44:
+ 306              		.loc 1 459 0
+ 307 0044 342A83E5 		str	r2, [r3, #2612]
+ 308              	.LVL27:
+ 460:layer1/mframe_sched.c **** 
+ 461:layer1/mframe_sched.c **** 	/* Schedule any active pending set */
+ 462:layer1/mframe_sched.c **** 	for (i = 0; i < 32; i++) {
+ 463:layer1/mframe_sched.c **** 		if (l1s.mframe_sched.tasks & (1 << i))
+ 309              		.loc 1 463 0
+ 310 0048 C0609FE5 		ldr	r6, .L45
+ 311              	.LBB6:
+ 312              	.LBB8:
+ 313              	.LBB9:
+ 314              	.LBB10:
+ 419:layer1/mframe_sched.c **** 			ADD_MODULO(fn, rv - 2, GSM_MAX_FN); /* -2 = worst case last dsp command */
+ 315              		.loc 1 419 0
+ 316 004c C4709FE5 		ldr	r7, .L45+8
+ 317              	.LBE10:
+ 318              	.LBE9:
+ 319              	.LBE8:
+ 320              	.LBE6:
+ 447:layer1/mframe_sched.c **** {
+ 321              		.loc 1 447 0
+ 322 0050 0040A0E3 		mov	r4, #0
+ 323              		.loc 1 463 0
+ 324 0054 0180A0E3 		mov	r8, #1
+ 325              	.LVL28:
+ 326              	.L42:
+ 327 0058 343A96E5 		ldr	r3, [r6, #2612]
+ 328 005c 183413E0 		ands	r3, r3, r8, asl r4
+ 329              	.LBB14:
+ 330              	.LBB7:
+ 402:layer1/mframe_sched.c **** 	const struct mframe_sched_item *set = sched_set_for_task[task_id];
+ 331              		.loc 1 402 0
+ 332 0060 B4309F15 		ldrne	r3, .L45+12
+ 333 0064 04519317 		ldrne	r5, [r3, r4, asl #2]
+ 334              	.LBE7:
+ 335              	.LBE14:
+ 336              		.loc 1 463 0
+ 337 0068 2100001A 		bne	.L37
+ 338 006c 230000EA 		b	.L36
+ 339              	.LVL29:
+ 340              	.L41:
+ 341              	.LBB15:
+ 342              	.LBB13:
+ 343              	.LBB12:
+ 406:layer1/mframe_sched.c **** 		unsigned int trigger = si->frame_nr % si->modulo;
+ 344              		.loc 1 406 0
+ 345 0070 B490D5E1 		ldrh	r9, [r5, #4]
+ 346              	.LVL30:
+ 407:layer1/mframe_sched.c **** 		unsigned int current = (l1s.current_time.fn + SCHEDULE_AHEAD) % si->modulo;
+ 347              		.loc 1 407 0
+ 348 0074 000096E5 		ldr	r0, [r6, #0]
+ 349 0078 0910A0E1 		mov	r1, r9
+ 350 007c 020080E2 		add	r0, r0, #2
+ 351 0080 FEFFFFEB 		bl	__umodsi3
+ 352              	.LVL31:
+ 406:layer1/mframe_sched.c **** 		unsigned int trigger = si->frame_nr % si->modulo;
+ 353              		.loc 1 406 0
+ 354 0084 0910A0E1 		mov	r1, r9
+ 407:layer1/mframe_sched.c **** 		unsigned int current = (l1s.current_time.fn + SCHEDULE_AHEAD) % si->modulo;
+ 355              		.loc 1 407 0
+ 356 0088 00B0A0E1 		mov	fp, r0
+ 406:layer1/mframe_sched.c **** 		unsigned int trigger = si->frame_nr % si->modulo;
+ 357              		.loc 1 406 0
+ 358 008c B600D5E1 		ldrh	r0, [r5, #6]
+ 359 0090 FEFFFFEB 		bl	__umodsi3
+ 360 0094 0008A0E1 		mov	r0, r0, asl #16
+ 408:layer1/mframe_sched.c **** 		if (current == trigger) {
+ 361              		.loc 1 408 0
+ 362 0098 20085BE1 		cmp	fp, r0, lsr #16
+ 363 009c 1300001A 		bne	.L38
+ 364              	.LBB11:
+ 414:layer1/mframe_sched.c **** 			rv = tdma_schedule_set(SCHEDULE_AHEAD-SCHEDULE_LATENCY,
+ 365              		.loc 1 414 0
+ 366 00a0 B820D5E1 		ldrh	r2, [r5, #8]
+ 367 00a4 022484E1 		orr	r2, r4, r2, asl #8
+ 368 00a8 0228A0E1 		mov	r2, r2, asl #16
+ 369 00ac 2228A0E1 		mov	r2, r2, lsr #16
+ 370 00b0 0100A0E3 		mov	r0, #1
+ 371 00b4 0A10A0E1 		mov	r1, sl
+ 372 00b8 FEFFFFEB 		bl	tdma_schedule_set
+ 373              	.LVL32:
+ 419:layer1/mframe_sched.c **** 			ADD_MODULO(fn, rv - 2, GSM_MAX_FN); /* -2 = worst case last dsp command */
+ 374              		.loc 1 419 0
+ 375 00bc 003096E5 		ldr	r3, [r6, #0]
+ 376 00c0 023043E2 		sub	r3, r3, #2
+ 377 00c4 003083E0 		add	r3, r3, r0
+ 378              	.LVL33:
+ 379 00c8 070053E1 		cmp	r3, r7
+ 380 00cc FF348382 		addhi	r3, r3, #-16777216
+ 381              	.LVL34:
+ 382 00d0 D6388382 		addhi	r3, r3, #14024704
+ 420:layer1/mframe_sched.c **** 			if ((fn > l1s.mframe_sched.safe_fn) ||
+ 383              		.loc 1 420 0
+ 384 00d4 3C2A96E5 		ldr	r2, [r6, #2620]
+ 419:layer1/mframe_sched.c **** 			ADD_MODULO(fn, rv - 2, GSM_MAX_FN); /* -2 = worst case last dsp command */
+ 385              		.loc 1 419 0
+ 386 00d8 093A8382 		addhi	r3, r3, #36864
+ 387              	.LVL35:
+ 420:layer1/mframe_sched.c **** 			if ((fn > l1s.mframe_sched.safe_fn) ||
+ 388              		.loc 1 420 0
+ 389 00dc 020053E1 		cmp	r3, r2
+ 390 00e0 0100008A 		bhi	.L40
+ 391 00e4 070052E1 		cmp	r2, r7
+ 392 00e8 0000009A 		bls	.L38
+ 393              	.L40:
+ 422:layer1/mframe_sched.c **** 				l1s.mframe_sched.safe_fn = fn;
+ 394              		.loc 1 422 0
+ 395 00ec 3C3A86E5 		str	r3, [r6, #2620]
+ 396              	.LVL36:
+ 397              	.L38:
+ 398              	.LBE11:
+ 399              	.LBE12:
+ 405:layer1/mframe_sched.c **** 	for (si = set; si->sched_set != NULL; si++) {
+ 400              		.loc 1 405 0
+ 401 00f0 0C5085E2 		add	r5, r5, #12
+ 402              	.LVL37:
+ 403              	.L37:
+ 404 00f4 00A095E5 		ldr	sl, [r5, #0]
+ 405 00f8 00005AE3 		cmp	sl, #0
+ 406 00fc DBFFFF1A 		bne	.L41
+ 407              	.LVL38:
+ 408              	.L36:
+ 409              	.LBE13:
+ 410              	.LBE15:
+ 462:layer1/mframe_sched.c **** 	for (i = 0; i < 32; i++) {
+ 411              		.loc 1 462 0
+ 412 0100 014084E2 		add	r4, r4, #1
+ 413              	.LVL39:
+ 414 0104 200054E3 		cmp	r4, #32
+ 415 0108 D2FFFF1A 		bne	.L42
+ 464:layer1/mframe_sched.c **** 			mframe_schedule_set(i);
+ 465:layer1/mframe_sched.c **** 	}
+ 466:layer1/mframe_sched.c **** }
+ 416              		.loc 1 466 0
+ 417 010c F08FBDE8 		ldmfd	sp!, {r4, r5, r6, r7, r8, r9, sl, fp, pc}
+ 418              	.L46:
+ 419              		.align	2
+ 420              	.L45:
+ 421 0110 00000000 		.word	l1s
+ 422 0114 FEB71400 		.word	1357822
+ 423 0118 FF6F2900 		.word	2715647
+ 424 011c 00000000 		.word	.LANCHOR0
+ 425              		.cfi_endproc
+ 426              	.LFE21:
+ 428              		.section	.text.mframe_reset,"ax",%progbits
+ 429              		.align	2
+ 430              		.global	mframe_reset
+ 432              	mframe_reset:
+ 433              	.LFB22:
+ 467:layer1/mframe_sched.c **** 
+ 468:layer1/mframe_sched.c **** /* reset the scheduler, disabling all tasks */
+ 469:layer1/mframe_sched.c **** void mframe_reset(void)
+ 470:layer1/mframe_sched.c **** {
+ 434              		.loc 1 470 0
+ 435              		.cfi_startproc
+ 436              		@ args = 0, pretend = 0, frame = 0
+ 437              		@ frame_needed = 0, uses_anonymous_args = 0
+ 438              		@ link register save eliminated.
+ 471:layer1/mframe_sched.c **** 	l1s.mframe_sched.tasks = 0;
+ 439              		.loc 1 471 0
+ 440 0000 14309FE5 		ldr	r3, .L48
+ 441 0004 0020A0E3 		mov	r2, #0
+ 442 0008 342A83E5 		str	r2, [r3, #2612]
+ 472:layer1/mframe_sched.c **** 	l1s.mframe_sched.tasks_tgt = 0;
+ 443              		.loc 1 472 0
+ 444 000c 382A83E5 		str	r2, [r3, #2616]
+ 473:layer1/mframe_sched.c **** 	l1s.mframe_sched.safe_fn = -1UL;	/* Force safe */
+ 445              		.loc 1 473 0
+ 446 0010 0020E0E3 		mvn	r2, #0
+ 447 0014 3C2A83E5 		str	r2, [r3, #2620]
+ 474:layer1/mframe_sched.c **** }
+ 448              		.loc 1 474 0
+ 449 0018 1EFF2FE1 		bx	lr
+ 450              	.L49:
+ 451              		.align	2
+ 452              	.L48:
+ 453 001c 00000000 		.word	l1s
+ 454              		.cfi_endproc
+ 455              	.LFE22:
+ 457              		.section	.rodata
+ 458              		.align	2
+ 459              		.set	.LANCHOR0,. + 0
+ 462              	sched_set_for_task:
+ 463 0000 80000000 		.word	mf_bcch_norm
+ 464 0004 98000000 		.word	mf_bcch_ext
+ 465 0008 B0000000 		.word	mf_ccch
+ 466 000c 28010000 		.word	mf_ccch_comb
+ 467 0010 58010000 		.word	mf_sdcch4_0
+ 468 0014 94010000 		.word	mf_sdcch4_1
+ 469 0018 D0010000 		.word	mf_sdcch4_2
+ 470 001c 0C020000 		.word	mf_sdcch4_3
+ 471 0020 48020000 		.word	mf_sdcch8_0
+ 472 0024 84020000 		.word	mf_sdcch8_1
+ 473 0028 C0020000 		.word	mf_sdcch8_2
+ 474 002c FC020000 		.word	mf_sdcch8_3
+ 475 0030 38030000 		.word	mf_sdcch8_4
+ 476 0034 74030000 		.word	mf_sdcch8_5
+ 477 0038 B0030000 		.word	mf_sdcch8_6
+ 478 003c EC030000 		.word	mf_sdcch8_7
+ 479 0040 28040000 		.word	mf_tch_f_even
+ 480 0044 D0040000 		.word	mf_tch_f_odd
+ 481 0048 78050000 		.word	mf_tch_h_0
+ 482 004c D8050000 		.word	mf_tch_h_1
+ 483 0050 38060000 		.word	mf_neigh_pm51
+ 484 0054 50060000 		.word	mf_neigh_pm26_even
+ 485 0058 68060000 		.word	mf_neigh_pm26_odd
+ 486 005c 80060000 		.word	mf_tx_all_nb
+ 487 0060 00000000 		.space	32
+ 487      00000000 
+ 487      00000000 
+ 487      00000000 
+ 487      00000000 
+ 490              	mf_bcch_norm:
+ 491 0080 00000000 		.word	nb_sched_set
+ 492 0084 3300     		.short	51
+ 493 0086 0200     		.short	2
+ 494 0088 00000000 		.space	4
+ 495 008c 00000000 		.word	0
+ 496 0090 00000000 		.space	8
+ 496      00000000 
+ 499              	mf_bcch_ext:
+ 500 0098 00000000 		.word	nb_sched_set
+ 501 009c 3300     		.short	51
+ 502 009e 0600     		.short	6
+ 503 00a0 00000000 		.space	4
+ 504 00a4 00000000 		.word	0
+ 505 00a8 00000000 		.space	8
+ 505      00000000 
+ 508              	mf_ccch:
+ 509 00b0 00000000 		.word	nb_sched_set
+ 510 00b4 3300     		.short	51
+ 511 00b6 0600     		.short	6
+ 512 00b8 00000000 		.space	4
+ 513 00bc 00000000 		.word	nb_sched_set
+ 514 00c0 3300     		.short	51
+ 515 00c2 0C00     		.short	12
+ 516 00c4 00000000 		.space	4
+ 517 00c8 00000000 		.word	nb_sched_set
+ 518 00cc 3300     		.short	51
+ 519 00ce 1000     		.short	16
+ 520 00d0 00000000 		.space	4
+ 521 00d4 00000000 		.word	nb_sched_set
+ 522 00d8 3300     		.short	51
+ 523 00da 1600     		.short	22
+ 524 00dc 00000000 		.space	4
+ 525 00e0 00000000 		.word	nb_sched_set
+ 526 00e4 3300     		.short	51
+ 527 00e6 1A00     		.short	26
+ 528 00e8 00000000 		.space	4
+ 529 00ec 00000000 		.word	nb_sched_set
+ 530 00f0 3300     		.short	51
+ 531 00f2 2000     		.short	32
+ 532 00f4 00000000 		.space	4
+ 533 00f8 00000000 		.word	nb_sched_set
+ 534 00fc 3300     		.short	51
+ 535 00fe 2400     		.short	36
+ 536 0100 00000000 		.space	4
+ 537 0104 00000000 		.word	nb_sched_set
+ 538 0108 3300     		.short	51
+ 539 010a 2A00     		.short	42
+ 540 010c 00000000 		.space	4
+ 541 0110 00000000 		.word	nb_sched_set
+ 542 0114 3300     		.short	51
+ 543 0116 2E00     		.short	46
+ 544 0118 00000000 		.space	4
+ 545 011c 00000000 		.word	0
+ 546 0120 00000000 		.space	8
+ 546      00000000 
+ 549              	mf_ccch_comb:
+ 550 0128 00000000 		.word	nb_sched_set
+ 551 012c 3300     		.short	51
+ 552 012e 0600     		.short	6
+ 553 0130 00000000 		.space	4
+ 554 0134 00000000 		.word	nb_sched_set
+ 555 0138 3300     		.short	51
+ 556 013a 0C00     		.short	12
+ 557 013c 00000000 		.space	4
+ 558 0140 00000000 		.word	nb_sched_set
+ 559 0144 3300     		.short	51
+ 560 0146 1000     		.short	16
+ 561 0148 00000000 		.space	4
+ 562 014c 00000000 		.word	0
+ 563 0150 00000000 		.space	8
+ 563      00000000 
+ 566              	mf_sdcch4_0:
+ 567 0158 00000000 		.word	sniff_xcch_dl_sched_set
+ 568 015c 3300     		.short	51
+ 569 015e 1600     		.short	22
+ 570 0160 00000000 		.space	4
+ 571 0164 00000000 		.word	sniff_xcch_ul_sched_set
+ 572 0168 3300     		.short	51
+ 573 016a 2500     		.short	37
+ 574 016c 00000000 		.space	4
+ 575 0170 00000000 		.word	sniff_xcch_dl_sched_set
+ 576 0174 6600     		.short	102
+ 577 0176 2A00     		.short	42
+ 578 0178 0100     		.short	1
+ 579 017a 0000     		.space	2
+ 580 017c 00000000 		.word	sniff_xcch_ul_sched_set
+ 581 0180 6600     		.short	102
+ 582 0182 3900     		.short	57
+ 583 0184 0100     		.short	1
+ 584 0186 0000     		.space	2
+ 585 0188 00000000 		.word	0
+ 586 018c 00000000 		.space	8
+ 586      00000000 
+ 589              	mf_sdcch4_1:
+ 590 0194 00000000 		.word	sniff_xcch_dl_sched_set
+ 591 0198 3300     		.short	51
+ 592 019a 1A00     		.short	26
+ 593 019c 00000000 		.space	4
+ 594 01a0 00000000 		.word	sniff_xcch_ul_sched_set
+ 595 01a4 3300     		.short	51
+ 596 01a6 2900     		.short	41
+ 597 01a8 00000000 		.space	4
+ 598 01ac 00000000 		.word	sniff_xcch_dl_sched_set
+ 599 01b0 6600     		.short	102
+ 600 01b2 2E00     		.short	46
+ 601 01b4 0100     		.short	1
+ 602 01b6 0000     		.space	2
+ 603 01b8 00000000 		.word	sniff_xcch_ul_sched_set
+ 604 01bc 6600     		.short	102
+ 605 01be 3D00     		.short	61
+ 606 01c0 0100     		.short	1
+ 607 01c2 0000     		.space	2
+ 608 01c4 00000000 		.word	0
+ 609 01c8 00000000 		.space	8
+ 609      00000000 
+ 612              	mf_sdcch4_2:
+ 613 01d0 00000000 		.word	sniff_xcch_dl_sched_set
+ 614 01d4 3300     		.short	51
+ 615 01d6 2000     		.short	32
+ 616 01d8 00000000 		.space	4
+ 617 01dc 00000000 		.word	sniff_xcch_ul_sched_set
+ 618 01e0 3300     		.short	51
+ 619 01e2 2F00     		.short	47
+ 620 01e4 00000000 		.space	4
+ 621 01e8 00000000 		.word	sniff_xcch_dl_sched_set
+ 622 01ec 6600     		.short	102
+ 623 01ee 5D00     		.short	93
+ 624 01f0 0100     		.short	1
+ 625 01f2 0000     		.space	2
+ 626 01f4 00000000 		.word	sniff_xcch_ul_sched_set
+ 627 01f8 6600     		.short	102
+ 628 01fa 6C00     		.short	108
+ 629 01fc 0100     		.short	1
+ 630 01fe 0000     		.space	2
+ 631 0200 00000000 		.word	0
+ 632 0204 00000000 		.space	8
+ 632      00000000 
+ 635              	mf_sdcch4_3:
+ 636 020c 00000000 		.word	sniff_xcch_dl_sched_set
+ 637 0210 3300     		.short	51
+ 638 0212 2400     		.short	36
+ 639 0214 00000000 		.space	4
+ 640 0218 00000000 		.word	sniff_xcch_ul_sched_set
+ 641 021c 3300     		.short	51
+ 642 021e 3300     		.short	51
+ 643 0220 00000000 		.space	4
+ 644 0224 00000000 		.word	sniff_xcch_dl_sched_set
+ 645 0228 6600     		.short	102
+ 646 022a 6100     		.short	97
+ 647 022c 0100     		.short	1
+ 648 022e 0000     		.space	2
+ 649 0230 00000000 		.word	sniff_xcch_ul_sched_set
+ 650 0234 6600     		.short	102
+ 651 0236 7000     		.short	112
+ 652 0238 0100     		.short	1
+ 653 023a 0000     		.space	2
+ 654 023c 00000000 		.word	0
+ 655 0240 00000000 		.space	8
+ 655      00000000 
+ 658              	mf_sdcch8_0:
+ 659 0248 00000000 		.word	sniff_xcch_dl_sched_set
+ 660 024c 3300     		.short	51
+ 661 024e 0000     		.short	0
+ 662 0250 00000000 		.space	4
+ 663 0254 00000000 		.word	sniff_xcch_ul_sched_set
+ 664 0258 3300     		.short	51
+ 665 025a 0F00     		.short	15
+ 666 025c 00000000 		.space	4
+ 667 0260 00000000 		.word	sniff_xcch_dl_sched_set
+ 668 0264 6600     		.short	102
+ 669 0266 2000     		.short	32
+ 670 0268 0100     		.short	1
+ 671 026a 0000     		.space	2
+ 672 026c 00000000 		.word	sniff_xcch_ul_sched_set
+ 673 0270 6600     		.short	102
+ 674 0272 2F00     		.short	47
+ 675 0274 0100     		.short	1
+ 676 0276 0000     		.space	2
+ 677 0278 00000000 		.word	0
+ 678 027c 00000000 		.space	8
+ 678      00000000 
+ 681              	mf_sdcch8_1:
+ 682 0284 00000000 		.word	sniff_xcch_dl_sched_set
+ 683 0288 3300     		.short	51
+ 684 028a 0400     		.short	4
+ 685 028c 00000000 		.space	4
+ 686 0290 00000000 		.word	sniff_xcch_ul_sched_set
+ 687 0294 3300     		.short	51
+ 688 0296 1300     		.short	19
+ 689 0298 00000000 		.space	4
+ 690 029c 00000000 		.word	sniff_xcch_dl_sched_set
+ 691 02a0 6600     		.short	102
+ 692 02a2 2400     		.short	36
+ 693 02a4 0100     		.short	1
+ 694 02a6 0000     		.space	2
+ 695 02a8 00000000 		.word	sniff_xcch_ul_sched_set
+ 696 02ac 6600     		.short	102
+ 697 02ae 3300     		.short	51
+ 698 02b0 0100     		.short	1
+ 699 02b2 0000     		.space	2
+ 700 02b4 00000000 		.word	0
+ 701 02b8 00000000 		.space	8
+ 701      00000000 
+ 704              	mf_sdcch8_2:
+ 705 02c0 00000000 		.word	sniff_xcch_dl_sched_set
+ 706 02c4 3300     		.short	51
+ 707 02c6 0800     		.short	8
+ 708 02c8 00000000 		.space	4
+ 709 02cc 00000000 		.word	sniff_xcch_ul_sched_set
+ 710 02d0 3300     		.short	51
+ 711 02d2 1700     		.short	23
+ 712 02d4 00000000 		.space	4
+ 713 02d8 00000000 		.word	sniff_xcch_dl_sched_set
+ 714 02dc 6600     		.short	102
+ 715 02de 2800     		.short	40
+ 716 02e0 0100     		.short	1
+ 717 02e2 0000     		.space	2
+ 718 02e4 00000000 		.word	sniff_xcch_ul_sched_set
+ 719 02e8 6600     		.short	102
+ 720 02ea 3700     		.short	55
+ 721 02ec 0100     		.short	1
+ 722 02ee 0000     		.space	2
+ 723 02f0 00000000 		.word	0
+ 724 02f4 00000000 		.space	8
+ 724      00000000 
+ 727              	mf_sdcch8_3:
+ 728 02fc 00000000 		.word	sniff_xcch_dl_sched_set
+ 729 0300 3300     		.short	51
+ 730 0302 0C00     		.short	12
+ 731 0304 00000000 		.space	4
+ 732 0308 00000000 		.word	sniff_xcch_ul_sched_set
+ 733 030c 3300     		.short	51
+ 734 030e 1B00     		.short	27
+ 735 0310 00000000 		.space	4
+ 736 0314 00000000 		.word	sniff_xcch_dl_sched_set
+ 737 0318 6600     		.short	102
+ 738 031a 2C00     		.short	44
+ 739 031c 0100     		.short	1
+ 740 031e 0000     		.space	2
+ 741 0320 00000000 		.word	sniff_xcch_ul_sched_set
+ 742 0324 6600     		.short	102
+ 743 0326 3B00     		.short	59
+ 744 0328 0100     		.short	1
+ 745 032a 0000     		.space	2
+ 746 032c 00000000 		.word	0
+ 747 0330 00000000 		.space	8
+ 747      00000000 
+ 750              	mf_sdcch8_4:
+ 751 0338 00000000 		.word	sniff_xcch_dl_sched_set
+ 752 033c 3300     		.short	51
+ 753 033e 1000     		.short	16
+ 754 0340 00000000 		.space	4
+ 755 0344 00000000 		.word	sniff_xcch_ul_sched_set
+ 756 0348 3300     		.short	51
+ 757 034a 1F00     		.short	31
+ 758 034c 00000000 		.space	4
+ 759 0350 00000000 		.word	sniff_xcch_dl_sched_set
+ 760 0354 6600     		.short	102
+ 761 0356 5300     		.short	83
+ 762 0358 0100     		.short	1
+ 763 035a 0000     		.space	2
+ 764 035c 00000000 		.word	sniff_xcch_ul_sched_set
+ 765 0360 6600     		.short	102
+ 766 0362 6200     		.short	98
+ 767 0364 0100     		.short	1
+ 768 0366 0000     		.space	2
+ 769 0368 00000000 		.word	0
+ 770 036c 00000000 		.space	8
+ 770      00000000 
+ 773              	mf_sdcch8_5:
+ 774 0374 00000000 		.word	sniff_xcch_dl_sched_set
+ 775 0378 3300     		.short	51
+ 776 037a 1400     		.short	20
+ 777 037c 00000000 		.space	4
+ 778 0380 00000000 		.word	sniff_xcch_ul_sched_set
+ 779 0384 3300     		.short	51
+ 780 0386 2300     		.short	35
+ 781 0388 00000000 		.space	4
+ 782 038c 00000000 		.word	sniff_xcch_dl_sched_set
+ 783 0390 6600     		.short	102
+ 784 0392 5700     		.short	87
+ 785 0394 0100     		.short	1
+ 786 0396 0000     		.space	2
+ 787 0398 00000000 		.word	sniff_xcch_ul_sched_set
+ 788 039c 6600     		.short	102
+ 789 039e 6600     		.short	102
+ 790 03a0 0100     		.short	1
+ 791 03a2 0000     		.space	2
+ 792 03a4 00000000 		.word	0
+ 793 03a8 00000000 		.space	8
+ 793      00000000 
+ 796              	mf_sdcch8_6:
+ 797 03b0 00000000 		.word	sniff_xcch_dl_sched_set
+ 798 03b4 3300     		.short	51
+ 799 03b6 1800     		.short	24
+ 800 03b8 00000000 		.space	4
+ 801 03bc 00000000 		.word	sniff_xcch_ul_sched_set
+ 802 03c0 3300     		.short	51
+ 803 03c2 2700     		.short	39
+ 804 03c4 00000000 		.space	4
+ 805 03c8 00000000 		.word	sniff_xcch_dl_sched_set
+ 806 03cc 6600     		.short	102
+ 807 03ce 5B00     		.short	91
+ 808 03d0 0100     		.short	1
+ 809 03d2 0000     		.space	2
+ 810 03d4 00000000 		.word	sniff_xcch_ul_sched_set
+ 811 03d8 6600     		.short	102
+ 812 03da 6A00     		.short	106
+ 813 03dc 0100     		.short	1
+ 814 03de 0000     		.space	2
+ 815 03e0 00000000 		.word	0
+ 816 03e4 00000000 		.space	8
+ 816      00000000 
+ 819              	mf_sdcch8_7:
+ 820 03ec 00000000 		.word	sniff_xcch_dl_sched_set
+ 821 03f0 3300     		.short	51
+ 822 03f2 1C00     		.short	28
+ 823 03f4 00000000 		.space	4
+ 824 03f8 00000000 		.word	sniff_xcch_ul_sched_set
+ 825 03fc 3300     		.short	51
+ 826 03fe 2B00     		.short	43
+ 827 0400 00000000 		.space	4
+ 828 0404 00000000 		.word	sniff_xcch_dl_sched_set
+ 829 0408 6600     		.short	102
+ 830 040a 5F00     		.short	95
+ 831 040c 0100     		.short	1
+ 832 040e 0000     		.space	2
+ 833 0410 00000000 		.word	sniff_xcch_ul_sched_set
+ 834 0414 6600     		.short	102
+ 835 0416 6E00     		.short	110
+ 836 0418 0100     		.short	1
+ 837 041a 0000     		.space	2
+ 838 041c 00000000 		.word	0
+ 839 0420 00000000 		.space	8
+ 839      00000000 
+ 842              	mf_tch_f_even:
+ 843 0428 00000000 		.word	sniff_tch_sched_set
+ 844 042c 0D00     		.short	13
+ 845 042e 0000     		.short	0
+ 846 0430 00000000 		.space	4
+ 847 0434 00000000 		.word	sniff_tch_sched_set
+ 848 0438 0D00     		.short	13
+ 849 043a 0100     		.short	1
+ 850 043c 00000000 		.space	4
+ 851 0440 00000000 		.word	sniff_tch_sched_set
+ 852 0444 0D00     		.short	13
+ 853 0446 0200     		.short	2
+ 854 0448 00000000 		.space	4
+ 855 044c 00000000 		.word	sniff_tch_sched_set
+ 856 0450 0D00     		.short	13
+ 857 0452 0300     		.short	3
+ 858 0454 00000000 		.space	4
+ 859 0458 00000000 		.word	sniff_tch_sched_set
+ 860 045c 0D00     		.short	13
+ 861 045e 0400     		.short	4
+ 862 0460 00000000 		.space	4
+ 863 0464 00000000 		.word	sniff_tch_sched_set
+ 864 0468 0D00     		.short	13
+ 865 046a 0500     		.short	5
+ 866 046c 00000000 		.space	4
+ 867 0470 00000000 		.word	sniff_tch_sched_set
+ 868 0474 0D00     		.short	13
+ 869 0476 0600     		.short	6
+ 870 0478 00000000 		.space	4
+ 871 047c 00000000 		.word	sniff_tch_sched_set
+ 872 0480 0D00     		.short	13
+ 873 0482 0700     		.short	7
+ 874 0484 00000000 		.space	4
+ 875 0488 00000000 		.word	sniff_tch_sched_set
+ 876 048c 0D00     		.short	13
+ 877 048e 0800     		.short	8
+ 878 0490 00000000 		.space	4
+ 879 0494 00000000 		.word	sniff_tch_sched_set
+ 880 0498 0D00     		.short	13
+ 881 049a 0900     		.short	9
+ 882 049c 00000000 		.space	4
+ 883 04a0 00000000 		.word	sniff_tch_sched_set
+ 884 04a4 0D00     		.short	13
+ 885 04a6 0A00     		.short	10
+ 886 04a8 00000000 		.space	4
+ 887 04ac 00000000 		.word	sniff_tch_sched_set
+ 888 04b0 0D00     		.short	13
+ 889 04b2 0B00     		.short	11
+ 890 04b4 00000000 		.space	4
+ 891 04b8 00000000 		.word	sniff_tch_sched_set
+ 892 04bc 1A00     		.short	26
+ 893 04be 0C00     		.short	12
+ 894 04c0 0100     		.short	1
+ 895 04c2 0000     		.space	2
+ 896 04c4 00000000 		.word	0
+ 897 04c8 00000000 		.space	8
+ 897      00000000 
+ 900              	mf_tch_f_odd:
+ 901 04d0 00000000 		.word	sniff_tch_sched_set
+ 902 04d4 0D00     		.short	13
+ 903 04d6 0000     		.short	0
+ 904 04d8 00000000 		.space	4
+ 905 04dc 00000000 		.word	sniff_tch_sched_set
+ 906 04e0 0D00     		.short	13
+ 907 04e2 0100     		.short	1
+ 908 04e4 00000000 		.space	4
+ 909 04e8 00000000 		.word	sniff_tch_sched_set
+ 910 04ec 0D00     		.short	13
+ 911 04ee 0200     		.short	2
+ 912 04f0 00000000 		.space	4
+ 913 04f4 00000000 		.word	sniff_tch_sched_set
+ 914 04f8 0D00     		.short	13
+ 915 04fa 0300     		.short	3
+ 916 04fc 00000000 		.space	4
+ 917 0500 00000000 		.word	sniff_tch_sched_set
+ 918 0504 0D00     		.short	13
+ 919 0506 0400     		.short	4
+ 920 0508 00000000 		.space	4
+ 921 050c 00000000 		.word	sniff_tch_sched_set
+ 922 0510 0D00     		.short	13
+ 923 0512 0500     		.short	5
+ 924 0514 00000000 		.space	4
+ 925 0518 00000000 		.word	sniff_tch_sched_set
+ 926 051c 0D00     		.short	13
+ 927 051e 0600     		.short	6
+ 928 0520 00000000 		.space	4
+ 929 0524 00000000 		.word	sniff_tch_sched_set
+ 930 0528 0D00     		.short	13
+ 931 052a 0700     		.short	7
+ 932 052c 00000000 		.space	4
+ 933 0530 00000000 		.word	sniff_tch_sched_set
+ 934 0534 0D00     		.short	13
+ 935 0536 0800     		.short	8
+ 936 0538 00000000 		.space	4
+ 937 053c 00000000 		.word	sniff_tch_sched_set
+ 938 0540 0D00     		.short	13
+ 939 0542 0900     		.short	9
+ 940 0544 00000000 		.space	4
+ 941 0548 00000000 		.word	sniff_tch_sched_set
+ 942 054c 0D00     		.short	13
+ 943 054e 0A00     		.short	10
+ 944 0550 00000000 		.space	4
+ 945 0554 00000000 		.word	sniff_tch_sched_set
+ 946 0558 0D00     		.short	13
+ 947 055a 0B00     		.short	11
+ 948 055c 00000000 		.space	4
+ 949 0560 00000000 		.word	sniff_tch_sched_set
+ 950 0564 1A00     		.short	26
+ 951 0566 1900     		.short	25
+ 952 0568 0100     		.short	1
+ 953 056a 0000     		.space	2
+ 954 056c 00000000 		.word	0
+ 955 0570 00000000 		.space	8
+ 955      00000000 
+ 958              	mf_tch_h_0:
+ 959 0578 00000000 		.word	sniff_tch_sched_set
+ 960 057c 0D00     		.short	13
+ 961 057e 0000     		.short	0
+ 962 0580 00000000 		.space	4
+ 963 0584 00000000 		.word	sniff_tch_sched_set
+ 964 0588 0D00     		.short	13
+ 965 058a 0200     		.short	2
+ 966 058c 00000000 		.space	4
+ 967 0590 00000000 		.word	sniff_tch_sched_set
+ 968 0594 0D00     		.short	13
+ 969 0596 0400     		.short	4
+ 970 0598 00000000 		.space	4
+ 971 059c 00000000 		.word	sniff_tch_sched_set
+ 972 05a0 0D00     		.short	13
+ 973 05a2 0600     		.short	6
+ 974 05a4 00000000 		.space	4
+ 975 05a8 00000000 		.word	sniff_tch_sched_set
+ 976 05ac 0D00     		.short	13
+ 977 05ae 0800     		.short	8
+ 978 05b0 00000000 		.space	4
+ 979 05b4 00000000 		.word	sniff_tch_sched_set
+ 980 05b8 0D00     		.short	13
+ 981 05ba 0A00     		.short	10
+ 982 05bc 00000000 		.space	4
+ 983 05c0 00000000 		.word	sniff_tch_sched_set
+ 984 05c4 1A00     		.short	26
+ 985 05c6 0C00     		.short	12
+ 986 05c8 0100     		.short	1
+ 987 05ca 0000     		.space	2
+ 988 05cc 00000000 		.word	0
+ 989 05d0 00000000 		.space	8
+ 989      00000000 
+ 992              	mf_tch_h_1:
+ 993 05d8 00000000 		.word	sniff_tch_sched_set
+ 994 05dc 0D00     		.short	13
+ 995 05de 0100     		.short	1
+ 996 05e0 00000000 		.space	4
+ 997 05e4 00000000 		.word	sniff_tch_sched_set
+ 998 05e8 0D00     		.short	13
+ 999 05ea 0300     		.short	3
+ 1000 05ec 00000000 		.space	4
+ 1001 05f0 00000000 		.word	sniff_tch_sched_set
+ 1002 05f4 0D00     		.short	13
+ 1003 05f6 0500     		.short	5
+ 1004 05f8 00000000 		.space	4
+ 1005 05fc 00000000 		.word	sniff_tch_sched_set
+ 1006 0600 0D00     		.short	13
+ 1007 0602 0700     		.short	7
+ 1008 0604 00000000 		.space	4
+ 1009 0608 00000000 		.word	sniff_tch_sched_set
+ 1010 060c 0D00     		.short	13
+ 1011 060e 0900     		.short	9
+ 1012 0610 00000000 		.space	4
+ 1013 0614 00000000 		.word	sniff_tch_sched_set
+ 1014 0618 0D00     		.short	13
+ 1015 061a 0B00     		.short	11
+ 1016 061c 00000000 		.space	4
+ 1017 0620 00000000 		.word	sniff_tch_sched_set
+ 1018 0624 1A00     		.short	26
+ 1019 0626 1900     		.short	25
+ 1020 0628 0100     		.short	1
+ 1021 062a 0000     		.space	2
+ 1022 062c 00000000 		.word	0
+ 1023 0630 00000000 		.space	8
+ 1023      00000000 
+ 1026              	mf_neigh_pm51:
+ 1027 0638 00000000 		.word	neigh_pm_sched_set
+ 1028 063c 3300     		.short	51
+ 1029 063e 3200     		.short	50
+ 1030 0640 00000000 		.space	4
+ 1031 0644 00000000 		.word	0
+ 1032 0648 00000000 		.space	8
+ 1032      00000000 
+ 1035              	mf_neigh_pm26_even:
+ 1036 0650 00000000 		.word	neigh_pm_sched_set
+ 1037 0654 1A00     		.short	26
+ 1038 0656 1900     		.short	25
+ 1039 0658 00000000 		.space	4
+ 1040 065c 00000000 		.word	0
+ 1041 0660 00000000 		.space	8
+ 1041      00000000 
+ 1044              	mf_neigh_pm26_odd:
+ 1045 0668 00000000 		.word	neigh_pm_sched_set
+ 1046 066c 1A00     		.short	26
+ 1047 066e 0C00     		.short	12
+ 1048 0670 00000000 		.space	4
+ 1049 0674 00000000 		.word	0
+ 1050 0678 00000000 		.space	8
+ 1050      00000000 
+ 1053              	mf_tx_all_nb:
+ 1054 0680 00000000 		.word	nb_sched_set_ul
+ 1055 0684 0400     		.short	4
+ 1056 0686 0000     		.short	0
+ 1057 0688 00000000 		.space	4
+ 1058 068c 00000000 		.word	0
+ 1059 0690 00000000 		.space	8
+ 1059      00000000 
+ 1060              		.text
+ 1061              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 mframe_sched.c
+     /tmp/ccLbjLwz.s:12     .text.mframe_task2chan_nr:0000000000000000 $a
+     /tmp/ccLbjLwz.s:15     .text.mframe_task2chan_nr:0000000000000000 mframe_task2chan_nr
+     /tmp/ccLbjLwz.s:32     .text.mframe_task2chan_nr:0000000000000010 $d
+     /tmp/ccLbjLwz.s:59     .text.mframe_task2chan_nr:0000000000000070 $a
+     /tmp/ccLbjLwz.s:177    .text.mframe_enable:0000000000000000 $a
+     /tmp/ccLbjLwz.s:180    .text.mframe_enable:0000000000000000 mframe_enable
+     /tmp/ccLbjLwz.s:199    .text.mframe_enable:0000000000000018 $d
+     /tmp/ccLbjLwz.s:204    .text.mframe_disable:0000000000000000 $a
+     /tmp/ccLbjLwz.s:207    .text.mframe_disable:0000000000000000 mframe_disable
+     /tmp/ccLbjLwz.s:226    .text.mframe_disable:0000000000000018 $d
+     /tmp/ccLbjLwz.s:231    .text.mframe_set:0000000000000000 $a
+     /tmp/ccLbjLwz.s:234    .text.mframe_set:0000000000000000 mframe_set
+     /tmp/ccLbjLwz.s:250    .text.mframe_set:000000000000000c $d
+     /tmp/ccLbjLwz.s:256    .text.mframe_schedule:0000000000000000 $a
+     /tmp/ccLbjLwz.s:259    .text.mframe_schedule:0000000000000000 mframe_schedule
+     /tmp/ccLbjLwz.s:421    .text.mframe_schedule:0000000000000110 $d
+     /tmp/ccLbjLwz.s:429    .text.mframe_reset:0000000000000000 $a
+     /tmp/ccLbjLwz.s:432    .text.mframe_reset:0000000000000000 mframe_reset
+     /tmp/ccLbjLwz.s:453    .text.mframe_reset:000000000000001c $d
+     /tmp/ccLbjLwz.s:458    .rodata:0000000000000000 $d
+     /tmp/ccLbjLwz.s:462    .rodata:0000000000000000 sched_set_for_task
+     /tmp/ccLbjLwz.s:490    .rodata:0000000000000080 mf_bcch_norm
+     /tmp/ccLbjLwz.s:499    .rodata:0000000000000098 mf_bcch_ext
+     /tmp/ccLbjLwz.s:508    .rodata:00000000000000b0 mf_ccch
+     /tmp/ccLbjLwz.s:549    .rodata:0000000000000128 mf_ccch_comb
+     /tmp/ccLbjLwz.s:566    .rodata:0000000000000158 mf_sdcch4_0
+     /tmp/ccLbjLwz.s:589    .rodata:0000000000000194 mf_sdcch4_1
+     /tmp/ccLbjLwz.s:612    .rodata:00000000000001d0 mf_sdcch4_2
+     /tmp/ccLbjLwz.s:635    .rodata:000000000000020c mf_sdcch4_3
+     /tmp/ccLbjLwz.s:658    .rodata:0000000000000248 mf_sdcch8_0
+     /tmp/ccLbjLwz.s:681    .rodata:0000000000000284 mf_sdcch8_1
+     /tmp/ccLbjLwz.s:704    .rodata:00000000000002c0 mf_sdcch8_2
+     /tmp/ccLbjLwz.s:727    .rodata:00000000000002fc mf_sdcch8_3
+     /tmp/ccLbjLwz.s:750    .rodata:0000000000000338 mf_sdcch8_4
+     /tmp/ccLbjLwz.s:773    .rodata:0000000000000374 mf_sdcch8_5
+     /tmp/ccLbjLwz.s:796    .rodata:00000000000003b0 mf_sdcch8_6
+     /tmp/ccLbjLwz.s:819    .rodata:00000000000003ec mf_sdcch8_7
+     /tmp/ccLbjLwz.s:842    .rodata:0000000000000428 mf_tch_f_even
+     /tmp/ccLbjLwz.s:900    .rodata:00000000000004d0 mf_tch_f_odd
+     /tmp/ccLbjLwz.s:958    .rodata:0000000000000578 mf_tch_h_0
+     /tmp/ccLbjLwz.s:992    .rodata:00000000000005d8 mf_tch_h_1
+     /tmp/ccLbjLwz.s:1026   .rodata:0000000000000638 mf_neigh_pm51
+     /tmp/ccLbjLwz.s:1035   .rodata:0000000000000650 mf_neigh_pm26_even
+     /tmp/ccLbjLwz.s:1044   .rodata:0000000000000668 mf_neigh_pm26_odd
+     /tmp/ccLbjLwz.s:1053   .rodata:0000000000000680 mf_tx_all_nb
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+l1s
+__umodsi3
+tdma_schedule_set
+nb_sched_set
+sniff_xcch_dl_sched_set
+sniff_xcch_ul_sched_set
+sniff_tch_sched_set
+neigh_pm_sched_set
+nb_sched_set_ul

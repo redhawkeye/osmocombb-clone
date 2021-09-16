@@ -1,0 +1,602 @@
+   1              		.file	"main.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text.key_handler,"ax",%progbits
+  12              		.align	2
+  13              		.global	key_handler
+  15              	key_handler:
+  16              	.LFB51:
+  17              		.file 1 "apps/hello_world/main.c"
+   1:apps/hello_world/main.c **** /* main program of Free Software for Calypso Phone */
+   2:apps/hello_world/main.c **** 
+   3:apps/hello_world/main.c **** /* (C) 2010 by Harald Welte <laforge@gnumonks.org>
+   4:apps/hello_world/main.c ****  *
+   5:apps/hello_world/main.c ****  * All Rights Reserved
+   6:apps/hello_world/main.c ****  *
+   7:apps/hello_world/main.c ****  * This program is free software; you can redistribute it and/or modify
+   8:apps/hello_world/main.c ****  * it under the terms of the GNU General Public License as published by
+   9:apps/hello_world/main.c ****  * the Free Software Foundation; either version 2 of the License, or
+  10:apps/hello_world/main.c ****  * (at your option) any later version.
+  11:apps/hello_world/main.c ****  *
+  12:apps/hello_world/main.c ****  * This program is distributed in the hope that it will be useful,
+  13:apps/hello_world/main.c ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  14:apps/hello_world/main.c ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  15:apps/hello_world/main.c ****  * GNU General Public License for more details.
+  16:apps/hello_world/main.c ****  *
+  17:apps/hello_world/main.c ****  * You should have received a copy of the GNU General Public License along
+  18:apps/hello_world/main.c ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  19:apps/hello_world/main.c ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  20:apps/hello_world/main.c ****  *
+  21:apps/hello_world/main.c ****  */
+  22:apps/hello_world/main.c **** 
+  23:apps/hello_world/main.c **** #include <stdint.h>
+  24:apps/hello_world/main.c **** #include <stdio.h>
+  25:apps/hello_world/main.c **** #include <string.h>
+  26:apps/hello_world/main.c **** 
+  27:apps/hello_world/main.c **** #include <debug.h>
+  28:apps/hello_world/main.c **** #include <memory.h>
+  29:apps/hello_world/main.c **** #include <delay.h>
+  30:apps/hello_world/main.c **** #include <rffe.h>
+  31:apps/hello_world/main.c **** #include <keypad.h>
+  32:apps/hello_world/main.c **** #include <board.h>
+  33:apps/hello_world/main.c **** #include <abb/twl3025.h>
+  34:apps/hello_world/main.c **** #include <display.h>
+  35:apps/hello_world/main.c **** #include <rf/trf6151.h>
+  36:apps/hello_world/main.c **** #include <calypso/clock.h>
+  37:apps/hello_world/main.c **** #include <calypso/tpu.h>
+  38:apps/hello_world/main.c **** #include <calypso/tsp.h>
+  39:apps/hello_world/main.c **** #include <calypso/dsp.h>
+  40:apps/hello_world/main.c **** #include <calypso/irq.h>
+  41:apps/hello_world/main.c **** #include <calypso/misc.h>
+  42:apps/hello_world/main.c **** #include <comm/sercomm.h>
+  43:apps/hello_world/main.c **** #include <comm/timer.h>
+  44:apps/hello_world/main.c **** 
+  45:apps/hello_world/main.c **** /* Main Program */
+  46:apps/hello_world/main.c **** const char *hr = "======================================================================\n";
+  47:apps/hello_world/main.c **** 
+  48:apps/hello_world/main.c **** void key_handler(enum key_codes code, enum key_states state);
+  49:apps/hello_world/main.c **** 
+  50:apps/hello_world/main.c **** static void console_rx_cb(uint8_t dlci, struct msgb *msg)
+  51:apps/hello_world/main.c **** {
+  52:apps/hello_world/main.c **** 	if (dlci != SC_DLCI_CONSOLE) {
+  53:apps/hello_world/main.c **** 		printf("Message for unknown DLCI %u\n", dlci);
+  54:apps/hello_world/main.c **** 		return;
+  55:apps/hello_world/main.c **** 	}
+  56:apps/hello_world/main.c **** 
+  57:apps/hello_world/main.c **** 	printf("Message on console DLCI: '%s'\n", msg->data);
+  58:apps/hello_world/main.c **** 	display_puts((char *) msg->data);
+  59:apps/hello_world/main.c **** 	msgb_free(msg);
+  60:apps/hello_world/main.c **** }
+  61:apps/hello_world/main.c **** 
+  62:apps/hello_world/main.c **** static void l1a_l23_rx_cb(uint8_t dlci, struct msgb *msg)
+  63:apps/hello_world/main.c **** {
+  64:apps/hello_world/main.c **** 	int i;
+  65:apps/hello_world/main.c **** 	puts("l1a_l23_rx_cb: ");
+  66:apps/hello_world/main.c **** 	for (i = 0; i < msg->len; i++)
+  67:apps/hello_world/main.c **** 		printf("%02x ", msg->data[i]);
+  68:apps/hello_world/main.c **** 	puts("\n");
+  69:apps/hello_world/main.c **** }
+  70:apps/hello_world/main.c **** 
+  71:apps/hello_world/main.c **** int main(void)
+  72:apps/hello_world/main.c **** {
+  73:apps/hello_world/main.c **** 	board_init();
+  74:apps/hello_world/main.c **** 
+  75:apps/hello_world/main.c **** 	puts("\n\nOSMOCOM Hello World (revision " GIT_REVISION ")\n");
+  76:apps/hello_world/main.c **** 	puts(hr);
+  77:apps/hello_world/main.c **** 
+  78:apps/hello_world/main.c **** 	/* Dump device identification */
+  79:apps/hello_world/main.c **** 	dump_dev_id();
+  80:apps/hello_world/main.c **** 	puts(hr);
+  81:apps/hello_world/main.c **** 
+  82:apps/hello_world/main.c **** 	/* Dump clock config before PLL set */
+  83:apps/hello_world/main.c **** 	calypso_clk_dump();
+  84:apps/hello_world/main.c **** 	puts(hr);
+  85:apps/hello_world/main.c **** 
+  86:apps/hello_world/main.c **** 	keypad_set_handler(&key_handler);
+  87:apps/hello_world/main.c **** 
+  88:apps/hello_world/main.c **** 	/* Dump clock config after PLL set */
+  89:apps/hello_world/main.c **** 	calypso_clk_dump();
+  90:apps/hello_world/main.c **** 	puts(hr);
+  91:apps/hello_world/main.c **** 
+  92:apps/hello_world/main.c **** 	/* Dump all memory */
+  93:apps/hello_world/main.c **** 	//dump_mem();
+  94:apps/hello_world/main.c **** #if 0
+  95:apps/hello_world/main.c **** 	/* Dump Bootloader */
+  96:apps/hello_world/main.c **** 	memdump_range((void *)0x00000000, 0x2000);
+  97:apps/hello_world/main.c **** 	puts(hr);
+  98:apps/hello_world/main.c **** #endif
+  99:apps/hello_world/main.c **** 
+ 100:apps/hello_world/main.c **** 	display_set_attr(DISP_ATTR_INVERT);
+ 101:apps/hello_world/main.c **** 	display_puts("Hello World");
+ 102:apps/hello_world/main.c **** 
+ 103:apps/hello_world/main.c **** 	sercomm_register_rx_cb(SC_DLCI_CONSOLE, console_rx_cb);
+ 104:apps/hello_world/main.c **** 	sercomm_register_rx_cb(SC_DLCI_L1A_L23, l1a_l23_rx_cb);
+ 105:apps/hello_world/main.c **** 
+ 106:apps/hello_world/main.c **** 	/* beyond this point we only react to interrupts */
+ 107:apps/hello_world/main.c **** 	puts("entering interrupt loop\n");
+ 108:apps/hello_world/main.c **** 	while (1) {
+ 109:apps/hello_world/main.c **** 		update_timers();
+ 110:apps/hello_world/main.c **** 	}
+ 111:apps/hello_world/main.c **** 
+ 112:apps/hello_world/main.c **** 	twl3025_power_off();
+ 113:apps/hello_world/main.c **** 
+ 114:apps/hello_world/main.c **** 	while (1) {}
+ 115:apps/hello_world/main.c **** }
+ 116:apps/hello_world/main.c **** 
+ 117:apps/hello_world/main.c **** void key_handler(enum key_codes code, enum key_states state)
+ 118:apps/hello_world/main.c **** {
+  18              		.loc 1 118 0
+  19              		.cfi_startproc
+  20              		@ args = 0, pretend = 0, frame = 16
+  21              		@ frame_needed = 0, uses_anonymous_args = 0
+  22              	.LVL0:
+ 119:apps/hello_world/main.c **** 	char test[16];
+ 120:apps/hello_world/main.c **** 
+ 121:apps/hello_world/main.c **** 	if (state != PRESSED)
+  23              		.loc 1 121 0
+  24 0000 000051E3 		cmp	r1, #0
+ 118:apps/hello_world/main.c **** {
+  25              		.loc 1 118 0
+  26 0004 1F402DE9 		stmfd	sp!, {r0, r1, r2, r3, r4, lr}
+  27              	.LCFI0:
+  28              		.cfi_def_cfa_offset 24
+ 118:apps/hello_world/main.c **** {
+  29              		.loc 1 118 0
+  30 0008 0020A0E1 		mov	r2, r0
+  31              		.cfi_offset 14, -4
+  32              		.cfi_offset 4, -8
+  33              		.cfi_offset 3, -12
+  34              		.cfi_offset 2, -16
+  35              		.cfi_offset 1, -20
+  36              		.cfi_offset 0, -24
+  37              		.loc 1 121 0
+  38 000c 1D00001A 		bne	.L1
+ 122:apps/hello_world/main.c **** 		return;
+ 123:apps/hello_world/main.c **** 
+ 124:apps/hello_world/main.c **** 	switch (code) {
+  39              		.loc 1 124 0
+  40 0010 0B0050E3 		cmp	r0, #11
+  41 0014 00F19F97 		ldrls	pc, [pc, r0, asl #2]
+  42 0018 1A0000EA 		b	.L1
+  43              	.L6:
+  44 001c 4C000000 		.word	.L3
+  45 0020 4C000000 		.word	.L3
+  46 0024 4C000000 		.word	.L3
+  47 0028 4C000000 		.word	.L3
+  48 002c 4C000000 		.word	.L3
+  49 0030 4C000000 		.word	.L3
+  50 0034 4C000000 		.word	.L3
+  51 0038 4C000000 		.word	.L3
+  52 003c 4C000000 		.word	.L3
+  53 0040 4C000000 		.word	.L3
+  54 0044 5C000000 		.word	.L4
+  55 0048 6C000000 		.word	.L5
+  56              	.L3:
+ 125:apps/hello_world/main.c **** 	case KEY_0:
+ 126:apps/hello_world/main.c **** 	case KEY_1:
+ 127:apps/hello_world/main.c **** 	case KEY_2:
+ 128:apps/hello_world/main.c **** 	case KEY_3:
+ 129:apps/hello_world/main.c **** 	case KEY_4:
+ 130:apps/hello_world/main.c **** 	case KEY_5:
+ 131:apps/hello_world/main.c **** 	case KEY_6:
+ 132:apps/hello_world/main.c **** 	case KEY_7:
+ 133:apps/hello_world/main.c **** 	case KEY_8:
+ 134:apps/hello_world/main.c **** 	case KEY_9:
+ 135:apps/hello_world/main.c **** 		sprintf(test, "%d", code - KEY_0);
+  57              		.loc 1 135 0
+  58 004c 0D40A0E1 		mov	r4, sp
+  59 0050 0D00A0E1 		mov	r0, sp
+  60              	.LVL1:
+  61 0054 30109FE5 		ldr	r1, .L9
+  62              	.LVL2:
+  63 0058 070000EA 		b	.L7
+  64              	.LVL3:
+  65              	.L4:
+ 136:apps/hello_world/main.c **** 		display_puts(test);
+ 137:apps/hello_world/main.c **** 		break;
+ 138:apps/hello_world/main.c **** 	case KEY_STAR:
+ 139:apps/hello_world/main.c **** 		sprintf(test, "*", 0);
+  66              		.loc 1 139 0
+  67 005c 0D40A0E1 		mov	r4, sp
+  68 0060 0D00A0E1 		mov	r0, sp
+  69 0064 24109FE5 		ldr	r1, .L9+4
+  70              	.LVL4:
+  71 0068 020000EA 		b	.L8
+  72              	.LVL5:
+  73              	.L5:
+ 140:apps/hello_world/main.c **** 		display_puts(test);
+ 141:apps/hello_world/main.c **** 		break;
+ 142:apps/hello_world/main.c **** 	case KEY_HASH:
+ 143:apps/hello_world/main.c **** 		sprintf(test, "#", 0);
+  74              		.loc 1 143 0
+  75 006c 20109FE5 		ldr	r1, .L9+8
+  76              	.LVL6:
+  77 0070 0D40A0E1 		mov	r4, sp
+  78 0074 0D00A0E1 		mov	r0, sp
+  79              	.L8:
+  80 0078 0020A0E3 		mov	r2, #0
+  81              	.LVL7:
+  82              	.L7:
+  83 007c FEFFFFEB 		bl	sprintf
+ 144:apps/hello_world/main.c **** 		display_puts(test);
+  84              		.loc 1 144 0
+  85 0080 0D00A0E1 		mov	r0, sp
+  86 0084 FEFFFFEB 		bl	display_puts
+  87              	.L1:
+ 145:apps/hello_world/main.c **** 		break;
+ 146:apps/hello_world/main.c **** 	default:
+ 147:apps/hello_world/main.c **** 		break;
+ 148:apps/hello_world/main.c **** 	}
+ 149:apps/hello_world/main.c **** }
+  88              		.loc 1 149 0
+  89 0088 1F80BDE8 		ldmfd	sp!, {r0, r1, r2, r3, r4, pc}
+  90              	.L10:
+  91              		.align	2
+  92              	.L9:
+  93 008c 00000000 		.word	.LC0
+  94 0090 03000000 		.word	.LC1
+  95 0094 05000000 		.word	.LC2
+  96              		.cfi_endproc
+  97              	.LFE51:
+  99              		.section	.text.l1a_l23_rx_cb,"ax",%progbits
+ 100              		.align	2
+ 102              	l1a_l23_rx_cb:
+ 103              	.LFB49:
+  63:apps/hello_world/main.c **** {
+ 104              		.loc 1 63 0
+ 105              		.cfi_startproc
+ 106              		@ args = 0, pretend = 0, frame = 0
+ 107              		@ frame_needed = 0, uses_anonymous_args = 0
+ 108              	.LVL8:
+ 109 0000 30402DE9 		stmfd	sp!, {r4, r5, lr}
+ 110              	.LCFI1:
+ 111              		.cfi_def_cfa_offset 12
+  65:apps/hello_world/main.c **** 	puts("l1a_l23_rx_cb: ");
+ 112              		.loc 1 65 0
+ 113 0004 38009FE5 		ldr	r0, .L14
+ 114              	.LVL9:
+  63:apps/hello_world/main.c **** {
+ 115              		.loc 1 63 0
+ 116 0008 0150A0E1 		mov	r5, r1
+ 117              		.cfi_offset 14, -4
+ 118              		.cfi_offset 5, -8
+ 119              		.cfi_offset 4, -12
+  66:apps/hello_world/main.c **** 	for (i = 0; i < msg->len; i++)
+ 120              		.loc 1 66 0
+ 121 000c 0040A0E3 		mov	r4, #0
+  65:apps/hello_world/main.c **** 	puts("l1a_l23_rx_cb: ");
+ 122              		.loc 1 65 0
+ 123 0010 FEFFFFEB 		bl	puts
+ 124              	.LVL10:
+  66:apps/hello_world/main.c **** 	for (i = 0; i < msg->len; i++)
+ 125              		.loc 1 66 0
+ 126 0014 040000EA 		b	.L12
+ 127              	.LVL11:
+ 128              	.L13:
+  67:apps/hello_world/main.c **** 		printf("%02x ", msg->data[i]);
+ 129              		.loc 1 67 0 discriminator 2
+ 130 0018 403095E5 		ldr	r3, [r5, #64]
+ 131 001c 24009FE5 		ldr	r0, .L14+4
+ 132 0020 0410D3E7 		ldrb	r1, [r3, r4]	@ zero_extendqisi2
+ 133 0024 FEFFFFEB 		bl	printf
+  66:apps/hello_world/main.c **** 	for (i = 0; i < msg->len; i++)
+ 134              		.loc 1 66 0 discriminator 2
+ 135 0028 014084E2 		add	r4, r4, #1
+ 136              	.LVL12:
+ 137              	.L12:
+  66:apps/hello_world/main.c **** 	for (i = 0; i < msg->len; i++)
+ 138              		.loc 1 66 0 is_stmt 0 discriminator 1
+ 139 002c B633D5E1 		ldrh	r3, [r5, #54]
+ 140 0030 030054E1 		cmp	r4, r3
+ 141 0034 F7FFFFBA 		blt	.L13
+  68:apps/hello_world/main.c **** 	puts("\n");
+ 142              		.loc 1 68 0 is_stmt 1
+ 143 0038 0C009FE5 		ldr	r0, .L14+8
+  69:apps/hello_world/main.c **** }
+ 144              		.loc 1 69 0
+ 145 003c 3040BDE8 		ldmfd	sp!, {r4, r5, lr}
+  68:apps/hello_world/main.c **** 	puts("\n");
+ 146              		.loc 1 68 0
+ 147 0040 FEFFFFEA 		b	puts
+ 148              	.L15:
+ 149              		.align	2
+ 150              	.L14:
+ 151 0044 07000000 		.word	.LC3
+ 152 0048 17000000 		.word	.LC4
+ 153 004c 1D000000 		.word	.LC5
+ 154              		.cfi_endproc
+ 155              	.LFE49:
+ 157              		.section	.text.console_rx_cb,"ax",%progbits
+ 158              		.align	2
+ 160              	console_rx_cb:
+ 161              	.LFB48:
+  51:apps/hello_world/main.c **** {
+ 162              		.loc 1 51 0
+ 163              		.cfi_startproc
+ 164              		@ args = 0, pretend = 0, frame = 0
+ 165              		@ frame_needed = 0, uses_anonymous_args = 0
+ 166              	.LVL13:
+ 167 0000 10402DE9 		stmfd	sp!, {r4, lr}
+ 168              	.LCFI2:
+ 169              		.cfi_def_cfa_offset 8
+  51:apps/hello_world/main.c **** {
+ 170              		.loc 1 51 0
+ 171 0004 0140A0E1 		mov	r4, r1
+ 172              		.cfi_offset 14, -4
+ 173              		.cfi_offset 4, -8
+ 174 0008 FF1000E2 		and	r1, r0, #255
+ 175              	.LVL14:
+  52:apps/hello_world/main.c **** 	if (dlci != SC_DLCI_CONSOLE) {
+ 176              		.loc 1 52 0
+ 177 000c 0A0051E3 		cmp	r1, #10
+ 178 0010 0200000A 		beq	.L17
+  53:apps/hello_world/main.c **** 		printf("Message for unknown DLCI %u\n", dlci);
+ 179              		.loc 1 53 0
+ 180 0014 24009FE5 		ldr	r0, .L18
+ 181              	.LVL15:
+  60:apps/hello_world/main.c **** }
+ 182              		.loc 1 60 0
+ 183 0018 1040BDE8 		ldmfd	sp!, {r4, lr}
+  53:apps/hello_world/main.c **** 		printf("Message for unknown DLCI %u\n", dlci);
+ 184              		.loc 1 53 0
+ 185 001c FEFFFFEA 		b	printf
+ 186              	.LVL16:
+ 187              	.L17:
+  57:apps/hello_world/main.c **** 	printf("Message on console DLCI: '%s'\n", msg->data);
+ 188              		.loc 1 57 0
+ 189 0020 401094E5 		ldr	r1, [r4, #64]
+ 190 0024 18009FE5 		ldr	r0, .L18+4
+ 191              	.LVL17:
+ 192 0028 FEFFFFEB 		bl	printf
+  58:apps/hello_world/main.c **** 	display_puts((char *) msg->data);
+ 193              		.loc 1 58 0
+ 194 002c 400094E5 		ldr	r0, [r4, #64]
+ 195 0030 FEFFFFEB 		bl	display_puts
+  59:apps/hello_world/main.c **** 	msgb_free(msg);
+ 196              		.loc 1 59 0
+ 197 0034 0400A0E1 		mov	r0, r4
+  60:apps/hello_world/main.c **** }
+ 198              		.loc 1 60 0
+ 199 0038 1040BDE8 		ldmfd	sp!, {r4, lr}
+  59:apps/hello_world/main.c **** 	msgb_free(msg);
+ 200              		.loc 1 59 0
+ 201 003c FEFFFFEA 		b	msgb_free
+ 202              	.L19:
+ 203              		.align	2
+ 204              	.L18:
+ 205 0040 1F000000 		.word	.LC6
+ 206 0044 3C000000 		.word	.LC7
+ 207              		.cfi_endproc
+ 208              	.LFE48:
+ 210              		.section	.text.main,"ax",%progbits
+ 211              		.align	2
+ 212              		.global	main
+ 214              	main:
+ 215              	.LFB50:
+  72:apps/hello_world/main.c **** {
+ 216              		.loc 1 72 0
+ 217              		.cfi_startproc
+ 218              		@ args = 0, pretend = 0, frame = 0
+ 219              		@ frame_needed = 0, uses_anonymous_args = 0
+ 220 0000 10402DE9 		stmfd	sp!, {r4, lr}
+ 221              	.LCFI3:
+ 222              		.cfi_def_cfa_offset 8
+  76:apps/hello_world/main.c **** 	puts(hr);
+ 223              		.loc 1 76 0
+ 224 0004 80409FE5 		ldr	r4, .L22
+ 225              		.cfi_offset 14, -4
+ 226              		.cfi_offset 4, -8
+  73:apps/hello_world/main.c **** 	board_init();
+ 227              		.loc 1 73 0
+ 228 0008 FEFFFFEB 		bl	board_init
+  75:apps/hello_world/main.c **** 	puts("\n\nOSMOCOM Hello World (revision " GIT_REVISION ")\n");
+ 229              		.loc 1 75 0
+ 230 000c 7C009FE5 		ldr	r0, .L22+4
+ 231 0010 FEFFFFEB 		bl	puts
+  76:apps/hello_world/main.c **** 	puts(hr);
+ 232              		.loc 1 76 0
+ 233 0014 000094E5 		ldr	r0, [r4, #0]
+ 234 0018 FEFFFFEB 		bl	puts
+  79:apps/hello_world/main.c **** 	dump_dev_id();
+ 235              		.loc 1 79 0
+ 236 001c FEFFFFEB 		bl	dump_dev_id
+  80:apps/hello_world/main.c **** 	puts(hr);
+ 237              		.loc 1 80 0
+ 238 0020 000094E5 		ldr	r0, [r4, #0]
+ 239 0024 FEFFFFEB 		bl	puts
+  83:apps/hello_world/main.c **** 	calypso_clk_dump();
+ 240              		.loc 1 83 0
+ 241 0028 FEFFFFEB 		bl	calypso_clk_dump
+  84:apps/hello_world/main.c **** 	puts(hr);
+ 242              		.loc 1 84 0
+ 243 002c 000094E5 		ldr	r0, [r4, #0]
+ 244 0030 FEFFFFEB 		bl	puts
+  86:apps/hello_world/main.c **** 	keypad_set_handler(&key_handler);
+ 245              		.loc 1 86 0
+ 246 0034 58009FE5 		ldr	r0, .L22+8
+ 247 0038 FEFFFFEB 		bl	keypad_set_handler
+  89:apps/hello_world/main.c **** 	calypso_clk_dump();
+ 248              		.loc 1 89 0
+ 249 003c FEFFFFEB 		bl	calypso_clk_dump
+  90:apps/hello_world/main.c **** 	puts(hr);
+ 250              		.loc 1 90 0
+ 251 0040 000094E5 		ldr	r0, [r4, #0]
+ 252 0044 FEFFFFEB 		bl	puts
+ 253              	.LVL18:
+ 254              	.LBB4:
+ 255              	.LBB5:
+ 256              		.file 2 "include/display.h"
+   1:include/display.h **** #ifndef _DISPLAY_DRIVER_H
+   2:include/display.h **** #define _DISPLAY_DRIVER_H
+   3:include/display.h **** 
+   4:include/display.h **** enum display_attr {
+   5:include/display.h **** 	DISP_ATTR_INVERT	= 0x0001,
+   6:include/display.h **** };
+   7:include/display.h **** 
+   8:include/display.h **** struct display_driver {
+   9:include/display.h **** 	char *name;
+  10:include/display.h **** 	void (*init)(void);
+  11:include/display.h **** 	void (*set_attr)(unsigned long attr);
+  12:include/display.h **** 	void (*unset_attr)(unsigned long attr);
+  13:include/display.h **** 	void (*clrscr)(void);
+  14:include/display.h **** 	void (*goto_xy)(int xpos, int ypos);
+  15:include/display.h **** 	void (*set_color)(int fgcolor, int bgcolor);
+  16:include/display.h **** 	int (*putc)(unsigned char c);
+  17:include/display.h **** 	int (*puts)(const char *str);
+  18:include/display.h **** };
+  19:include/display.h **** 
+  20:include/display.h **** extern struct display_driver *display;
+  21:include/display.h **** 
+  22:include/display.h **** static inline void display_init(void)
+  23:include/display.h **** {
+  24:include/display.h **** 	display->init();
+  25:include/display.h **** }
+  26:include/display.h **** static inline void display_set_attr(unsigned long attr)
+  27:include/display.h **** {
+  28:include/display.h **** 	display->set_attr(attr);
+ 257              		.loc 2 28 0
+ 258 0048 48309FE5 		ldr	r3, .L22+12
+ 259 004c 0100A0E3 		mov	r0, #1
+ 260 0050 003093E5 		ldr	r3, [r3, #0]
+ 261 0054 0FE0A0E1 		mov	lr, pc
+ 262 0058 08F093E5 		ldr	pc, [r3, #8]
+ 263              	.LBE5:
+ 264              	.LBE4:
+ 101:apps/hello_world/main.c **** 	display_puts("Hello World");
+ 265              		.loc 1 101 0
+ 266 005c 38009FE5 		ldr	r0, .L22+16
+ 267 0060 FEFFFFEB 		bl	display_puts
+ 103:apps/hello_world/main.c **** 	sercomm_register_rx_cb(SC_DLCI_CONSOLE, console_rx_cb);
+ 268              		.loc 1 103 0
+ 269 0064 34109FE5 		ldr	r1, .L22+20
+ 270 0068 0A00A0E3 		mov	r0, #10
+ 271 006c FEFFFFEB 		bl	sercomm_register_rx_cb
+ 104:apps/hello_world/main.c **** 	sercomm_register_rx_cb(SC_DLCI_L1A_L23, l1a_l23_rx_cb);
+ 272              		.loc 1 104 0
+ 273 0070 0500A0E3 		mov	r0, #5
+ 274 0074 28109FE5 		ldr	r1, .L22+24
+ 275 0078 FEFFFFEB 		bl	sercomm_register_rx_cb
+ 107:apps/hello_world/main.c **** 	puts("entering interrupt loop\n");
+ 276              		.loc 1 107 0
+ 277 007c 24009FE5 		ldr	r0, .L22+28
+ 278 0080 FEFFFFEB 		bl	puts
+ 279              	.L21:
+ 109:apps/hello_world/main.c **** 		update_timers();
+ 280              		.loc 1 109 0 discriminator 1
+ 281 0084 FEFFFFEB 		bl	update_timers
+ 282 0088 FDFFFFEA 		b	.L21
+ 283              	.L23:
+ 284              		.align	2
+ 285              	.L22:
+ 286 008c 00000000 		.word	.LANCHOR0
+ 287 0090 5B000000 		.word	.LC8
+ 288 0094 00000000 		.word	key_handler
+ 289 0098 00000000 		.word	display
+ 290 009c 9A000000 		.word	.LC9
+ 291 00a0 00000000 		.word	console_rx_cb
+ 292 00a4 00000000 		.word	l1a_l23_rx_cb
+ 293 00a8 A6000000 		.word	.LC10
+ 294              		.cfi_endproc
+ 295              	.LFE50:
+ 297              		.global	hr
+ 298              		.section	.rodata.str1.1,"aMS",%progbits,1
+ 299              	.LC0:
+ 300 0000 256400   		.ascii	"%d\000"
+ 301              	.LC1:
+ 302 0003 2A00     		.ascii	"*\000"
+ 303              	.LC2:
+ 304 0005 2300     		.ascii	"#\000"
+ 305              	.LC3:
+ 306 0007 6C31615F 		.ascii	"l1a_l23_rx_cb: \000"
+ 306      6C32335F 
+ 306      72785F63 
+ 306      623A2000 
+ 307              	.LC4:
+ 308 0017 25303278 		.ascii	"%02x \000"
+ 308      2000
+ 309              	.LC5:
+ 310 001d 0A00     		.ascii	"\012\000"
+ 311              	.LC6:
+ 312 001f 4D657373 		.ascii	"Message for unknown DLCI %u\012\000"
+ 312      61676520 
+ 312      666F7220 
+ 312      756E6B6E 
+ 312      6F776E20 
+ 313              	.LC7:
+ 314 003c 4D657373 		.ascii	"Message on console DLCI: '%s'\012\000"
+ 314      61676520 
+ 314      6F6E2063 
+ 314      6F6E736F 
+ 314      6C652044 
+ 315              	.LC8:
+ 316 005b 0A0A4F53 		.ascii	"\012\012OSMOCOM Hello World (revision osmocon_v0.0."
+ 316      4D4F434F 
+ 316      4D204865 
+ 316      6C6C6F20 
+ 316      576F726C 
+ 317 0088 302D3132 		.ascii	"0-1205-g07ce6fa)\012\000"
+ 317      30352D67 
+ 317      30376365 
+ 317      36666129 
+ 317      0A00
+ 318              	.LC9:
+ 319 009a 48656C6C 		.ascii	"Hello World\000"
+ 319      6F20576F 
+ 319      726C6400 
+ 320              	.LC10:
+ 321 00a6 656E7465 		.ascii	"entering interrupt loop\012\000"
+ 321      72696E67 
+ 321      20696E74 
+ 321      65727275 
+ 321      7074206C 
+ 322              	.LC11:
+ 323 00bf 3D3D3D3D 		.ascii	"==================================================="
+ 323      3D3D3D3D 
+ 323      3D3D3D3D 
+ 323      3D3D3D3D 
+ 323      3D3D3D3D 
+ 324 00f2 3D3D3D3D 		.ascii	"===================\012\000"
+ 324      3D3D3D3D 
+ 324      3D3D3D3D 
+ 324      3D3D3D3D 
+ 324      3D3D3D0A 
+ 325              		.data
+ 326              		.align	2
+ 327              		.set	.LANCHOR0,. + 0
+ 330              	hr:
+ 331 0000 BF000000 		.word	.LC11
+ 332              		.text
+ 333              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 main.c
+     /tmp/ccx9A9py.s:12     .text.key_handler:0000000000000000 $a
+     /tmp/ccx9A9py.s:15     .text.key_handler:0000000000000000 key_handler
+     /tmp/ccx9A9py.s:44     .text.key_handler:000000000000001c $d
+     /tmp/ccx9A9py.s:58     .text.key_handler:000000000000004c $a
+     /tmp/ccx9A9py.s:93     .text.key_handler:000000000000008c $d
+     /tmp/ccx9A9py.s:100    .text.l1a_l23_rx_cb:0000000000000000 $a
+     /tmp/ccx9A9py.s:102    .text.l1a_l23_rx_cb:0000000000000000 l1a_l23_rx_cb
+     /tmp/ccx9A9py.s:151    .text.l1a_l23_rx_cb:0000000000000044 $d
+     /tmp/ccx9A9py.s:158    .text.console_rx_cb:0000000000000000 $a
+     /tmp/ccx9A9py.s:160    .text.console_rx_cb:0000000000000000 console_rx_cb
+     /tmp/ccx9A9py.s:205    .text.console_rx_cb:0000000000000040 $d
+     /tmp/ccx9A9py.s:211    .text.main:0000000000000000 $a
+     /tmp/ccx9A9py.s:214    .text.main:0000000000000000 main
+     /tmp/ccx9A9py.s:286    .text.main:000000000000008c $d
+     /tmp/ccx9A9py.s:330    .data:0000000000000000 hr
+     /tmp/ccx9A9py.s:326    .data:0000000000000000 $d
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+sprintf
+display_puts
+puts
+printf
+msgb_free
+board_init
+dump_dev_id
+calypso_clk_dump
+keypad_set_handler
+sercomm_register_rx_cb
+update_timers
+display

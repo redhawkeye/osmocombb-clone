@@ -1,0 +1,3104 @@
+   1              		.file	"main.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text.msgb_pull_u32,"ax",%progbits
+  12              		.align	2
+  14              	msgb_pull_u32:
+  15              	.LFB35:
+  16              		.file 1 "../../shared/libosmocore/include/osmocom/core/msgb.h"
+   1:../../shared/libosmocore/include/osmocom/core/msgb.h **** #ifndef _MSGB_H
+   2:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define _MSGB_H
+   3:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+   4:../../shared/libosmocore/include/osmocom/core/msgb.h **** /* (C) 2008 by Harald Welte <laforge@gnumonks.org>
+   5:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * All Rights Reserved
+   6:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+   7:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This program is free software; you can redistribute it and/or modify
+   8:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * it under the terms of the GNU General Public License as published by
+   9:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * the Free Software Foundation; either version 2 of the License, or
+  10:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * (at your option) any later version.
+  11:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+  12:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This program is distributed in the hope that it will be useful,
+  13:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  14:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  15:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * GNU General Public License for more details.
+  16:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+  17:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * You should have received a copy of the GNU General Public License along
+  18:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  19:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  20:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+  21:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+  22:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  23:../../shared/libosmocore/include/osmocom/core/msgb.h **** #include <stdint.h>
+  24:../../shared/libosmocore/include/osmocom/core/msgb.h **** #include <osmocom/core/linuxlist.h>
+  25:../../shared/libosmocore/include/osmocom/core/msgb.h **** #include <osmocom/core/utils.h>
+  26:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  27:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \defgroup msgb Message buffers
+  28:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  @{
+  29:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+  30:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  31:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \file msgb.h
+  32:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \brief Osmocom message buffers
+  33:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * The Osmocom message buffers are modelled after the 'struct skb'
+  34:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * inside the Linux kernel network stack.  As they exist in userspace,
+  35:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * they are much simplified.  However, terminology such as headroom,
+  36:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * tailroom, push/pull/put etc. remains the same.
+  37:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+  38:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  39:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define MSGB_DEBUG
+  40:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  41:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief Osmocom message buffer */
+  42:../../shared/libosmocore/include/osmocom/core/msgb.h **** struct msgb {
+  43:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	struct llist_head list; /*!< \brief linked list header */
+  44:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  45:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  46:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	/* Part of which TRX logical channel we were received / transmitted */
+  47:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	/* FIXME: move them into the control buffer */
+  48:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	union {
+  49:../../shared/libosmocore/include/osmocom/core/msgb.h **** 		void *dst; /*!< \brief reference of origin/destination */
+  50:../../shared/libosmocore/include/osmocom/core/msgb.h **** 		struct gsm_bts_trx *trx;
+  51:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	};
+  52:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	struct gsm_lchan *lchan; /*!< \brief logical channel */
+  53:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  54:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *l1h; /*!< \brief pointer to Layer1 header (if any) */
+  55:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *l2h; /*!< \brief pointer to A-bis layer 2 header: OML, RSL(RLL), NS */
+  56:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *l3h; /*!< \brief pointer to Layer 3 header. For OML: FOM; RSL: 04.08; GPRS: BSSGP *
+  57:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *l4h; /*!< \brief pointer to layer 4 header */
+  58:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  59:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned long cb[5]; /*!< \brief control buffer */
+  60:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  61:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint16_t data_len;   /*!< \brief length of underlying data array */
+  62:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint16_t len;	     /*!< \brief length of bytes used in msgb */
+  63:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  64:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *head;	/*!< \brief start of underlying memory buffer */
+  65:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *tail;	/*!< \brief end of message in buffer */
+  66:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *data;	/*!< \brief start of message in buffer */
+  67:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char _data[0]; /*!< \brief optional immediate data array */
+  68:../../shared/libosmocore/include/osmocom/core/msgb.h **** };
+  69:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  70:../../shared/libosmocore/include/osmocom/core/msgb.h **** extern struct msgb *msgb_alloc(uint16_t size, const char *name);
+  71:../../shared/libosmocore/include/osmocom/core/msgb.h **** extern void msgb_free(struct msgb *m);
+  72:../../shared/libosmocore/include/osmocom/core/msgb.h **** extern void msgb_enqueue(struct llist_head *queue, struct msgb *msg);
+  73:../../shared/libosmocore/include/osmocom/core/msgb.h **** extern struct msgb *msgb_dequeue(struct llist_head *queue);
+  74:../../shared/libosmocore/include/osmocom/core/msgb.h **** extern void msgb_reset(struct msgb *m);
+  75:../../shared/libosmocore/include/osmocom/core/msgb.h **** uint16_t msgb_length(const struct msgb *msg);
+  76:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  77:../../shared/libosmocore/include/osmocom/core/msgb.h **** #ifdef MSGB_DEBUG
+  78:../../shared/libosmocore/include/osmocom/core/msgb.h **** #include <osmocom/core/panic.h>
+  79:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define MSGB_ABORT(msg, fmt, args ...) do {		\
+  80:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	osmo_panic("msgb(%p): " fmt, msg, ## args);	\
+  81:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	} while(0)
+  82:../../shared/libosmocore/include/osmocom/core/msgb.h **** #else
+  83:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define MSGB_ABORT(msg, fmt, args ...)
+  84:../../shared/libosmocore/include/osmocom/core/msgb.h **** #endif
+  85:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  86:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief obtain L1 header of msgb */
+  87:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define msgb_l1(m)	((void *)(m->l1h))
+  88:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief obtain L2 header of msgb */
+  89:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define msgb_l2(m)	((void *)(m->l2h))
+  90:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief obtain L3 header of msgb */
+  91:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define msgb_l3(m)	((void *)(m->l3h))
+  92:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief obtain SMS header of msgb */
+  93:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define msgb_sms(m)	((void *)(m->l4h))
+  94:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  95:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief determine length of L1 message
+  96:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+  97:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns size of L1 message in bytes
+  98:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+  99:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function computes the number of bytes between the tail of the
+ 100:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * message and the layer 1 header.
+ 101:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 102:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline unsigned int msgb_l1len(const struct msgb *msgb)
+ 103:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 104:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->tail - (uint8_t *)msgb_l1(msgb);
+ 105:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 106:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 107:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief determine length of L2 message
+ 108:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 109:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns size of L2 message in bytes
+ 110:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 111:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function computes the number of bytes between the tail of the
+ 112:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * message and the layer 2 header.
+ 113:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 114:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline unsigned int msgb_l2len(const struct msgb *msgb)
+ 115:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 116:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->tail - (uint8_t *)msgb_l2(msgb);
+ 117:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 118:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 119:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief determine length of L3 message
+ 120:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 121:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns size of L3 message in bytes
+ 122:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 123:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function computes the number of bytes between the tail of the
+ 124:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * message and the layer 3 header.
+ 125:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 126:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline unsigned int msgb_l3len(const struct msgb *msgb)
+ 127:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 128:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->tail - (uint8_t *)msgb_l3(msgb);
+ 129:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 130:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 131:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief determine the length of the header
+ 132:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 133:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns number of bytes between start of buffer and start of msg
+ 134:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 135:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function computes the length difference between the underlying
+ 136:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * data buffer and the used section of the \a msgb.
+ 137:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 138:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline unsigned int msgb_headlen(const struct msgb *msgb)
+ 139:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 140:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->len - msgb->data_len;
+ 141:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 142:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 143:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief determine how much tail room is left in msgb
+ 144:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 145:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns number of bytes remaining at end of msgb
+ 146:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 147:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function computes the amount of octets left in the underlying
+ 148:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * data buffer after the end of the message.
+ 149:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 150:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline int msgb_tailroom(const struct msgb *msgb)
+ 151:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 152:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return (msgb->head + msgb->data_len) - msgb->tail;
+ 153:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 154:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 155:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief determine the amount of headroom in msgb
+ 156:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 157:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns number of bytes left ahead of message start in msgb
+ 158:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 159:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function computes the amount of bytes left in the underlying
+ 160:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * data buffer before the start of the actual message.
+ 161:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 162:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline int msgb_headroom(const struct msgb *msgb)
+ 163:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 164:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return (msgb->data - msgb->head);
+ 165:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 166:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 167:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief append data to end of message buffer
+ 168:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 169:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] len number of bytes to append to message
+ 170:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns pointer to start of newly-appended data
+ 171:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 172:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function will move the \a tail pointer of the message buffer \a
+ 173:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * len bytes further, thus enlarging the message by \a len bytes.
+ 174:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 175:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * The return value is a pointer to start of the newly added section at
+ 176:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * the end of the message and can be used for actually filling/copying
+ 177:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * data into it.
+ 178:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 179:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline unsigned char *msgb_put(struct msgb *msgb, unsigned int len)
+ 180:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 181:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *tmp = msgb->tail;
+ 182:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	if (msgb_tailroom(msgb) < (int) len)
+ 183:../../shared/libosmocore/include/osmocom/core/msgb.h **** 		MSGB_ABORT(msgb, "Not enough tailroom msgb_push (%u < %u)\n",
+ 184:../../shared/libosmocore/include/osmocom/core/msgb.h **** 			   msgb_tailroom(msgb), len);
+ 185:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->tail += len;
+ 186:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len += len;
+ 187:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return tmp;
+ 188:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 189:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 190:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief append a uint8 value to the end of the message
+ 191:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 192:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] word unsigned 8bit byte to be appended
+ 193:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 194:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline void msgb_put_u8(struct msgb *msgb, uint8_t word)
+ 195:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 196:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint8_t *space = msgb_put(msgb, 1);
+ 197:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	space[0] = word & 0xFF;
+ 198:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 199:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 200:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief append a uint16 value to the end of the message
+ 201:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 202:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] word unsigned 16bit byte to be appended
+ 203:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 204:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline void msgb_put_u16(struct msgb *msgb, uint16_t word)
+ 205:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 206:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint8_t *space = msgb_put(msgb, 2);
+ 207:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	space[0] = word >> 8 & 0xFF;
+ 208:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	space[1] = word & 0xFF;
+ 209:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 210:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 211:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief append a uint32 value to the end of the message
+ 212:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 213:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] word unsigned 32bit byte to be appended
+ 214:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 215:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline void msgb_put_u32(struct msgb *msgb, uint32_t word)
+ 216:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 217:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint8_t *space = msgb_put(msgb, 4);
+ 218:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	space[0] = word >> 24 & 0xFF;
+ 219:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	space[1] = word >> 16 & 0xFF;
+ 220:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	space[2] = word >> 8 & 0xFF;
+ 221:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	space[3] = word & 0xFF;
+ 222:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 223:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 224:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief remove data from end of message
+ 225:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 226:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] len number of bytes to remove from end
+ 227:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 228:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline unsigned char *msgb_get(struct msgb *msgb, unsigned int len)
+ 229:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 230:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *tmp = msgb->data - len;
+ 231:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	if (msgb_length(msgb) < len)
+ 232:../../shared/libosmocore/include/osmocom/core/msgb.h **** 		MSGB_ABORT(msgb, "msgb too small to get %u (len %u)\n",
+ 233:../../shared/libosmocore/include/osmocom/core/msgb.h **** 			   len, msgb_length(msgb));
+ 234:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->tail -= len;
+ 235:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len -= len;
+ 236:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return tmp;
+ 237:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 238:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief remove uint8 from end of message
+ 239:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 240:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns 8bit value taken from end of msgb
+ 241:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 242:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline uint8_t msgb_get_u8(struct msgb *msgb)
+ 243:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 244:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint8_t *space = msgb_get(msgb, 1);
+ 245:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return space[0];
+ 246:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 247:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief remove uint16 from end of message
+ 248:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 249:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns 16bit value taken from end of msgb
+ 250:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 251:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline uint16_t msgb_get_u16(struct msgb *msgb)
+ 252:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 253:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint8_t *space = msgb_get(msgb, 2);
+ 254:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return space[0] << 8 | space[1];
+ 255:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 256:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief remove uint32 from end of message
+ 257:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 258:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns 32bit value taken from end of msgb
+ 259:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 260:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline uint32_t msgb_get_u32(struct msgb *msgb)
+ 261:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 262:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint8_t *space = msgb_get(msgb, 4);
+ 263:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return space[0] << 24 | space[1] << 16 | space[2] << 8 | space[3];
+ 264:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 265:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 266:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief prepend (push) some data to start of message
+ 267:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 268:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] len number of bytes to pre-pend
+ 269:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns pointer to newly added portion at start of \a msgb
+ 270:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 271:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function moves the \a data pointer of the \ref msgb further
+ 272:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * to the front (by \a len bytes), thereby enlarging the message by \a
+ 273:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * len bytes.
+ 274:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 275:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * The return value is a pointer to the newly added section in the
+ 276:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * beginning of the message.  It can be used to fill/copy data into it.
+ 277:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 278:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline unsigned char *msgb_push(struct msgb *msgb, unsigned int len)
+ 279:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 280:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	if (msgb_headroom(msgb) < (int) len)
+ 281:../../shared/libosmocore/include/osmocom/core/msgb.h **** 		MSGB_ABORT(msgb, "Not enough headroom msgb_push (%u < %u)\n",
+ 282:../../shared/libosmocore/include/osmocom/core/msgb.h **** 			   msgb_headroom(msgb), len);
+ 283:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->data -= len;
+ 284:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len += len;
+ 285:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->data;
+ 286:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 287:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief remove (pull) a header from the front of the message buffer
+ 288:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 289:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] len number of octets to be pulled
+ 290:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns pointer to new start of msgb
+ 291:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 292:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function moves the \a data pointer of the \ref msgb further back
+ 293:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * in the message, thereby shrinking the size of the message by \a len
+ 294:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * bytes.
+ 295:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 296:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline unsigned char *msgb_pull(struct msgb *msgb, unsigned int len)
+ 297:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 298:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len -= len;
+ 299:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->data += len;
+ 300:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 301:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 302:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief remove uint8 from front of message
+ 303:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 304:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns 8bit value taken from end of msgb
+ 305:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 306:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline uint8_t msgb_pull_u8(struct msgb *msgb)
+ 307:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 308:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint8_t *space = msgb_pull(msgb, 1) - 1;
+ 309:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return space[0];
+ 310:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 311:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief remove uint16 from front of message
+ 312:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 313:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns 16bit value taken from end of msgb
+ 314:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 315:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline uint16_t msgb_pull_u16(struct msgb *msgb)
+ 316:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 317:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint8_t *space = msgb_pull(msgb, 2) - 2;
+ 318:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return space[0] << 8 | space[1];
+ 319:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 320:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief remove uint32 from front of message
+ 321:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 322:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns 32bit value taken from end of msgb
+ 323:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 324:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline uint32_t msgb_pull_u32(struct msgb *msgb)
+ 325:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+  17              		.loc 1 325 0
+  18              		.cfi_startproc
+  19              		@ args = 0, pretend = 0, frame = 0
+  20              		@ frame_needed = 0, uses_anonymous_args = 0
+  21              		@ link register save eliminated.
+  22              	.LVL0:
+  23              	.LBB110:
+  24              	.LBB111:
+ 298:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len -= len;
+  25              		.loc 1 298 0
+  26 0000 B633D0E1 		ldrh	r3, [r0, #54]
+  27 0004 043043E2 		sub	r3, r3, #4
+  28 0008 B633C0E1 		strh	r3, [r0, #54]	@ movhi
+ 299:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->data += len;
+  29              		.loc 1 299 0
+  30 000c 403090E5 		ldr	r3, [r0, #64]
+  31 0010 042083E2 		add	r2, r3, #4
+  32 0014 402080E5 		str	r2, [r0, #64]
+  33              	.LVL1:
+  34              	.LBE111:
+  35              	.LBE110:
+ 326:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint8_t *space = msgb_pull(msgb, 4) - 4;
+ 327:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return space[0] << 24 | space[1] << 16 | space[2] << 8 | space[3];
+  36              		.loc 1 327 0
+  37 0018 0010D3E5 		ldrb	r1, [r3, #0]	@ zero_extendqisi2
+  38 001c 0320D3E5 		ldrb	r2, [r3, #3]	@ zero_extendqisi2
+  39 0020 012C82E1 		orr	r2, r2, r1, asl #24
+  40 0024 0110D3E5 		ldrb	r1, [r3, #1]	@ zero_extendqisi2
+  41 0028 0200D3E5 		ldrb	r0, [r3, #2]	@ zero_extendqisi2
+  42              	.LVL2:
+  43 002c 012882E1 		orr	r2, r2, r1, asl #16
+ 328:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+  44              		.loc 1 328 0
+  45 0030 000482E1 		orr	r0, r2, r0, asl #8
+  46 0034 1EFF2FE1 		bx	lr
+  47              		.cfi_endproc
+  48              	.LFE35:
+  50              		.section	.text.sercomm_alloc_msgb,"ax",%progbits
+  51              		.align	2
+  53              	sercomm_alloc_msgb:
+  54              	.LFB40:
+  55              		.file 2 "include/comm/sercomm.h"
+   1:include/comm/sercomm.h **** #ifndef _SERCOMM_H
+   2:include/comm/sercomm.h **** #define _SERCOMM_H
+   3:include/comm/sercomm.h **** 
+   4:include/comm/sercomm.h **** #include <osmocom/core/msgb.h>
+   5:include/comm/sercomm.h **** 
+   6:include/comm/sercomm.h **** #define HDLC_FLAG	0x7E
+   7:include/comm/sercomm.h **** #define HDLC_ESCAPE	0x7D
+   8:include/comm/sercomm.h **** 
+   9:include/comm/sercomm.h **** #define HDLC_C_UI	0x03
+  10:include/comm/sercomm.h **** #define HDLC_C_P_BIT	(1 << 4)
+  11:include/comm/sercomm.h **** #define HDLC_C_F_BIT	(1 << 4)
+  12:include/comm/sercomm.h **** 
+  13:include/comm/sercomm.h **** /* a low sercomm_dlci means high priority.  A high DLCI means low priority */
+  14:include/comm/sercomm.h **** enum sercomm_dlci {
+  15:include/comm/sercomm.h **** 	SC_DLCI_HIGHEST = 0,
+  16:include/comm/sercomm.h **** 	SC_DLCI_DEBUG   = 4,
+  17:include/comm/sercomm.h **** 	SC_DLCI_L1A_L23 = 5,
+  18:include/comm/sercomm.h **** 	SC_DLCI_LOADER  = 9,
+  19:include/comm/sercomm.h **** 	SC_DLCI_CONSOLE = 10,
+  20:include/comm/sercomm.h **** 	SC_DLCI_ECHO    = 128,
+  21:include/comm/sercomm.h **** 	_SC_DLCI_MAX
+  22:include/comm/sercomm.h **** };
+  23:include/comm/sercomm.h **** 
+  24:include/comm/sercomm.h **** #ifndef HOST_BUILD
+  25:include/comm/sercomm.h **** /* helper functions for target */
+  26:include/comm/sercomm.h **** void sercomm_bind_uart(int uart);
+  27:include/comm/sercomm.h **** int sercomm_get_uart(void);
+  28:include/comm/sercomm.h **** #endif
+  29:include/comm/sercomm.h **** 
+  30:include/comm/sercomm.h **** void sercomm_init(void);
+  31:include/comm/sercomm.h **** int sercomm_initialized(void);
+  32:include/comm/sercomm.h **** 
+  33:include/comm/sercomm.h **** /* User Interface: Tx */
+  34:include/comm/sercomm.h **** 
+  35:include/comm/sercomm.h **** /* user interface for transmitting messages for a given DLCI */
+  36:include/comm/sercomm.h **** void sercomm_sendmsg(uint8_t dlci, struct msgb *msg);
+  37:include/comm/sercomm.h **** /* how deep is the Tx queue for a given DLCI */
+  38:include/comm/sercomm.h **** unsigned int sercomm_tx_queue_depth(uint8_t dlci);
+  39:include/comm/sercomm.h **** 
+  40:include/comm/sercomm.h **** /* User Interface: Rx */
+  41:include/comm/sercomm.h **** 
+  42:include/comm/sercomm.h **** /* receiving messages for a given DLCI */
+  43:include/comm/sercomm.h **** typedef void (*dlci_cb_t)(uint8_t dlci, struct msgb *msg);
+  44:include/comm/sercomm.h **** int sercomm_register_rx_cb(uint8_t dlci, dlci_cb_t cb);
+  45:include/comm/sercomm.h **** 
+  46:include/comm/sercomm.h **** /* Driver Interface */
+  47:include/comm/sercomm.h **** 
+  48:include/comm/sercomm.h **** /* fetch one octet of to-be-transmitted serial data. returns 0 if no more data */
+  49:include/comm/sercomm.h **** int sercomm_drv_pull(uint8_t *ch);
+  50:include/comm/sercomm.h **** /* the driver has received one byte, pass it into sercomm layer.
+  51:include/comm/sercomm.h ****    returns 1 in case of success, 0 in case of unrecognized char */
+  52:include/comm/sercomm.h **** int sercomm_drv_rx_char(uint8_t ch);
+  53:include/comm/sercomm.h **** 
+  54:include/comm/sercomm.h **** static inline struct msgb *sercomm_alloc_msgb(unsigned int len)
+  55:include/comm/sercomm.h **** {
+  56              		.loc 2 55 0
+  57              		.cfi_startproc
+  58              		@ args = 0, pretend = 0, frame = 0
+  59              		@ frame_needed = 0, uses_anonymous_args = 0
+  60              	.LVL3:
+  56:include/comm/sercomm.h **** 	return msgb_alloc_headroom(len+4, 4, "sercomm_tx");
+  61              		.loc 2 56 0
+  62 0000 040080E2 		add	r0, r0, #4
+  63              	.LVL4:
+  64              	.LBB112:
+  65              	.LBB113:
+ 329:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 330:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief Increase headroom of empty msgb, reducing the tailroom
+ 331:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msg message buffer
+ 332:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] len amount of extra octets to be reserved as headroom
+ 333:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 334:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function reserves some memory at the beginning of the underlying
+ 335:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * data buffer.  The idea is to reserve space in case further headers
+ 336:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * have to be pushed to the \ref msgb during further processing.
+ 337:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 338:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * Calling this function leads to undefined reusults if it is called on
+ 339:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * a non-empty \ref msgb.
+ 340:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 341:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline void msgb_reserve(struct msgb *msg, int len)
+ 342:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 343:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msg->data += len;
+ 344:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msg->tail += len;
+ 345:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 346:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 347:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief Trim the msgb to a given absolute length
+ 348:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msg message buffer
+ 349:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] len new total length of buffer
+ 350:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns 0 in case of success, negative in case of error
+ 351:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 352:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline int msgb_trim(struct msgb *msg, int len)
+ 353:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 354:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	if (len > msg->data_len)
+ 355:../../shared/libosmocore/include/osmocom/core/msgb.h **** 		return -1;
+ 356:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 357:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msg->len = len;
+ 358:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msg->tail = msg->data + len;
+ 359:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 360:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return 0;
+ 361:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 362:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 363:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief Trim the msgb to a given layer3 length
+ 364:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \pram[in] msg message buffer
+ 365:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] l3len new layer3 length
+ 366:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns 0 in case of success, negative in case of error
+ 367:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 368:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline int msgb_l3trim(struct msgb *msg, int l3len)
+ 369:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 370:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb_trim(msg, (msg->l3h - msg->data) + l3len);
+ 371:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 372:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 373:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief Allocate message buffer with specified headroom
+ 374:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] size size in bytes, including headroom
+ 375:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] headroom headroom in bytes
+ 376:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] name human-readable name
+ 377:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns allocated message buffer with specified headroom
+ 378:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 379:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function is a convenience wrapper around \ref msgb_alloc
+ 380:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * followed by \ref msgb_reserve in order to create a new \ref msgb with
+ 381:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * user-specified amount of headroom.
+ 382:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 383:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline struct msgb *msgb_alloc_headroom(int size, int headroom,
+ 384:../../shared/libosmocore/include/osmocom/core/msgb.h **** 						const char *name)
+ 385:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 386:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	osmo_static_assert(size > headroom, headroom_bigger);
+ 387:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 388:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	struct msgb *msg = msgb_alloc(size, name);
+  66              		.loc 1 388 0
+  67 0004 0008A0E1 		mov	r0, r0, asl #16
+  68              	.LVL5:
+  69              	.LBE113:
+  70              	.LBE112:
+  55:include/comm/sercomm.h **** {
+  71              		.loc 2 55 0
+  72 0008 04E02DE5 		str	lr, [sp, #-4]!
+  73              	.LCFI0:
+  74              		.cfi_def_cfa_offset 4
+  75              	.LBB117:
+  76              	.LBB116:
+  77              		.loc 1 388 0
+  78 000c 2008A0E1 		mov	r0, r0, lsr #16
+  79 0010 24109FE5 		ldr	r1, .L4
+  80              		.cfi_offset 14, -4
+  81 0014 FEFFFFEB 		bl	msgb_alloc
+  82              	.LVL6:
+ 389:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	if (msg)
+  83              		.loc 1 389 0
+  84 0018 000050E3 		cmp	r0, #0
+  85 001c 04F09D04 		ldreq	pc, [sp], #4
+  86              	.LVL7:
+  87              	.LBB114:
+  88              	.LBB115:
+ 343:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msg->data += len;
+  89              		.loc 1 343 0
+  90 0020 403090E5 		ldr	r3, [r0, #64]
+  91 0024 043083E2 		add	r3, r3, #4
+  92 0028 403080E5 		str	r3, [r0, #64]
+ 344:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msg->tail += len;
+  93              		.loc 1 344 0
+  94 002c 3C3090E5 		ldr	r3, [r0, #60]
+  95 0030 043083E2 		add	r3, r3, #4
+  96 0034 3C3080E5 		str	r3, [r0, #60]
+  97              	.LBE115:
+  98              	.LBE114:
+  99              	.LBE116:
+ 100              	.LBE117:
+  57:include/comm/sercomm.h **** }
+ 101              		.loc 2 57 0
+ 102 0038 04F09DE4 		ldr	pc, [sp], #4
+ 103              	.L5:
+ 104              		.align	2
+ 105              	.L4:
+ 106 003c 00000000 		.word	.LC0
+ 107              		.cfi_endproc
+ 108              	.LFE40:
+ 110              		.section	.text.msgb_put,"ax",%progbits
+ 111              		.align	2
+ 113              	msgb_put:
+ 114              	.LFB23:
+ 180:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 115              		.loc 1 180 0
+ 116              		.cfi_startproc
+ 117              		@ args = 0, pretend = 0, frame = 0
+ 118              		@ frame_needed = 0, uses_anonymous_args = 0
+ 119              	.LVL8:
+ 120              	.LBB118:
+ 121              	.LBB119:
+ 152:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return (msgb->head + msgb->data_len) - msgb->tail;
+ 122              		.loc 1 152 0
+ 123 0000 B433D0E1 		ldrh	r3, [r0, #52]
+ 124 0004 382090E5 		ldr	r2, [r0, #56]
+ 125              	.LBE119:
+ 126              	.LBE118:
+ 180:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 127              		.loc 1 180 0
+ 128 0008 70402DE9 		stmfd	sp!, {r4, r5, r6, lr}
+ 129              	.LCFI1:
+ 130              		.cfi_def_cfa_offset 16
+ 181:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *tmp = msgb->tail;
+ 131              		.loc 1 181 0
+ 132 000c 3C6090E5 		ldr	r6, [r0, #60]
+ 133              		.cfi_offset 14, -4
+ 134              		.cfi_offset 6, -8
+ 135              		.cfi_offset 5, -12
+ 136              		.cfi_offset 4, -16
+ 137              	.LVL9:
+ 138              	.LBB121:
+ 139              	.LBB120:
+ 152:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return (msgb->head + msgb->data_len) - msgb->tail;
+ 140              		.loc 1 152 0
+ 141 0010 032082E0 		add	r2, r2, r3
+ 142 0014 022066E0 		rsb	r2, r6, r2
+ 143              	.LBE120:
+ 144              	.LBE121:
+ 182:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	if (msgb_tailroom(msgb) < (int) len)
+ 145              		.loc 1 182 0
+ 146 0018 010052E1 		cmp	r2, r1
+ 180:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 147              		.loc 1 180 0
+ 148 001c 0040A0E1 		mov	r4, r0
+ 149              	.LVL10:
+ 150 0020 0150A0E1 		mov	r5, r1
+ 182:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	if (msgb_tailroom(msgb) < (int) len)
+ 151              		.loc 1 182 0
+ 152              	.LVL11:
+ 183:../../shared/libosmocore/include/osmocom/core/msgb.h **** 		MSGB_ABORT(msgb, "Not enough tailroom msgb_push (%u < %u)\n",
+ 153              		.loc 1 183 0
+ 154 0024 28009FB5 		ldrlt	r0, .L8
+ 155              	.LVL12:
+ 156 0028 0410A0B1 		movlt	r1, r4
+ 157              	.LVL13:
+ 158 002c 0530A0B1 		movlt	r3, r5
+ 159 0030 FEFFFFBB 		bllt	osmo_panic
+ 160              	.LVL14:
+ 161              	.L7:
+ 185:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->tail += len;
+ 162              		.loc 1 185 0
+ 163 0034 3C3094E5 		ldr	r3, [r4, #60]
+ 164 0038 053083E0 		add	r3, r3, r5
+ 165 003c 3C3084E5 		str	r3, [r4, #60]
+ 186:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len += len;
+ 166              		.loc 1 186 0
+ 167 0040 B633D4E1 		ldrh	r3, [r4, #54]
+ 168 0044 035085E0 		add	r5, r5, r3
+ 169              	.LVL15:
+ 170 0048 B653C4E1 		strh	r5, [r4, #54]	@ movhi
+ 188:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 171              		.loc 1 188 0
+ 172 004c 0600A0E1 		mov	r0, r6
+ 173 0050 7080BDE8 		ldmfd	sp!, {r4, r5, r6, pc}
+ 174              	.L9:
+ 175              		.align	2
+ 176              	.L8:
+ 177 0054 0B000000 		.word	.LC1
+ 178              		.cfi_endproc
+ 179              	.LFE23:
+ 181              		.section	.text.msgb_put_u8,"ax",%progbits
+ 182              		.align	2
+ 184              	msgb_put_u8:
+ 185              	.LFB24:
+ 195:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 186              		.loc 1 195 0
+ 187              		.cfi_startproc
+ 188              		@ args = 0, pretend = 0, frame = 0
+ 189              		@ frame_needed = 0, uses_anonymous_args = 0
+ 190              	.LVL16:
+ 191 0000 10402DE9 		stmfd	sp!, {r4, lr}
+ 192              	.LCFI2:
+ 193              		.cfi_def_cfa_offset 8
+ 195:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 194              		.loc 1 195 0
+ 195 0004 0140A0E1 		mov	r4, r1
+ 196              		.cfi_offset 14, -4
+ 197              		.cfi_offset 4, -8
+ 196:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint8_t *space = msgb_put(msgb, 1);
+ 198              		.loc 1 196 0
+ 199 0008 0110A0E3 		mov	r1, #1
+ 200              	.LVL17:
+ 201 000c FEFFFFEB 		bl	msgb_put
+ 202              	.LVL18:
+ 197:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	space[0] = word & 0xFF;
+ 203              		.loc 1 197 0
+ 204 0010 0040C0E5 		strb	r4, [r0, #0]
+ 198:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 205              		.loc 1 198 0
+ 206 0014 1080BDE8 		ldmfd	sp!, {r4, pc}
+ 207              		.cfi_endproc
+ 208              	.LFE24:
+ 210              		.section	.text.loader_send_simple,"ax",%progbits
+ 211              		.align	2
+ 213              	loader_send_simple:
+ 214              	.LFB66:
+ 215              		.file 3 "apps/loader/main.c"
+   1:apps/loader/main.c **** /* boot loader for Calypso phones */
+   2:apps/loader/main.c **** 
+   3:apps/loader/main.c **** /* (C) 2010 by Ingo Albrecht <prom@berlin.ccc.de>
+   4:apps/loader/main.c ****  *
+   5:apps/loader/main.c ****  * All Rights Reserved
+   6:apps/loader/main.c ****  *
+   7:apps/loader/main.c ****  * This program is free software; you can redistribute it and/or modify
+   8:apps/loader/main.c ****  * it under the terms of the GNU General Public License as published by
+   9:apps/loader/main.c ****  * the Free Software Foundation; either version 2 of the License, or
+  10:apps/loader/main.c ****  * (at your option) any later version.
+  11:apps/loader/main.c ****  *
+  12:apps/loader/main.c ****  * This program is distributed in the hope that it will be useful,
+  13:apps/loader/main.c ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  14:apps/loader/main.c ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  15:apps/loader/main.c ****  * GNU General Public License for more details.
+  16:apps/loader/main.c ****  *
+  17:apps/loader/main.c ****  * You should have received a copy of the GNU General Public License along
+  18:apps/loader/main.c ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  19:apps/loader/main.c ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  20:apps/loader/main.c ****  *
+  21:apps/loader/main.c ****  */
+  22:apps/loader/main.c **** 
+  23:apps/loader/main.c **** #include <stdint.h>
+  24:apps/loader/main.c **** #include <stdio.h>
+  25:apps/loader/main.c **** #include <string.h>
+  26:apps/loader/main.c **** 
+  27:apps/loader/main.c **** #include <debug.h>
+  28:apps/loader/main.c **** #include <memory.h>
+  29:apps/loader/main.c **** #include <delay.h>
+  30:apps/loader/main.c **** #include <rffe.h>
+  31:apps/loader/main.c **** #include <keypad.h>
+  32:apps/loader/main.c **** #include <board.h>
+  33:apps/loader/main.c **** #include <console.h>
+  34:apps/loader/main.c **** #include <manifest.h>
+  35:apps/loader/main.c **** 
+  36:apps/loader/main.c **** #include <osmocom/core/crc16.h>
+  37:apps/loader/main.c **** 
+  38:apps/loader/main.c **** #include <abb/twl3025.h>
+  39:apps/loader/main.c **** #include <rf/trf6151.h>
+  40:apps/loader/main.c **** 
+  41:apps/loader/main.c **** #include <comm/sercomm.h>
+  42:apps/loader/main.c **** 
+  43:apps/loader/main.c **** #include <calypso/clock.h>
+  44:apps/loader/main.c **** #include <calypso/tpu.h>
+  45:apps/loader/main.c **** #include <calypso/tsp.h>
+  46:apps/loader/main.c **** #include <calypso/irq.h>
+  47:apps/loader/main.c **** #include <calypso/misc.h>
+  48:apps/loader/main.c **** #include <calypso/backlight.h>
+  49:apps/loader/main.c **** #include <uart.h>
+  50:apps/loader/main.c **** #include <calypso/timer.h>
+  51:apps/loader/main.c **** #include <fb/framebuffer.h>
+  52:apps/loader/main.c **** 
+  53:apps/loader/main.c **** #include <flash/cfi_flash.h>
+  54:apps/loader/main.c **** 
+  55:apps/loader/main.c **** #include "protocol.h"
+  56:apps/loader/main.c **** 
+  57:apps/loader/main.c **** /* Main Program */
+  58:apps/loader/main.c **** const char *hr =
+  59:apps/loader/main.c ****     "======================================================================\n";
+  60:apps/loader/main.c **** 
+  61:apps/loader/main.c **** static void key_handler(enum key_codes code, enum key_states state);
+  62:apps/loader/main.c **** static void cmd_handler(uint8_t dlci, struct msgb *msg);
+  63:apps/loader/main.c **** 
+  64:apps/loader/main.c **** int flag = 0;
+  65:apps/loader/main.c **** static int sercomm_uart;
+  66:apps/loader/main.c **** 
+  67:apps/loader/main.c **** static void flush_uart(void)
+  68:apps/loader/main.c **** {
+  69:apps/loader/main.c **** 	unsigned i;
+  70:apps/loader/main.c **** 	for (i = 0; i < 500; i++) {
+  71:apps/loader/main.c **** 		uart_poll(sercomm_uart);
+  72:apps/loader/main.c **** 		delay_ms(1);
+  73:apps/loader/main.c **** 	}
+  74:apps/loader/main.c **** }
+  75:apps/loader/main.c **** 
+  76:apps/loader/main.c **** static void device_poweroff(void)
+  77:apps/loader/main.c **** {
+  78:apps/loader/main.c **** 	flush_uart();
+  79:apps/loader/main.c **** 	twl3025_power_off();
+  80:apps/loader/main.c **** }
+  81:apps/loader/main.c **** 
+  82:apps/loader/main.c **** static void device_reset(void)
+  83:apps/loader/main.c **** {
+  84:apps/loader/main.c **** 	flush_uart();
+  85:apps/loader/main.c **** 	wdog_reset();
+  86:apps/loader/main.c **** }
+  87:apps/loader/main.c **** 
+  88:apps/loader/main.c **** static void device_enter_loader(unsigned char bootrom)
+  89:apps/loader/main.c **** {
+  90:apps/loader/main.c **** 	flush_uart();
+  91:apps/loader/main.c **** 
+  92:apps/loader/main.c **** 	calypso_bootrom(bootrom);
+  93:apps/loader/main.c **** 	void (*entry) (void) = (void (*)(void))0;
+  94:apps/loader/main.c **** 	entry();
+  95:apps/loader/main.c **** }
+  96:apps/loader/main.c **** 
+  97:apps/loader/main.c **** static void device_jump(void *entry)
+  98:apps/loader/main.c **** {
+  99:apps/loader/main.c **** 	flush_uart();
+ 100:apps/loader/main.c **** 
+ 101:apps/loader/main.c **** 	void (*f) (void) = (void (*)(void))entry;
+ 102:apps/loader/main.c **** 	f();
+ 103:apps/loader/main.c **** }
+ 104:apps/loader/main.c **** 
+ 105:apps/loader/main.c **** static void loader_send_simple(struct msgb *msg, uint8_t dlci, uint8_t command)
+ 106:apps/loader/main.c **** {
+ 216              		.loc 3 106 0
+ 217              		.cfi_startproc
+ 218              		@ args = 0, pretend = 0, frame = 0
+ 219              		@ frame_needed = 0, uses_anonymous_args = 0
+ 220              	.LVL19:
+ 221 0000 30402DE9 		stmfd	sp!, {r4, r5, lr}
+ 222              	.LCFI3:
+ 223              		.cfi_def_cfa_offset 12
+ 224              		.loc 3 106 0
+ 225 0004 0150A0E1 		mov	r5, r1
+ 226              		.cfi_offset 14, -4
+ 227              		.cfi_offset 5, -8
+ 228              		.cfi_offset 4, -12
+ 107:apps/loader/main.c **** 	msgb_put_u8(msg, command);
+ 229              		.loc 3 107 0
+ 230 0008 0210A0E1 		mov	r1, r2
+ 231              	.LVL20:
+ 106:apps/loader/main.c **** {
+ 232              		.loc 3 106 0
+ 233 000c 0040A0E1 		mov	r4, r0
+ 234              		.loc 3 107 0
+ 235 0010 FEFFFFEB 		bl	msgb_put_u8
+ 236              	.LVL21:
+ 108:apps/loader/main.c **** 	sercomm_sendmsg(dlci, msg);
+ 237              		.loc 3 108 0
+ 238 0014 0500A0E1 		mov	r0, r5
+ 239 0018 0410A0E1 		mov	r1, r4
+ 109:apps/loader/main.c **** }
+ 240              		.loc 3 109 0
+ 241 001c 3040BDE8 		ldmfd	sp!, {r4, r5, lr}
+ 108:apps/loader/main.c **** 	sercomm_sendmsg(dlci, msg);
+ 242              		.loc 3 108 0
+ 243 0020 FEFFFFEA 		b	sercomm_sendmsg
+ 244              		.cfi_endproc
+ 245              	.LFE66:
+ 247              		.section	.text.msgb_put_u32,"ax",%progbits
+ 248              		.align	2
+ 250              	msgb_put_u32:
+ 251              	.LFB26:
+ 216:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 252              		.loc 1 216 0
+ 253              		.cfi_startproc
+ 254              		@ args = 0, pretend = 0, frame = 0
+ 255              		@ frame_needed = 0, uses_anonymous_args = 0
+ 256              	.LVL22:
+ 257 0000 10402DE9 		stmfd	sp!, {r4, lr}
+ 258              	.LCFI4:
+ 259              		.cfi_def_cfa_offset 8
+ 216:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 260              		.loc 1 216 0
+ 261 0004 0140A0E1 		mov	r4, r1
+ 262              		.cfi_offset 14, -4
+ 263              		.cfi_offset 4, -8
+ 217:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint8_t *space = msgb_put(msgb, 4);
+ 264              		.loc 1 217 0
+ 265 0008 0410A0E3 		mov	r1, #4
+ 266              	.LVL23:
+ 267 000c FEFFFFEB 		bl	msgb_put
+ 268              	.LVL24:
+ 218:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	space[0] = word >> 24 & 0xFF;
+ 269              		.loc 1 218 0
+ 270 0010 243CA0E1 		mov	r3, r4, lsr #24
+ 271 0014 0030C0E5 		strb	r3, [r0, #0]
+ 219:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	space[1] = word >> 16 & 0xFF;
+ 272              		.loc 1 219 0
+ 273 0018 2438A0E1 		mov	r3, r4, lsr #16
+ 274 001c 0130C0E5 		strb	r3, [r0, #1]
+ 220:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	space[2] = word >> 8 & 0xFF;
+ 275              		.loc 1 220 0
+ 276 0020 2434A0E1 		mov	r3, r4, lsr #8
+ 277 0024 0230C0E5 		strb	r3, [r0, #2]
+ 221:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	space[3] = word & 0xFF;
+ 278              		.loc 1 221 0
+ 279 0028 0340C0E5 		strb	r4, [r0, #3]
+ 222:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 280              		.loc 1 222 0
+ 281 002c 1080BDE8 		ldmfd	sp!, {r4, pc}
+ 282              		.cfi_endproc
+ 283              	.LFE26:
+ 285              		.section	.text.msgb_put_u16,"ax",%progbits
+ 286              		.align	2
+ 288              	msgb_put_u16:
+ 289              	.LFB25:
+ 205:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 290              		.loc 1 205 0
+ 291              		.cfi_startproc
+ 292              		@ args = 0, pretend = 0, frame = 0
+ 293              		@ frame_needed = 0, uses_anonymous_args = 0
+ 294              	.LVL25:
+ 295 0000 30402DE9 		stmfd	sp!, {r4, r5, lr}
+ 296              	.LCFI5:
+ 297              		.cfi_def_cfa_offset 12
+ 205:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 298              		.loc 1 205 0
+ 299 0004 0148A0E1 		mov	r4, r1, asl #16
+ 300              		.cfi_offset 14, -4
+ 301              		.cfi_offset 5, -8
+ 302              		.cfi_offset 4, -12
+ 206:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint8_t *space = msgb_put(msgb, 2);
+ 303              		.loc 1 206 0
+ 304 0008 0210A0E3 		mov	r1, #2
+ 305              	.LVL26:
+ 306 000c FEFFFFEB 		bl	msgb_put
+ 307              	.LVL27:
+ 205:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 308              		.loc 1 205 0
+ 309 0010 2458A0E1 		mov	r5, r4, lsr #16
+ 207:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	space[0] = word >> 8 & 0xFF;
+ 310              		.loc 1 207 0
+ 311 0014 244CA0E1 		mov	r4, r4, lsr #24
+ 312 0018 0040C0E5 		strb	r4, [r0, #0]
+ 208:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	space[1] = word & 0xFF;
+ 313              		.loc 1 208 0
+ 314 001c 0150C0E5 		strb	r5, [r0, #1]
+ 209:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 315              		.loc 1 209 0
+ 316 0020 3080BDE8 		ldmfd	sp!, {r4, r5, pc}
+ 317              		.cfi_endproc
+ 318              	.LFE25:
+ 320              		.section	.text.flush_uart,"ax",%progbits
+ 321              		.align	2
+ 323              	flush_uart:
+ 324              	.LFB61:
+  68:apps/loader/main.c **** {
+ 325              		.loc 3 68 0
+ 326              		.cfi_startproc
+ 327              		@ args = 0, pretend = 0, frame = 0
+ 328              		@ frame_needed = 0, uses_anonymous_args = 0
+ 329              	.LVL28:
+ 330 0000 30402DE9 		stmfd	sp!, {r4, r5, lr}
+ 331              	.LCFI6:
+ 332              		.cfi_def_cfa_offset 12
+  71:apps/loader/main.c **** 		uart_poll(sercomm_uart);
+ 333              		.loc 3 71 0
+ 334 0004 20509FE5 		ldr	r5, .L17
+ 335              		.cfi_offset 14, -4
+ 336              		.cfi_offset 5, -8
+ 337              		.cfi_offset 4, -12
+  70:apps/loader/main.c **** 	for (i = 0; i < 500; i++) {
+ 338              		.loc 3 70 0
+ 339 0008 0040A0E3 		mov	r4, #0
+ 340              	.LVL29:
+ 341              	.L15:
+  71:apps/loader/main.c **** 		uart_poll(sercomm_uart);
+ 342              		.loc 3 71 0 discriminator 2
+ 343 000c 0000D5E5 		ldrb	r0, [r5, #0]	@ zero_extendqisi2
+ 344 0010 FEFFFFEB 		bl	uart_poll
+  70:apps/loader/main.c **** 	for (i = 0; i < 500; i++) {
+ 345              		.loc 3 70 0 discriminator 2
+ 346 0014 014084E2 		add	r4, r4, #1
+  72:apps/loader/main.c **** 		delay_ms(1);
+ 347              		.loc 3 72 0 discriminator 2
+ 348 0018 0100A0E3 		mov	r0, #1
+ 349 001c FEFFFFEB 		bl	delay_ms
+ 350              	.LVL30:
+  70:apps/loader/main.c **** 	for (i = 0; i < 500; i++) {
+ 351              		.loc 3 70 0 discriminator 2
+ 352 0020 7D0F54E3 		cmp	r4, #500
+ 353 0024 F8FFFF1A 		bne	.L15
+  74:apps/loader/main.c **** }
+ 354              		.loc 3 74 0
+ 355 0028 3080BDE8 		ldmfd	sp!, {r4, r5, pc}
+ 356              	.L18:
+ 357              		.align	2
+ 358              	.L17:
+ 359 002c 00000000 		.word	.LANCHOR0
+ 360              		.cfi_endproc
+ 361              	.LFE61:
+ 363              		.section	.text.key_handler,"ax",%progbits
+ 364              		.align	2
+ 366              	key_handler:
+ 367              	.LFB70:
+ 110:apps/loader/main.c **** 
+ 111:apps/loader/main.c **** extern unsigned char _start;
+ 112:apps/loader/main.c **** 
+ 113:apps/loader/main.c **** static void loader_send_init(uint8_t dlci)
+ 114:apps/loader/main.c **** {
+ 115:apps/loader/main.c **** 	struct msgb *msg = sercomm_alloc_msgb(9);
+ 116:apps/loader/main.c **** 	msgb_put_u8(msg, LOADER_INIT);
+ 117:apps/loader/main.c **** 	msgb_put_u32(msg, 0);
+ 118:apps/loader/main.c **** 	msgb_put_u32(msg, &_start);
+ 119:apps/loader/main.c **** 	sercomm_sendmsg(dlci, msg);
+ 120:apps/loader/main.c **** }
+ 121:apps/loader/main.c **** 
+ 122:apps/loader/main.c **** flash_t the_flash;
+ 123:apps/loader/main.c **** 
+ 124:apps/loader/main.c **** extern void putchar_asm(uint32_t c);
+ 125:apps/loader/main.c **** 
+ 126:apps/loader/main.c **** static const uint8_t phone_ack[] = { 0x1b, 0xf6, 0x02, 0x00, 0x41, 0x03, 0x42 };
+ 127:apps/loader/main.c **** 
+ 128:apps/loader/main.c **** int main(void)
+ 129:apps/loader/main.c **** {
+ 130:apps/loader/main.c **** 	/* Simulate a compal loader saying "ACK" */
+ 131:apps/loader/main.c **** 	int i = 0;
+ 132:apps/loader/main.c **** 	for (i = 0; i < sizeof(phone_ack); i++) {
+ 133:apps/loader/main.c **** 		putchar_asm(phone_ack[i]);
+ 134:apps/loader/main.c **** 	}
+ 135:apps/loader/main.c **** 
+ 136:apps/loader/main.c **** 	/* initialize board without interrupts */
+ 137:apps/loader/main.c **** 	board_init(0);
+ 138:apps/loader/main.c **** 	sercomm_uart = sercomm_get_uart();
+ 139:apps/loader/main.c **** 
+ 140:apps/loader/main.c **** 	/* Say hi */
+ 141:apps/loader/main.c **** 	puts("\n\nOsmocomBB Loader (revision " GIT_REVISION ")\n");
+ 142:apps/loader/main.c **** 	puts(hr);
+ 143:apps/loader/main.c **** 
+ 144:apps/loader/main.c **** 	fb_clear();
+ 145:apps/loader/main.c **** 
+ 146:apps/loader/main.c **** 	fb_setfg(FB_COLOR_BLACK);
+ 147:apps/loader/main.c **** 	fb_setbg(FB_COLOR_WHITE);
+ 148:apps/loader/main.c **** 	fb_setfont(FB_FONT_HELVB14);
+ 149:apps/loader/main.c **** 
+ 150:apps/loader/main.c **** 	fb_gotoxy(2,20);
+ 151:apps/loader/main.c **** 	fb_putstr("loader",framebuffer->width-4);
+ 152:apps/loader/main.c **** 
+ 153:apps/loader/main.c **** 	fb_setfg(FB_COLOR_RED);
+ 154:apps/loader/main.c **** 	fb_setbg(FB_COLOR_BLUE);
+ 155:apps/loader/main.c **** 
+ 156:apps/loader/main.c **** 	fb_gotoxy(2,25);
+ 157:apps/loader/main.c **** 	fb_boxto(framebuffer->width-3,38);
+ 158:apps/loader/main.c **** 
+ 159:apps/loader/main.c **** 	fb_setfg(FB_COLOR_WHITE);
+ 160:apps/loader/main.c **** 	fb_setfont(FB_FONT_HELVR08);
+ 161:apps/loader/main.c **** 	fb_gotoxy(8,33);
+ 162:apps/loader/main.c **** 	fb_putstr("osmocom-bb",framebuffer->width-4);
+ 163:apps/loader/main.c **** 
+ 164:apps/loader/main.c **** 	fb_flush();
+ 165:apps/loader/main.c **** 
+ 166:apps/loader/main.c **** 	/* Identify environment */
+ 167:apps/loader/main.c **** 	printf("Running on %s in environment %s\n", manifest_board,
+ 168:apps/loader/main.c **** 	       manifest_environment);
+ 169:apps/loader/main.c **** 
+ 170:apps/loader/main.c **** 	/* Initialize flash driver */
+ 171:apps/loader/main.c **** 	if (flash_init(&the_flash, 0)) {
+ 172:apps/loader/main.c **** 		puts("Failed to initialize flash!\n");
+ 173:apps/loader/main.c **** 	} else {
+ 174:apps/loader/main.c **** 		printf("Found flash of %d bytes at 0x%x with %d regions\n",
+ 175:apps/loader/main.c **** 		       the_flash.f_size, the_flash.f_base,
+ 176:apps/loader/main.c **** 		       the_flash.f_nregions);
+ 177:apps/loader/main.c **** 
+ 178:apps/loader/main.c **** 		int i;
+ 179:apps/loader/main.c **** 		for (i = 0; i < the_flash.f_nregions; i++) {
+ 180:apps/loader/main.c **** 			printf("  Region %d of %d pages with %d bytes each.\n",
+ 181:apps/loader/main.c **** 			       i,
+ 182:apps/loader/main.c **** 			       the_flash.f_regions[i].fr_bnum,
+ 183:apps/loader/main.c **** 			       the_flash.f_regions[i].fr_bsize);
+ 184:apps/loader/main.c **** 		}
+ 185:apps/loader/main.c **** 
+ 186:apps/loader/main.c **** 	}
+ 187:apps/loader/main.c **** 
+ 188:apps/loader/main.c **** 	/* Set up a key handler for powering off */
+ 189:apps/loader/main.c **** 	keypad_set_handler(&key_handler);
+ 190:apps/loader/main.c **** 
+ 191:apps/loader/main.c **** 	/* Set up loader communications */
+ 192:apps/loader/main.c **** 	sercomm_register_rx_cb(SC_DLCI_LOADER, &cmd_handler);
+ 193:apps/loader/main.c **** 
+ 194:apps/loader/main.c **** 	/* Notify any running osmoload about our startup */
+ 195:apps/loader/main.c **** 	loader_send_init(SC_DLCI_LOADER);
+ 196:apps/loader/main.c **** 
+ 197:apps/loader/main.c **** 	/* Wait for events */
+ 198:apps/loader/main.c **** 	while (1) {
+ 199:apps/loader/main.c **** 		keypad_poll();
+ 200:apps/loader/main.c **** 		uart_poll(sercomm_uart);
+ 201:apps/loader/main.c **** 	}
+ 202:apps/loader/main.c **** 
+ 203:apps/loader/main.c **** 	/* NOT REACHED */
+ 204:apps/loader/main.c **** 
+ 205:apps/loader/main.c **** 	twl3025_power_off();
+ 206:apps/loader/main.c **** }
+ 207:apps/loader/main.c **** 
+ 208:apps/loader/main.c **** static void cmd_handler(uint8_t dlci, struct msgb *msg)
+ 209:apps/loader/main.c **** {
+ 210:apps/loader/main.c **** 	if (msg->data_len < 1) {
+ 211:apps/loader/main.c **** 		return;
+ 212:apps/loader/main.c **** 	}
+ 213:apps/loader/main.c **** 
+ 214:apps/loader/main.c **** 	uint8_t command = msgb_pull_u8(msg);
+ 215:apps/loader/main.c **** 
+ 216:apps/loader/main.c **** 	int res;
+ 217:apps/loader/main.c **** 
+ 218:apps/loader/main.c **** 	flash_lock_t lock;
+ 219:apps/loader/main.c **** 
+ 220:apps/loader/main.c **** 	void *data;
+ 221:apps/loader/main.c **** 
+ 222:apps/loader/main.c **** 	uint8_t chip;
+ 223:apps/loader/main.c **** 	uint8_t nbytes;
+ 224:apps/loader/main.c **** 	uint16_t crc, mycrc;
+ 225:apps/loader/main.c **** 	uint32_t address;
+ 226:apps/loader/main.c **** 
+ 227:apps/loader/main.c **** 	struct msgb *reply = sercomm_alloc_msgb(256);	// XXX
+ 228:apps/loader/main.c **** 
+ 229:apps/loader/main.c **** 	if (!reply) {
+ 230:apps/loader/main.c **** 		printf("Failed to allocate reply buffer!\n");
+ 231:apps/loader/main.c **** 		goto out;
+ 232:apps/loader/main.c **** 	}
+ 233:apps/loader/main.c **** 
+ 234:apps/loader/main.c **** 	switch (command) {
+ 235:apps/loader/main.c **** 
+ 236:apps/loader/main.c **** 	case LOADER_PING:
+ 237:apps/loader/main.c **** 		loader_send_simple(reply, dlci, LOADER_PING);
+ 238:apps/loader/main.c **** 		break;
+ 239:apps/loader/main.c **** 
+ 240:apps/loader/main.c **** 	case LOADER_RESET:
+ 241:apps/loader/main.c **** 		loader_send_simple(reply, dlci, LOADER_RESET);
+ 242:apps/loader/main.c **** 		device_reset();
+ 243:apps/loader/main.c **** 		break;
+ 244:apps/loader/main.c **** 
+ 245:apps/loader/main.c **** 	case LOADER_POWEROFF:
+ 246:apps/loader/main.c **** 		loader_send_simple(reply, dlci, LOADER_POWEROFF);
+ 247:apps/loader/main.c **** 		device_poweroff();
+ 248:apps/loader/main.c **** 		break;
+ 249:apps/loader/main.c **** 
+ 250:apps/loader/main.c **** 	case LOADER_ENTER_ROM_LOADER:
+ 251:apps/loader/main.c **** 		loader_send_simple(reply, dlci, LOADER_ENTER_ROM_LOADER);
+ 252:apps/loader/main.c **** 		device_enter_loader(1);
+ 253:apps/loader/main.c **** 		break;
+ 254:apps/loader/main.c **** 
+ 255:apps/loader/main.c **** 	case LOADER_ENTER_FLASH_LOADER:
+ 256:apps/loader/main.c **** 		loader_send_simple(reply, dlci, LOADER_ENTER_FLASH_LOADER);
+ 257:apps/loader/main.c **** 		device_enter_loader(0);
+ 258:apps/loader/main.c **** 		break;
+ 259:apps/loader/main.c **** 
+ 260:apps/loader/main.c **** 	case LOADER_MEM_READ:
+ 261:apps/loader/main.c **** 
+ 262:apps/loader/main.c **** 		nbytes = msgb_pull_u8(msg);
+ 263:apps/loader/main.c **** 		address = msgb_pull_u32(msg);
+ 264:apps/loader/main.c **** 
+ 265:apps/loader/main.c **** 		crc = osmo_crc16(0, (void *)address, nbytes);
+ 266:apps/loader/main.c **** 
+ 267:apps/loader/main.c **** 		msgb_put_u8(reply, LOADER_MEM_READ);
+ 268:apps/loader/main.c **** 		msgb_put_u8(reply, nbytes);
+ 269:apps/loader/main.c **** 		msgb_put_u16(reply, crc);
+ 270:apps/loader/main.c **** 		msgb_put_u32(reply, address);
+ 271:apps/loader/main.c **** 
+ 272:apps/loader/main.c **** 		memcpy(msgb_put(reply, nbytes), (void *)address, nbytes);
+ 273:apps/loader/main.c **** 
+ 274:apps/loader/main.c **** 		sercomm_sendmsg(dlci, reply);
+ 275:apps/loader/main.c **** 
+ 276:apps/loader/main.c **** 		break;
+ 277:apps/loader/main.c **** 
+ 278:apps/loader/main.c **** 	case LOADER_MEM_WRITE:
+ 279:apps/loader/main.c **** 
+ 280:apps/loader/main.c **** 		nbytes = msgb_pull_u8(msg);
+ 281:apps/loader/main.c **** 		crc = msgb_pull_u16(msg);
+ 282:apps/loader/main.c **** 		address = msgb_pull_u32(msg);
+ 283:apps/loader/main.c **** 
+ 284:apps/loader/main.c **** 		data = msgb_pull(msg, nbytes) - nbytes;
+ 285:apps/loader/main.c **** 
+ 286:apps/loader/main.c **** 		mycrc = osmo_crc16(0, data, nbytes);
+ 287:apps/loader/main.c **** 
+ 288:apps/loader/main.c **** 		if (mycrc == crc) {
+ 289:apps/loader/main.c **** 			memcpy((void *)address, data, nbytes);
+ 290:apps/loader/main.c **** 		}
+ 291:apps/loader/main.c **** 
+ 292:apps/loader/main.c **** 		msgb_put_u8(reply, LOADER_MEM_WRITE);
+ 293:apps/loader/main.c **** 		msgb_put_u8(reply, nbytes);
+ 294:apps/loader/main.c **** 		msgb_put_u16(reply, mycrc);
+ 295:apps/loader/main.c **** 		msgb_put_u32(reply, address);
+ 296:apps/loader/main.c **** 
+ 297:apps/loader/main.c **** 		sercomm_sendmsg(dlci, reply);
+ 298:apps/loader/main.c **** 
+ 299:apps/loader/main.c **** 		break;
+ 300:apps/loader/main.c **** 
+ 301:apps/loader/main.c **** 	case LOADER_JUMP:
+ 302:apps/loader/main.c **** 
+ 303:apps/loader/main.c **** 		address = msgb_pull_u32(msg);
+ 304:apps/loader/main.c **** 
+ 305:apps/loader/main.c **** 		msgb_put_u8(reply, LOADER_JUMP);
+ 306:apps/loader/main.c **** 		msgb_put_u32(reply, address);
+ 307:apps/loader/main.c **** 
+ 308:apps/loader/main.c **** 		sercomm_sendmsg(dlci, reply);
+ 309:apps/loader/main.c **** 
+ 310:apps/loader/main.c **** 		device_jump((void *)address);
+ 311:apps/loader/main.c **** 
+ 312:apps/loader/main.c **** 		break;
+ 313:apps/loader/main.c **** 
+ 314:apps/loader/main.c **** 	case LOADER_FLASH_INFO:
+ 315:apps/loader/main.c **** 
+ 316:apps/loader/main.c **** 		msgb_put_u8(reply, LOADER_FLASH_INFO);
+ 317:apps/loader/main.c **** 		msgb_put_u8(reply, 1);	// nchips
+ 318:apps/loader/main.c **** 
+ 319:apps/loader/main.c **** 		// chip 1
+ 320:apps/loader/main.c **** 		msgb_put_u32(reply, the_flash.f_base);
+ 321:apps/loader/main.c **** 		msgb_put_u32(reply, the_flash.f_size);
+ 322:apps/loader/main.c **** 		msgb_put_u8(reply, the_flash.f_nregions);
+ 323:apps/loader/main.c **** 
+ 324:apps/loader/main.c **** 		int i;
+ 325:apps/loader/main.c **** 		for (i = 0; i < the_flash.f_nregions; i++) {
+ 326:apps/loader/main.c **** 			msgb_put_u32(reply, the_flash.f_regions[i].fr_bnum);
+ 327:apps/loader/main.c **** 			msgb_put_u32(reply, the_flash.f_regions[i].fr_bsize);
+ 328:apps/loader/main.c **** 		}
+ 329:apps/loader/main.c **** 
+ 330:apps/loader/main.c **** 		sercomm_sendmsg(dlci, reply);
+ 331:apps/loader/main.c **** 
+ 332:apps/loader/main.c **** 		break;
+ 333:apps/loader/main.c **** 
+ 334:apps/loader/main.c **** 	case LOADER_FLASH_ERASE:
+ 335:apps/loader/main.c **** 	case LOADER_FLASH_UNLOCK:
+ 336:apps/loader/main.c **** 	case LOADER_FLASH_LOCK:
+ 337:apps/loader/main.c **** 	case LOADER_FLASH_LOCKDOWN:
+ 338:apps/loader/main.c **** 
+ 339:apps/loader/main.c **** 		chip = msgb_pull_u8(msg);
+ 340:apps/loader/main.c **** 		address = msgb_pull_u32(msg);
+ 341:apps/loader/main.c **** 
+ 342:apps/loader/main.c **** 		if (command == LOADER_FLASH_ERASE) {
+ 343:apps/loader/main.c **** 			res = flash_block_erase(&the_flash, address);
+ 344:apps/loader/main.c **** 		}
+ 345:apps/loader/main.c **** 		if (command == LOADER_FLASH_UNLOCK) {
+ 346:apps/loader/main.c **** 			res = flash_block_unlock(&the_flash, address);
+ 347:apps/loader/main.c **** 		}
+ 348:apps/loader/main.c **** 		if (command == LOADER_FLASH_LOCK) {
+ 349:apps/loader/main.c **** 			res = flash_block_lock(&the_flash, address);
+ 350:apps/loader/main.c **** 		}
+ 351:apps/loader/main.c **** 		if (command == LOADER_FLASH_LOCKDOWN) {
+ 352:apps/loader/main.c **** 			res = flash_block_lockdown(&the_flash, address);
+ 353:apps/loader/main.c **** 		}
+ 354:apps/loader/main.c **** 
+ 355:apps/loader/main.c **** 		msgb_put_u8(reply, command);
+ 356:apps/loader/main.c **** 		msgb_put_u8(reply, chip);
+ 357:apps/loader/main.c **** 		msgb_put_u32(reply, address);
+ 358:apps/loader/main.c **** 		msgb_put_u32(reply, (res != 0));
+ 359:apps/loader/main.c **** 
+ 360:apps/loader/main.c **** 		sercomm_sendmsg(dlci, reply);
+ 361:apps/loader/main.c **** 
+ 362:apps/loader/main.c **** 		break;
+ 363:apps/loader/main.c **** 
+ 364:apps/loader/main.c **** 	case LOADER_FLASH_GETLOCK:
+ 365:apps/loader/main.c **** 
+ 366:apps/loader/main.c **** 		chip = msgb_pull_u8(msg);
+ 367:apps/loader/main.c **** 		address = msgb_pull_u32(msg);
+ 368:apps/loader/main.c **** 
+ 369:apps/loader/main.c **** 		lock = flash_block_getlock(&the_flash, address);
+ 370:apps/loader/main.c **** 
+ 371:apps/loader/main.c **** 		msgb_put_u8(reply, command);
+ 372:apps/loader/main.c **** 		msgb_put_u8(reply, chip);
+ 373:apps/loader/main.c **** 		msgb_put_u32(reply, address);
+ 374:apps/loader/main.c **** 
+ 375:apps/loader/main.c **** 		switch (lock) {
+ 376:apps/loader/main.c **** 		case FLASH_UNLOCKED:
+ 377:apps/loader/main.c **** 			msgb_put_u32(reply, LOADER_FLASH_UNLOCKED);
+ 378:apps/loader/main.c **** 			break;
+ 379:apps/loader/main.c **** 		case FLASH_LOCKED:
+ 380:apps/loader/main.c **** 			msgb_put_u32(reply, LOADER_FLASH_LOCKED);
+ 381:apps/loader/main.c **** 			break;
+ 382:apps/loader/main.c **** 		case FLASH_LOCKED_DOWN:
+ 383:apps/loader/main.c **** 			msgb_put_u32(reply, LOADER_FLASH_LOCKED_DOWN);
+ 384:apps/loader/main.c **** 			break;
+ 385:apps/loader/main.c **** 		default:
+ 386:apps/loader/main.c **** 			msgb_put_u32(reply, 0xFFFFFFFF);
+ 387:apps/loader/main.c **** 			break;
+ 388:apps/loader/main.c **** 		}
+ 389:apps/loader/main.c **** 
+ 390:apps/loader/main.c **** 		sercomm_sendmsg(dlci, reply);
+ 391:apps/loader/main.c **** 
+ 392:apps/loader/main.c **** 		break;
+ 393:apps/loader/main.c **** 
+ 394:apps/loader/main.c **** 	case LOADER_FLASH_PROGRAM:
+ 395:apps/loader/main.c **** 
+ 396:apps/loader/main.c **** 		nbytes = msgb_pull_u8(msg);
+ 397:apps/loader/main.c **** 		crc = msgb_pull_u16(msg);
+ 398:apps/loader/main.c **** 		msgb_pull_u8(msg);	// XXX align
+ 399:apps/loader/main.c **** 		chip = msgb_pull_u8(msg);
+ 400:apps/loader/main.c **** 		address = msgb_pull_u32(msg);
+ 401:apps/loader/main.c **** 
+ 402:apps/loader/main.c **** 		data = msgb_pull(msg, nbytes) - nbytes;
+ 403:apps/loader/main.c **** 
+ 404:apps/loader/main.c **** 		mycrc = osmo_crc16(0, data, nbytes);
+ 405:apps/loader/main.c **** 
+ 406:apps/loader/main.c **** 		if (mycrc == crc) {
+ 407:apps/loader/main.c **** 			res = flash_program(&the_flash, address, data, nbytes);
+ 408:apps/loader/main.c **** 		}
+ 409:apps/loader/main.c **** 
+ 410:apps/loader/main.c **** 		msgb_put_u8(reply, LOADER_FLASH_PROGRAM);
+ 411:apps/loader/main.c **** 		msgb_put_u8(reply, nbytes);
+ 412:apps/loader/main.c **** 		msgb_put_u16(reply, mycrc);
+ 413:apps/loader/main.c **** 		msgb_put_u8(reply, 0);	// XXX align
+ 414:apps/loader/main.c **** 		msgb_put_u8(reply, chip);
+ 415:apps/loader/main.c **** 		msgb_put_u32(reply, address);
+ 416:apps/loader/main.c **** 
+ 417:apps/loader/main.c **** 		msgb_put_u32(reply, (uint32_t) res);	// XXX
+ 418:apps/loader/main.c **** 
+ 419:apps/loader/main.c **** 		sercomm_sendmsg(dlci, reply);
+ 420:apps/loader/main.c **** 
+ 421:apps/loader/main.c **** 		break;
+ 422:apps/loader/main.c **** 
+ 423:apps/loader/main.c **** 	default:
+ 424:apps/loader/main.c **** 		printf("unknown command %d\n", command);
+ 425:apps/loader/main.c **** 
+ 426:apps/loader/main.c **** 		msgb_free(reply);
+ 427:apps/loader/main.c **** 
+ 428:apps/loader/main.c **** 		break;
+ 429:apps/loader/main.c **** 	}
+ 430:apps/loader/main.c **** 
+ 431:apps/loader/main.c ****  out:
+ 432:apps/loader/main.c **** 
+ 433:apps/loader/main.c **** 	msgb_free(msg);
+ 434:apps/loader/main.c **** }
+ 435:apps/loader/main.c **** 
+ 436:apps/loader/main.c **** static void key_handler(enum key_codes code, enum key_states state)
+ 437:apps/loader/main.c **** {
+ 368              		.loc 3 437 0
+ 369              		.cfi_startproc
+ 370              		@ args = 0, pretend = 0, frame = 0
+ 371              		@ frame_needed = 0, uses_anonymous_args = 0
+ 372              	.LVL31:
+ 438:apps/loader/main.c **** 	if (state != PRESSED)
+ 373              		.loc 3 438 0
+ 374 0000 000051E3 		cmp	r1, #0
+ 437:apps/loader/main.c **** {
+ 375              		.loc 3 437 0
+ 376 0004 04E02DE5 		str	lr, [sp, #-4]!
+ 377              	.LCFI7:
+ 378              		.cfi_def_cfa_offset 4
+ 379              		.loc 3 438 0
+ 380 0008 04F09D14 		ldrne	pc, [sp], #4
+ 381              		.cfi_offset 14, -4
+ 439:apps/loader/main.c **** 		return;
+ 440:apps/loader/main.c **** 
+ 441:apps/loader/main.c **** 	switch (code) {
+ 382              		.loc 3 441 0
+ 383 000c 130050E3 		cmp	r0, #19
+ 384 0010 0600000A 		beq	.L21
+ 385 0014 140050E3 		cmp	r0, #20
+ 386 0018 04F09D14 		ldrne	pc, [sp], #4
+ 442:apps/loader/main.c **** 	case KEY_POWER:
+ 443:apps/loader/main.c **** 		puts("Powering off due to keypress.\n");
+ 387              		.loc 3 443 0
+ 388 001c 20009FE5 		ldr	r0, .L23
+ 389              	.LVL32:
+ 390 0020 FEFFFFEB 		bl	puts
+ 391              	.LVL33:
+ 392              	.LBB122:
+ 393              	.LBB123:
+  78:apps/loader/main.c **** 	flush_uart();
+ 394              		.loc 3 78 0
+ 395 0024 FEFFFFEB 		bl	flush_uart
+ 396              	.LBE123:
+ 397              	.LBE122:
+ 444:apps/loader/main.c **** 		device_poweroff();
+ 445:apps/loader/main.c **** 		break;
+ 446:apps/loader/main.c **** 	case KEY_OK:
+ 447:apps/loader/main.c **** 		puts("Resetting due to keypress.\n");
+ 448:apps/loader/main.c **** 		device_reset();
+ 449:apps/loader/main.c **** 		break;
+ 450:apps/loader/main.c **** 	default:
+ 451:apps/loader/main.c **** 		break;
+ 452:apps/loader/main.c **** 	}
+ 453:apps/loader/main.c **** }
+ 398              		.loc 3 453 0
+ 399 0028 04E09DE4 		ldr	lr, [sp], #4
+ 400              	.LBB125:
+ 401              	.LBB124:
+  79:apps/loader/main.c **** 	twl3025_power_off();
+ 402              		.loc 3 79 0
+ 403 002c FEFFFFEA 		b	twl3025_power_off
+ 404              	.LVL34:
+ 405              	.L21:
+ 406              	.LBE124:
+ 407              	.LBE125:
+ 447:apps/loader/main.c **** 		puts("Resetting due to keypress.\n");
+ 408              		.loc 3 447 0
+ 409 0030 10009FE5 		ldr	r0, .L23+4
+ 410              	.LVL35:
+ 411 0034 FEFFFFEB 		bl	puts
+ 412              	.LVL36:
+ 413              	.LBB126:
+ 414              	.LBB127:
+  84:apps/loader/main.c **** 	flush_uart();
+ 415              		.loc 3 84 0
+ 416 0038 FEFFFFEB 		bl	flush_uart
+ 417              	.LBE127:
+ 418              	.LBE126:
+ 419              		.loc 3 453 0
+ 420 003c 04E09DE4 		ldr	lr, [sp], #4
+ 421              	.LBB129:
+ 422              	.LBB128:
+  85:apps/loader/main.c **** 	wdog_reset();
+ 423              		.loc 3 85 0
+ 424 0040 FEFFFFEA 		b	wdog_reset
+ 425              	.L24:
+ 426              		.align	2
+ 427              	.L23:
+ 428 0044 3E000000 		.word	.LC2
+ 429 0048 5D000000 		.word	.LC3
+ 430              	.LBE128:
+ 431              	.LBE129:
+ 432              		.cfi_endproc
+ 433              	.LFE70:
+ 435              		.section	.text.cmd_handler,"ax",%progbits
+ 436              		.align	2
+ 438              	cmd_handler:
+ 439              	.LFB69:
+ 209:apps/loader/main.c **** {
+ 440              		.loc 3 209 0
+ 441              		.cfi_startproc
+ 442              		@ args = 0, pretend = 0, frame = 8
+ 443              		@ frame_needed = 0, uses_anonymous_args = 0
+ 444              	.LVL37:
+ 210:apps/loader/main.c **** 	if (msg->data_len < 1) {
+ 445              		.loc 3 210 0
+ 446 0000 B433D1E1 		ldrh	r3, [r1, #52]
+ 447 0004 000053E3 		cmp	r3, #0
+ 209:apps/loader/main.c **** {
+ 448              		.loc 3 209 0
+ 449 0008 F34F2DE9 		stmfd	sp!, {r0, r1, r4, r5, r6, r7, r8, r9, sl, fp, lr}
+ 450              	.LCFI8:
+ 451              		.cfi_def_cfa_offset 44
+ 209:apps/loader/main.c **** {
+ 452              		.loc 3 209 0
+ 453 000c 0150A0E1 		mov	r5, r1
+ 454              		.cfi_offset 14, -4
+ 455              		.cfi_offset 11, -8
+ 456              		.cfi_offset 10, -12
+ 457              		.cfi_offset 9, -16
+ 458              		.cfi_offset 8, -20
+ 459              		.cfi_offset 7, -24
+ 460              		.cfi_offset 6, -28
+ 461              		.cfi_offset 5, -32
+ 462              		.cfi_offset 4, -36
+ 463              		.cfi_offset 1, -40
+ 464              		.cfi_offset 0, -44
+ 465 0010 FF6000E2 		and	r6, r0, #255
+ 210:apps/loader/main.c **** 	if (msg->data_len < 1) {
+ 466              		.loc 3 210 0
+ 467 0014 6B01000A 		beq	.L25
+ 468              	.LVL38:
+ 469              	.LBB130:
+ 470              	.LBB131:
+ 471              	.LBB132:
+ 472              	.LBB133:
+ 298:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len -= len;
+ 473              		.loc 1 298 0
+ 474 0018 B633D1E1 		ldrh	r3, [r1, #54]
+ 475 001c 013043E2 		sub	r3, r3, #1
+ 476 0020 B633C1E1 		strh	r3, [r1, #54]	@ movhi
+ 299:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->data += len;
+ 477              		.loc 1 299 0
+ 478 0024 403091E5 		ldr	r3, [r1, #64]
+ 479 0028 012083E2 		add	r2, r3, #1
+ 480 002c 402081E5 		str	r2, [r1, #64]
+ 481              	.LVL39:
+ 482              	.LBE133:
+ 483              	.LBE132:
+ 484              	.LBE131:
+ 485              	.LBE130:
+ 227:apps/loader/main.c **** 	struct msgb *reply = sercomm_alloc_msgb(256);	// XXX
+ 486              		.loc 3 227 0
+ 487 0030 010CA0E3 		mov	r0, #256
+ 488              	.LVL40:
+ 489              	.LBB135:
+ 490              	.LBB134:
+ 309:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return space[0];
+ 491              		.loc 1 309 0
+ 492 0034 0070D3E5 		ldrb	r7, [r3, #0]	@ zero_extendqisi2
+ 493              	.LBE134:
+ 494              	.LBE135:
+ 227:apps/loader/main.c **** 	struct msgb *reply = sercomm_alloc_msgb(256);	// XXX
+ 495              		.loc 3 227 0
+ 496 0038 FEFFFFEB 		bl	sercomm_alloc_msgb
+ 497              	.LVL41:
+ 229:apps/loader/main.c **** 	if (!reply) {
+ 498              		.loc 3 229 0
+ 499 003c 004050E2 		subs	r4, r0, #0
+ 500 0040 0200001A 		bne	.L27
+ 230:apps/loader/main.c **** 		printf("Failed to allocate reply buffer!\n");
+ 501              		.loc 3 230 0
+ 502 0044 84059FE5 		ldr	r0, .L62
+ 503              	.LVL42:
+ 504 0048 FEFFFFEB 		bl	puts
+ 231:apps/loader/main.c **** 		goto out;
+ 505              		.loc 3 231 0
+ 506 004c 590100EA 		b	.L28
+ 507              	.L27:
+ 234:apps/loader/main.c **** 	switch (command) {
+ 508              		.loc 3 234 0
+ 509 0050 013047E2 		sub	r3, r7, #1
+ 510 0054 0E0053E3 		cmp	r3, #14
+ 511 0058 03F19F97 		ldrls	pc, [pc, r3, asl #2]
+ 512 005c 500100EA 		b	.L29
+ 513              	.L42:
+ 514 0060 9C000000 		.word	.L30
+ 515 0064 B0000000 		.word	.L31
+ 516 0068 CC000000 		.word	.L32
+ 517 006c 78020000 		.word	.L33
+ 518 0070 E8000000 		.word	.L34
+ 519 0074 04010000 		.word	.L35
+ 520 0078 30010000 		.word	.L36
+ 521 007c B8010000 		.word	.L37
+ 522 0080 B8020000 		.word	.L38
+ 523 0084 34030000 		.word	.L39
+ 524 0088 34030000 		.word	.L39
+ 525 008c 34030000 		.word	.L39
+ 526 0090 34030000 		.word	.L39
+ 527 0094 F0030000 		.word	.L40
+ 528 0098 7C040000 		.word	.L41
+ 529              	.L30:
+ 530              	.LBB136:
+ 237:apps/loader/main.c **** 		loader_send_simple(reply, dlci, LOADER_PING);
+ 531              		.loc 3 237 0
+ 532 009c 0400A0E1 		mov	r0, r4
+ 533 00a0 0610A0E1 		mov	r1, r6
+ 534 00a4 0120A0E3 		mov	r2, #1
+ 535 00a8 FEFFFFEB 		bl	loader_send_simple
+ 238:apps/loader/main.c **** 		break;
+ 536              		.loc 3 238 0
+ 537 00ac 410100EA 		b	.L28
+ 538              	.L31:
+ 241:apps/loader/main.c **** 		loader_send_simple(reply, dlci, LOADER_RESET);
+ 539              		.loc 3 241 0
+ 540 00b0 0400A0E1 		mov	r0, r4
+ 541 00b4 0610A0E1 		mov	r1, r6
+ 542 00b8 0220A0E3 		mov	r2, #2
+ 543 00bc FEFFFFEB 		bl	loader_send_simple
+ 544              	.LBB137:
+ 545              	.LBB138:
+  84:apps/loader/main.c **** 	flush_uart();
+ 546              		.loc 3 84 0
+ 547 00c0 FEFFFFEB 		bl	flush_uart
+  85:apps/loader/main.c **** 	wdog_reset();
+ 548              		.loc 3 85 0
+ 549 00c4 FEFFFFEB 		bl	wdog_reset
+ 550 00c8 3A0100EA 		b	.L28
+ 551              	.L32:
+ 552              	.LBE138:
+ 553              	.LBE137:
+ 246:apps/loader/main.c **** 		loader_send_simple(reply, dlci, LOADER_POWEROFF);
+ 554              		.loc 3 246 0
+ 555 00cc 0400A0E1 		mov	r0, r4
+ 556 00d0 0610A0E1 		mov	r1, r6
+ 557 00d4 0320A0E3 		mov	r2, #3
+ 558 00d8 FEFFFFEB 		bl	loader_send_simple
+ 559              	.LBB139:
+ 560              	.LBB140:
+  78:apps/loader/main.c **** 	flush_uart();
+ 561              		.loc 3 78 0
+ 562 00dc FEFFFFEB 		bl	flush_uart
+  79:apps/loader/main.c **** 	twl3025_power_off();
+ 563              		.loc 3 79 0
+ 564 00e0 FEFFFFEB 		bl	twl3025_power_off
+ 565 00e4 330100EA 		b	.L28
+ 566              	.L34:
+ 567              	.LBE140:
+ 568              	.LBE139:
+ 251:apps/loader/main.c **** 		loader_send_simple(reply, dlci, LOADER_ENTER_ROM_LOADER);
+ 569              		.loc 3 251 0
+ 570 00e8 0400A0E1 		mov	r0, r4
+ 571 00ec 0610A0E1 		mov	r1, r6
+ 572 00f0 0520A0E3 		mov	r2, #5
+ 573 00f4 FEFFFFEB 		bl	loader_send_simple
+ 574              	.LVL43:
+ 575              	.LBB141:
+ 576              	.LBB142:
+  90:apps/loader/main.c **** 	flush_uart();
+ 577              		.loc 3 90 0
+ 578 00f8 FEFFFFEB 		bl	flush_uart
+  92:apps/loader/main.c **** 	calypso_bootrom(bootrom);
+ 579              		.loc 3 92 0
+ 580 00fc 0100A0E3 		mov	r0, #1
+ 581 0100 050000EA 		b	.L59
+ 582              	.LVL44:
+ 583              	.L35:
+ 584              	.LBE142:
+ 585              	.LBE141:
+ 256:apps/loader/main.c **** 		loader_send_simple(reply, dlci, LOADER_ENTER_FLASH_LOADER);
+ 586              		.loc 3 256 0
+ 587 0104 0400A0E1 		mov	r0, r4
+ 588 0108 0610A0E1 		mov	r1, r6
+ 589 010c 0620A0E3 		mov	r2, #6
+ 590 0110 FEFFFFEB 		bl	loader_send_simple
+ 591              	.LVL45:
+ 592              	.LBB143:
+ 593              	.LBB144:
+  90:apps/loader/main.c **** 	flush_uart();
+ 594              		.loc 3 90 0
+ 595 0114 FEFFFFEB 		bl	flush_uart
+  92:apps/loader/main.c **** 	calypso_bootrom(bootrom);
+ 596              		.loc 3 92 0
+ 597 0118 0000A0E3 		mov	r0, #0
+ 598              	.LVL46:
+ 599              	.L59:
+ 600 011c FEFFFFEB 		bl	calypso_bootrom
+ 601              	.LVL47:
+  94:apps/loader/main.c **** 	entry();
+ 602              		.loc 3 94 0
+ 603 0120 0030A0E3 		mov	r3, #0
+ 604 0124 0FE0A0E1 		mov	lr, pc
+ 605 0128 13FF2FE1 		bx	r3
+ 606 012c 210100EA 		b	.L28
+ 607              	.LVL48:
+ 608              	.L36:
+ 609              	.LBE144:
+ 610              	.LBE143:
+ 611              	.LBB145:
+ 612              	.LBB146:
+ 613              	.LBB147:
+ 614              	.LBB148:
+ 298:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len -= len;
+ 615              		.loc 1 298 0
+ 616 0130 B633D5E1 		ldrh	r3, [r5, #54]
+ 617 0134 013043E2 		sub	r3, r3, #1
+ 618 0138 B633C5E1 		strh	r3, [r5, #54]	@ movhi
+ 299:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->data += len;
+ 619              		.loc 1 299 0
+ 620 013c 403095E5 		ldr	r3, [r5, #64]
+ 621 0140 012083E2 		add	r2, r3, #1
+ 622 0144 402085E5 		str	r2, [r5, #64]
+ 623              	.LVL49:
+ 624              	.LBE148:
+ 625              	.LBE147:
+ 626              	.LBE146:
+ 627              	.LBE145:
+ 263:apps/loader/main.c **** 		address = msgb_pull_u32(msg);
+ 628              		.loc 3 263 0
+ 629 0148 0500A0E1 		mov	r0, r5
+ 630              	.LBB150:
+ 631              	.LBB149:
+ 309:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return space[0];
+ 632              		.loc 1 309 0
+ 633 014c 0070D3E5 		ldrb	r7, [r3, #0]	@ zero_extendqisi2
+ 634              	.LBE149:
+ 635              	.LBE150:
+ 263:apps/loader/main.c **** 		address = msgb_pull_u32(msg);
+ 636              		.loc 3 263 0
+ 637 0150 FEFFFFEB 		bl	msgb_pull_u32
+ 638              	.LVL50:
+ 639 0154 0080A0E1 		mov	r8, r0
+ 640              	.LVL51:
+ 265:apps/loader/main.c **** 		crc = osmo_crc16(0, (void *)address, nbytes);
+ 641              		.loc 3 265 0
+ 642 0158 0720A0E1 		mov	r2, r7
+ 643 015c 0810A0E1 		mov	r1, r8
+ 644 0160 0000A0E3 		mov	r0, #0
+ 645              	.LVL52:
+ 646 0164 FEFFFFEB 		bl	osmo_crc16
+ 647              	.LVL53:
+ 267:apps/loader/main.c **** 		msgb_put_u8(reply, LOADER_MEM_READ);
+ 648              		.loc 3 267 0
+ 649 0168 0710A0E3 		mov	r1, #7
+ 265:apps/loader/main.c **** 		crc = osmo_crc16(0, (void *)address, nbytes);
+ 650              		.loc 3 265 0
+ 651 016c 00A0A0E1 		mov	sl, r0
+ 652              	.LVL54:
+ 267:apps/loader/main.c **** 		msgb_put_u8(reply, LOADER_MEM_READ);
+ 653              		.loc 3 267 0
+ 654 0170 0400A0E1 		mov	r0, r4
+ 655              	.LVL55:
+ 656 0174 FEFFFFEB 		bl	msgb_put_u8
+ 268:apps/loader/main.c **** 		msgb_put_u8(reply, nbytes);
+ 657              		.loc 3 268 0
+ 658 0178 0400A0E1 		mov	r0, r4
+ 659 017c 0710A0E1 		mov	r1, r7
+ 660 0180 FEFFFFEB 		bl	msgb_put_u8
+ 269:apps/loader/main.c **** 		msgb_put_u16(reply, crc);
+ 661              		.loc 3 269 0
+ 662 0184 0400A0E1 		mov	r0, r4
+ 663 0188 0A10A0E1 		mov	r1, sl
+ 664 018c FEFFFFEB 		bl	msgb_put_u16
+ 270:apps/loader/main.c **** 		msgb_put_u32(reply, address);
+ 665              		.loc 3 270 0
+ 666 0190 0400A0E1 		mov	r0, r4
+ 667 0194 0810A0E1 		mov	r1, r8
+ 668 0198 FEFFFFEB 		bl	msgb_put_u32
+ 272:apps/loader/main.c **** 		memcpy(msgb_put(reply, nbytes), (void *)address, nbytes);
+ 669              		.loc 3 272 0
+ 670 019c 0710A0E1 		mov	r1, r7
+ 671 01a0 0400A0E1 		mov	r0, r4
+ 672 01a4 FEFFFFEB 		bl	msgb_put
+ 673 01a8 0810A0E1 		mov	r1, r8
+ 674 01ac 0720A0E1 		mov	r2, r7
+ 675 01b0 FEFFFFEB 		bl	memcpy
+ 676 01b4 F60000EA 		b	.L60
+ 677              	.LVL56:
+ 678              	.L37:
+ 679              	.LBB151:
+ 680              	.LBB152:
+ 681              	.LBB153:
+ 682              	.LBB154:
+ 298:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len -= len;
+ 683              		.loc 1 298 0
+ 684 01b8 B603D5E1 		ldrh	r0, [r5, #54]
+ 299:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->data += len;
+ 685              		.loc 1 299 0
+ 686 01bc 403095E5 		ldr	r3, [r5, #64]
+ 298:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len -= len;
+ 687              		.loc 1 298 0
+ 688 01c0 010040E2 		sub	r0, r0, #1
+ 689 01c4 0008A0E1 		mov	r0, r0, asl #16
+ 299:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->data += len;
+ 690              		.loc 1 299 0
+ 691 01c8 011083E2 		add	r1, r3, #1
+ 298:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len -= len;
+ 692              		.loc 1 298 0
+ 693 01cc 2008A0E1 		mov	r0, r0, lsr #16
+ 694 01d0 B603C5E1 		strh	r0, [r5, #54]	@ movhi
+ 299:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->data += len;
+ 695              		.loc 1 299 0
+ 696 01d4 401085E5 		str	r1, [r5, #64]
+ 697              	.LVL57:
+ 698              	.LBE154:
+ 699              	.LBE153:
+ 309:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return space[0];
+ 700              		.loc 1 309 0
+ 701 01d8 0320A0E1 		mov	r2, r3
+ 702 01dc 0370D2E4 		ldrb	r7, [r2], #3	@ zero_extendqisi2
+ 703              	.LVL58:
+ 704              	.LBE152:
+ 705              	.LBE151:
+ 706              	.LBB155:
+ 707              	.LBB156:
+ 708              	.LBB157:
+ 709              	.LBB158:
+ 298:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len -= len;
+ 710              		.loc 1 298 0
+ 711 01e0 020040E2 		sub	r0, r0, #2
+ 712 01e4 B603C5E1 		strh	r0, [r5, #54]	@ movhi
+ 299:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->data += len;
+ 713              		.loc 1 299 0
+ 714 01e8 402085E5 		str	r2, [r5, #64]
+ 715              	.LVL59:
+ 716              	.LBE158:
+ 717              	.LBE157:
+ 318:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return space[0] << 8 | space[1];
+ 718              		.loc 1 318 0
+ 719 01ec 01B0D3E5 		ldrb	fp, [r3, #1]	@ zero_extendqisi2
+ 720 01f0 0130D1E5 		ldrb	r3, [r1, #1]	@ zero_extendqisi2
+ 721              	.LBE156:
+ 722              	.LBE155:
+ 282:apps/loader/main.c **** 		address = msgb_pull_u32(msg);
+ 723              		.loc 3 282 0
+ 724 01f4 0500A0E1 		mov	r0, r5
+ 725              	.LBB160:
+ 726              	.LBB159:
+ 318:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return space[0] << 8 | space[1];
+ 727              		.loc 1 318 0
+ 728 01f8 0BB483E1 		orr	fp, r3, fp, asl #8
+ 729              	.LBE159:
+ 730              	.LBE160:
+ 282:apps/loader/main.c **** 		address = msgb_pull_u32(msg);
+ 731              		.loc 3 282 0
+ 732 01fc FEFFFFEB 		bl	msgb_pull_u32
+ 733              	.LVL60:
+ 734              	.LBB161:
+ 735              	.LBB162:
+ 299:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->data += len;
+ 736              		.loc 1 299 0
+ 737 0200 40A095E5 		ldr	sl, [r5, #64]
+ 298:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len -= len;
+ 738              		.loc 1 298 0
+ 739 0204 B633D5E1 		ldrh	r3, [r5, #54]
+ 299:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->data += len;
+ 740              		.loc 1 299 0
+ 741 0208 07A08AE0 		add	sl, sl, r7
+ 298:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len -= len;
+ 742              		.loc 1 298 0
+ 743 020c 033067E0 		rsb	r3, r7, r3
+ 299:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->data += len;
+ 744              		.loc 1 299 0
+ 745 0210 40A085E5 		str	sl, [r5, #64]
+ 746              	.LBE162:
+ 747              	.LBE161:
+ 284:apps/loader/main.c **** 		data = msgb_pull(msg, nbytes) - nbytes;
+ 748              		.loc 3 284 0
+ 749 0214 0AA067E0 		rsb	sl, r7, sl
+ 282:apps/loader/main.c **** 		address = msgb_pull_u32(msg);
+ 750              		.loc 3 282 0
+ 751 0218 0090A0E1 		mov	r9, r0
+ 752              	.LVL61:
+ 753              	.LBB164:
+ 754              	.LBB163:
+ 298:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len -= len;
+ 755              		.loc 1 298 0
+ 756 021c B633C5E1 		strh	r3, [r5, #54]	@ movhi
+ 757              	.LBE163:
+ 758              	.LBE164:
+ 286:apps/loader/main.c **** 		mycrc = osmo_crc16(0, data, nbytes);
+ 759              		.loc 3 286 0
+ 760 0220 0000A0E3 		mov	r0, #0
+ 761              	.LVL62:
+ 762 0224 0A10A0E1 		mov	r1, sl
+ 763 0228 0720A0E1 		mov	r2, r7
+ 764 022c FEFFFFEB 		bl	osmo_crc16
+ 288:apps/loader/main.c **** 		if (mycrc == crc) {
+ 765              		.loc 3 288 0
+ 766 0230 0B0050E1 		cmp	r0, fp
+ 286:apps/loader/main.c **** 		mycrc = osmo_crc16(0, data, nbytes);
+ 767              		.loc 3 286 0
+ 768 0234 0080A0E1 		mov	r8, r0
+ 769              	.LVL63:
+ 288:apps/loader/main.c **** 		if (mycrc == crc) {
+ 770              		.loc 3 288 0
+ 289:apps/loader/main.c **** 			memcpy((void *)address, data, nbytes);
+ 771              		.loc 3 289 0
+ 772 0238 0900A001 		moveq	r0, r9
+ 773              	.LVL64:
+ 774 023c 0A10A001 		moveq	r1, sl
+ 775 0240 0720A001 		moveq	r2, r7
+ 776 0244 FEFFFF0B 		bleq	memcpy
+ 777              	.L43:
+ 292:apps/loader/main.c **** 		msgb_put_u8(reply, LOADER_MEM_WRITE);
+ 778              		.loc 3 292 0
+ 779 0248 0400A0E1 		mov	r0, r4
+ 780 024c 0810A0E3 		mov	r1, #8
+ 781 0250 FEFFFFEB 		bl	msgb_put_u8
+ 293:apps/loader/main.c **** 		msgb_put_u8(reply, nbytes);
+ 782              		.loc 3 293 0
+ 783 0254 0400A0E1 		mov	r0, r4
+ 784 0258 0710A0E1 		mov	r1, r7
+ 785 025c FEFFFFEB 		bl	msgb_put_u8
+ 294:apps/loader/main.c **** 		msgb_put_u16(reply, mycrc);
+ 786              		.loc 3 294 0
+ 787 0260 0400A0E1 		mov	r0, r4
+ 788 0264 0810A0E1 		mov	r1, r8
+ 789 0268 FEFFFFEB 		bl	msgb_put_u16
+ 295:apps/loader/main.c **** 		msgb_put_u32(reply, address);
+ 790              		.loc 3 295 0
+ 791 026c 0400A0E1 		mov	r0, r4
+ 792 0270 0910A0E1 		mov	r1, r9
+ 793 0274 C50000EA 		b	.L61
+ 794              	.LVL65:
+ 795              	.L33:
+ 303:apps/loader/main.c **** 		address = msgb_pull_u32(msg);
+ 796              		.loc 3 303 0
+ 797 0278 0500A0E1 		mov	r0, r5
+ 798 027c FEFFFFEB 		bl	msgb_pull_u32
+ 305:apps/loader/main.c **** 		msgb_put_u8(reply, LOADER_JUMP);
+ 799              		.loc 3 305 0
+ 800 0280 0410A0E3 		mov	r1, #4
+ 303:apps/loader/main.c **** 		address = msgb_pull_u32(msg);
+ 801              		.loc 3 303 0
+ 802 0284 0070A0E1 		mov	r7, r0
+ 803              	.LVL66:
+ 305:apps/loader/main.c **** 		msgb_put_u8(reply, LOADER_JUMP);
+ 804              		.loc 3 305 0
+ 805 0288 0400A0E1 		mov	r0, r4
+ 806              	.LVL67:
+ 807 028c FEFFFFEB 		bl	msgb_put_u8
+ 306:apps/loader/main.c **** 		msgb_put_u32(reply, address);
+ 808              		.loc 3 306 0
+ 809 0290 0400A0E1 		mov	r0, r4
+ 810 0294 0710A0E1 		mov	r1, r7
+ 811 0298 FEFFFFEB 		bl	msgb_put_u32
+ 308:apps/loader/main.c **** 		sercomm_sendmsg(dlci, reply);
+ 812              		.loc 3 308 0
+ 813 029c 0600A0E1 		mov	r0, r6
+ 814 02a0 0410A0E1 		mov	r1, r4
+ 815 02a4 FEFFFFEB 		bl	sercomm_sendmsg
+ 816              	.LVL68:
+ 817              	.LBB165:
+ 818              	.LBB166:
+  99:apps/loader/main.c **** 	flush_uart();
+ 819              		.loc 3 99 0
+ 820 02a8 FEFFFFEB 		bl	flush_uart
+ 821              	.LVL69:
+ 102:apps/loader/main.c **** 	f();
+ 822              		.loc 3 102 0
+ 823 02ac 0FE0A0E1 		mov	lr, pc
+ 824 02b0 17FF2FE1 		bx	r7
+ 825 02b4 BF0000EA 		b	.L28
+ 826              	.LVL70:
+ 827              	.L38:
+ 828              	.LBE166:
+ 829              	.LBE165:
+ 320:apps/loader/main.c **** 		msgb_put_u32(reply, the_flash.f_base);
+ 830              		.loc 3 320 0
+ 831 02b8 14739FE5 		ldr	r7, .L62+4
+ 316:apps/loader/main.c **** 		msgb_put_u8(reply, LOADER_FLASH_INFO);
+ 832              		.loc 3 316 0
+ 833 02bc 0400A0E1 		mov	r0, r4
+ 834 02c0 0910A0E3 		mov	r1, #9
+ 835 02c4 FEFFFFEB 		bl	msgb_put_u8
+ 317:apps/loader/main.c **** 		msgb_put_u8(reply, 1);	// nchips
+ 836              		.loc 3 317 0
+ 837 02c8 0400A0E1 		mov	r0, r4
+ 838 02cc 0110A0E3 		mov	r1, #1
+ 839 02d0 FEFFFFEB 		bl	msgb_put_u8
+ 320:apps/loader/main.c **** 		msgb_put_u32(reply, the_flash.f_base);
+ 840              		.loc 3 320 0
+ 841 02d4 0400A0E1 		mov	r0, r4
+ 842 02d8 001097E5 		ldr	r1, [r7, #0]
+ 843 02dc FEFFFFEB 		bl	msgb_put_u32
+ 321:apps/loader/main.c **** 		msgb_put_u32(reply, the_flash.f_size);
+ 844              		.loc 3 321 0
+ 845 02e0 0400A0E1 		mov	r0, r4
+ 846 02e4 041097E5 		ldr	r1, [r7, #4]
+ 847 02e8 FEFFFFEB 		bl	msgb_put_u32
+ 322:apps/loader/main.c **** 		msgb_put_u8(reply, the_flash.f_nregions);
+ 848              		.loc 3 322 0
+ 849 02ec 0400A0E1 		mov	r0, r4
+ 850 02f0 0810D7E5 		ldrb	r1, [r7, #8]	@ zero_extendqisi2
+ 851 02f4 FEFFFFEB 		bl	msgb_put_u8
+ 852              	.LVL71:
+ 853 02f8 108087E2 		add	r8, r7, #16
+ 325:apps/loader/main.c **** 		for (i = 0; i < the_flash.f_nregions; i++) {
+ 854              		.loc 3 325 0
+ 855 02fc 00A0A0E3 		mov	sl, #0
+ 856 0300 060000EA 		b	.L44
+ 857              	.LVL72:
+ 858              	.L45:
+ 326:apps/loader/main.c **** 			msgb_put_u32(reply, the_flash.f_regions[i].fr_bnum);
+ 859              		.loc 3 326 0 discriminator 2
+ 860 0304 0400A0E1 		mov	r0, r4
+ 861 0308 0C1018E5 		ldr	r1, [r8, #-12]
+ 862 030c FEFFFFEB 		bl	msgb_put_u32
+ 327:apps/loader/main.c **** 			msgb_put_u32(reply, the_flash.f_regions[i].fr_bsize);
+ 863              		.loc 3 327 0 discriminator 2
+ 864 0310 0400A0E1 		mov	r0, r4
+ 865 0314 081018E5 		ldr	r1, [r8, #-8]
+ 866 0318 FEFFFFEB 		bl	msgb_put_u32
+ 325:apps/loader/main.c **** 		for (i = 0; i < the_flash.f_nregions; i++) {
+ 867              		.loc 3 325 0 discriminator 2
+ 868 031c 01A08AE2 		add	sl, sl, #1
+ 869              	.LVL73:
+ 870              	.L44:
+ 325:apps/loader/main.c **** 		for (i = 0; i < the_flash.f_nregions; i++) {
+ 871              		.loc 3 325 0 is_stmt 0 discriminator 1
+ 872 0320 083097E5 		ldr	r3, [r7, #8]
+ 873 0324 03005AE1 		cmp	sl, r3
+ 874 0328 0C8088E2 		add	r8, r8, #12
+ 875 032c F4FFFF3A 		bcc	.L45
+ 876 0330 970000EA 		b	.L60
+ 877              	.LVL74:
+ 878              	.L39:
+ 879              	.LBB167:
+ 880              	.LBB168:
+ 881              	.LBB169:
+ 882              	.LBB170:
+ 298:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len -= len;
+ 883              		.loc 1 298 0 is_stmt 1
+ 884 0334 B633D5E1 		ldrh	r3, [r5, #54]
+ 885 0338 013043E2 		sub	r3, r3, #1
+ 886 033c B633C5E1 		strh	r3, [r5, #54]	@ movhi
+ 299:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->data += len;
+ 887              		.loc 1 299 0
+ 888 0340 403095E5 		ldr	r3, [r5, #64]
+ 889 0344 012083E2 		add	r2, r3, #1
+ 890 0348 402085E5 		str	r2, [r5, #64]
+ 891              	.LVL75:
+ 892              	.LBE170:
+ 893              	.LBE169:
+ 894              	.LBE168:
+ 895              	.LBE167:
+ 340:apps/loader/main.c **** 		address = msgb_pull_u32(msg);
+ 896              		.loc 3 340 0
+ 897 034c 0500A0E1 		mov	r0, r5
+ 898              	.LBB172:
+ 899              	.LBB171:
+ 309:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return space[0];
+ 900              		.loc 1 309 0
+ 901 0350 0090D3E5 		ldrb	r9, [r3, #0]	@ zero_extendqisi2
+ 902              	.LBE171:
+ 903              	.LBE172:
+ 340:apps/loader/main.c **** 		address = msgb_pull_u32(msg);
+ 904              		.loc 3 340 0
+ 905 0354 FEFFFFEB 		bl	msgb_pull_u32
+ 906              	.LVL76:
+ 342:apps/loader/main.c **** 		if (command == LOADER_FLASH_ERASE) {
+ 907              		.loc 3 342 0
+ 908 0358 0A0057E3 		cmp	r7, #10
+ 340:apps/loader/main.c **** 		address = msgb_pull_u32(msg);
+ 909              		.loc 3 340 0
+ 910 035c 00A0A0E1 		mov	sl, r0
+ 911              	.LVL77:
+ 342:apps/loader/main.c **** 		if (command == LOADER_FLASH_ERASE) {
+ 912              		.loc 3 342 0
+ 913 0360 0300001A 		bne	.L46
+ 343:apps/loader/main.c **** 			res = flash_block_erase(&the_flash, address);
+ 914              		.loc 3 343 0
+ 915 0364 0A10A0E1 		mov	r1, sl
+ 916 0368 64029FE5 		ldr	r0, .L62+4
+ 917              	.LVL78:
+ 918 036c FEFFFFEB 		bl	flash_block_erase
+ 919              	.LVL79:
+ 920 0370 100000EA 		b	.L57
+ 921              	.L46:
+ 345:apps/loader/main.c **** 		if (command == LOADER_FLASH_UNLOCK) {
+ 922              		.loc 3 345 0
+ 923 0374 0B0057E3 		cmp	r7, #11
+ 924 0378 0300001A 		bne	.L48
+ 346:apps/loader/main.c **** 			res = flash_block_unlock(&the_flash, address);
+ 925              		.loc 3 346 0
+ 926 037c 0A10A0E1 		mov	r1, sl
+ 927 0380 4C029FE5 		ldr	r0, .L62+4
+ 928 0384 FEFFFFEB 		bl	flash_block_unlock
+ 929 0388 0A0000EA 		b	.L57
+ 930              	.L48:
+ 348:apps/loader/main.c **** 		if (command == LOADER_FLASH_LOCK) {
+ 931              		.loc 3 348 0
+ 932 038c 0C0057E3 		cmp	r7, #12
+ 933 0390 0300001A 		bne	.L49
+ 349:apps/loader/main.c **** 			res = flash_block_lock(&the_flash, address);
+ 934              		.loc 3 349 0
+ 935 0394 0A10A0E1 		mov	r1, sl
+ 936 0398 34029FE5 		ldr	r0, .L62+4
+ 937 039c FEFFFFEB 		bl	flash_block_lock
+ 938 03a0 040000EA 		b	.L57
+ 939              	.L49:
+ 351:apps/loader/main.c **** 		if (command == LOADER_FLASH_LOCKDOWN) {
+ 940              		.loc 3 351 0
+ 941 03a4 0D0057E3 		cmp	r7, #13
+ 942 03a8 0300001A 		bne	.L47
+ 352:apps/loader/main.c **** 			res = flash_block_lockdown(&the_flash, address);
+ 943              		.loc 3 352 0
+ 944 03ac 20029FE5 		ldr	r0, .L62+4
+ 945 03b0 0A10A0E1 		mov	r1, sl
+ 946 03b4 FEFFFFEB 		bl	flash_block_lockdown
+ 947              	.L57:
+ 948 03b8 0080A0E1 		mov	r8, r0
+ 949              	.LVL80:
+ 950              	.L47:
+ 355:apps/loader/main.c **** 		msgb_put_u8(reply, command);
+ 951              		.loc 3 355 0
+ 952 03bc 0400A0E1 		mov	r0, r4
+ 953 03c0 0710A0E1 		mov	r1, r7
+ 954 03c4 FEFFFFEB 		bl	msgb_put_u8
+ 356:apps/loader/main.c **** 		msgb_put_u8(reply, chip);
+ 955              		.loc 3 356 0
+ 956 03c8 0400A0E1 		mov	r0, r4
+ 957 03cc 0910A0E1 		mov	r1, r9
+ 958 03d0 FEFFFFEB 		bl	msgb_put_u8
+ 357:apps/loader/main.c **** 		msgb_put_u32(reply, address);
+ 959              		.loc 3 357 0
+ 960 03d4 0400A0E1 		mov	r0, r4
+ 961 03d8 0A10A0E1 		mov	r1, sl
+ 962 03dc FEFFFFEB 		bl	msgb_put_u32
+ 358:apps/loader/main.c **** 		msgb_put_u32(reply, (res != 0));
+ 963              		.loc 3 358 0
+ 964 03e0 0400A0E1 		mov	r0, r4
+ 965 03e4 001058E2 		subs	r1, r8, #0
+ 966 03e8 0110A013 		movne	r1, #1
+ 967 03ec 670000EA 		b	.L61
+ 968              	.LVL81:
+ 969              	.L40:
+ 970              	.LBB173:
+ 971              	.LBB174:
+ 972              	.LBB175:
+ 973              	.LBB176:
+ 298:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len -= len;
+ 974              		.loc 1 298 0
+ 975 03f0 B633D5E1 		ldrh	r3, [r5, #54]
+ 976 03f4 013043E2 		sub	r3, r3, #1
+ 977 03f8 B633C5E1 		strh	r3, [r5, #54]	@ movhi
+ 299:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->data += len;
+ 978              		.loc 1 299 0
+ 979 03fc 403095E5 		ldr	r3, [r5, #64]
+ 980 0400 012083E2 		add	r2, r3, #1
+ 981 0404 402085E5 		str	r2, [r5, #64]
+ 982              	.LVL82:
+ 983              	.LBE176:
+ 984              	.LBE175:
+ 985              	.LBE174:
+ 986              	.LBE173:
+ 367:apps/loader/main.c **** 		address = msgb_pull_u32(msg);
+ 987              		.loc 3 367 0
+ 988 0408 0500A0E1 		mov	r0, r5
+ 989              	.LBB178:
+ 990              	.LBB177:
+ 309:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return space[0];
+ 991              		.loc 1 309 0
+ 992 040c 00A0D3E5 		ldrb	sl, [r3, #0]	@ zero_extendqisi2
+ 993              	.LBE177:
+ 994              	.LBE178:
+ 367:apps/loader/main.c **** 		address = msgb_pull_u32(msg);
+ 995              		.loc 3 367 0
+ 996 0410 FEFFFFEB 		bl	msgb_pull_u32
+ 997              	.LVL83:
+ 998 0414 0080A0E1 		mov	r8, r0
+ 999              	.LVL84:
+ 369:apps/loader/main.c **** 		lock = flash_block_getlock(&the_flash, address);
+ 1000              		.loc 3 369 0
+ 1001 0418 0810A0E1 		mov	r1, r8
+ 1002 041c B0019FE5 		ldr	r0, .L62+4
+ 1003              	.LVL85:
+ 1004 0420 FEFFFFEB 		bl	flash_block_getlock
+ 1005              	.LVL86:
+ 371:apps/loader/main.c **** 		msgb_put_u8(reply, command);
+ 1006              		.loc 3 371 0
+ 1007 0424 0E10A0E3 		mov	r1, #14
+ 369:apps/loader/main.c **** 		lock = flash_block_getlock(&the_flash, address);
+ 1008              		.loc 3 369 0
+ 1009 0428 0070A0E1 		mov	r7, r0
+ 1010              	.LVL87:
+ 371:apps/loader/main.c **** 		msgb_put_u8(reply, command);
+ 1011              		.loc 3 371 0
+ 1012 042c 0400A0E1 		mov	r0, r4
+ 1013              	.LVL88:
+ 1014 0430 FEFFFFEB 		bl	msgb_put_u8
+ 372:apps/loader/main.c **** 		msgb_put_u8(reply, chip);
+ 1015              		.loc 3 372 0
+ 1016 0434 0400A0E1 		mov	r0, r4
+ 1017 0438 0A10A0E1 		mov	r1, sl
+ 1018 043c FEFFFFEB 		bl	msgb_put_u8
+ 373:apps/loader/main.c **** 		msgb_put_u32(reply, address);
+ 1019              		.loc 3 373 0
+ 1020 0440 0400A0E1 		mov	r0, r4
+ 1021 0444 0810A0E1 		mov	r1, r8
+ 1022 0448 FEFFFFEB 		bl	msgb_put_u32
+ 375:apps/loader/main.c **** 		switch (lock) {
+ 1023              		.loc 3 375 0
+ 1024 044c 010057E3 		cmp	r7, #1
+ 1025 0450 0600000A 		beq	.L53
+ 377:apps/loader/main.c **** 			msgb_put_u32(reply, LOADER_FLASH_UNLOCKED);
+ 1026              		.loc 3 377 0
+ 1027 0454 0400A031 		movcc	r0, r4
+ 1028 0458 0010A033 		movcc	r1, #0
+ 375:apps/loader/main.c **** 		switch (lock) {
+ 1029              		.loc 3 375 0
+ 1030 045c 4B00003A 		bcc	.L61
+ 1031 0460 020057E3 		cmp	r7, #2
+ 386:apps/loader/main.c **** 			msgb_put_u32(reply, 0xFFFFFFFF);
+ 1032              		.loc 3 386 0
+ 1033 0464 0400A011 		movne	r0, r4
+ 1034 0468 0010E013 		mvnne	r1, #0
+ 375:apps/loader/main.c **** 		switch (lock) {
+ 1035              		.loc 3 375 0
+ 1036 046c 4700001A 		bne	.L61
+ 1037              	.L53:
+ 383:apps/loader/main.c **** 			msgb_put_u32(reply, LOADER_FLASH_LOCKED_DOWN);
+ 1038              		.loc 3 383 0
+ 1039 0470 0400A0E1 		mov	r0, r4
+ 1040 0474 0710A0E1 		mov	r1, r7
+ 1041 0478 440000EA 		b	.L61
+ 1042              	.LVL89:
+ 1043              	.L41:
+ 1044              	.LBB179:
+ 1045              	.LBB180:
+ 1046              	.LBB181:
+ 1047              	.LBB182:
+ 298:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len -= len;
+ 1048              		.loc 1 298 0
+ 1049 047c B613D5E1 		ldrh	r1, [r5, #54]
+ 299:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->data += len;
+ 1050              		.loc 1 299 0
+ 1051 0480 402095E5 		ldr	r2, [r5, #64]
+ 298:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len -= len;
+ 1052              		.loc 1 298 0
+ 1053 0484 011041E2 		sub	r1, r1, #1
+ 1054 0488 0118A0E1 		mov	r1, r1, asl #16
+ 299:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->data += len;
+ 1055              		.loc 1 299 0
+ 1056 048c 010082E2 		add	r0, r2, #1
+ 298:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len -= len;
+ 1057              		.loc 1 298 0
+ 1058 0490 2118A0E1 		mov	r1, r1, lsr #16
+ 1059 0494 B613C5E1 		strh	r1, [r5, #54]	@ movhi
+ 299:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->data += len;
+ 1060              		.loc 1 299 0
+ 1061 0498 400085E5 		str	r0, [r5, #64]
+ 1062              	.LVL90:
+ 1063              	.LBE182:
+ 1064              	.LBE181:
+ 309:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return space[0];
+ 1065              		.loc 1 309 0
+ 1066 049c 0230A0E1 		mov	r3, r2
+ 1067              	.LBE180:
+ 1068              	.LBE179:
+ 1069              	.LBB184:
+ 1070              	.LBB187:
+ 1071              	.LBB189:
+ 1072              	.LBB190:
+ 298:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len -= len;
+ 1073              		.loc 1 298 0
+ 1074 04a0 021041E2 		sub	r1, r1, #2
+ 1075              	.LBE190:
+ 1076              	.LBE189:
+ 1077              	.LBE187:
+ 1078              	.LBE184:
+ 1079              	.LBB194:
+ 1080              	.LBB183:
+ 309:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return space[0];
+ 1081              		.loc 1 309 0
+ 1082 04a4 0370D3E4 		ldrb	r7, [r3], #3	@ zero_extendqisi2
+ 1083              	.LVL91:
+ 1084              	.LBE183:
+ 1085              	.LBE194:
+ 1086              	.LBB195:
+ 1087              	.LBB186:
+ 1088              	.LBB188:
+ 1089              	.LBB191:
+ 298:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len -= len;
+ 1090              		.loc 1 298 0
+ 1091 04a8 0118A0E1 		mov	r1, r1, asl #16
+ 1092 04ac 2118A0E1 		mov	r1, r1, lsr #16
+ 1093 04b0 B613C5E1 		strh	r1, [r5, #54]	@ movhi
+ 299:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->data += len;
+ 1094              		.loc 1 299 0
+ 1095 04b4 403085E5 		str	r3, [r5, #64]
+ 1096              	.LVL92:
+ 1097              	.LBE191:
+ 1098              	.LBE188:
+ 1099              	.LBE186:
+ 1100              	.LBE195:
+ 1101              	.LBB196:
+ 1102              	.LBB198:
+ 1103              	.LBB200:
+ 1104              	.LBB202:
+ 298:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len -= len;
+ 1105              		.loc 1 298 0
+ 1106 04b8 021041E2 		sub	r1, r1, #2
+ 1107              	.LBE202:
+ 1108              	.LBE200:
+ 1109              	.LBE198:
+ 1110              	.LBE196:
+ 1111              	.LBB207:
+ 1112              	.LBB192:
+ 318:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return space[0] << 8 | space[1];
+ 1113              		.loc 1 318 0
+ 1114 04bc 01C0D2E5 		ldrb	ip, [r2, #1]	@ zero_extendqisi2
+ 1115              	.LBE192:
+ 1116              	.LBE207:
+ 1117              	.LBB208:
+ 1118              	.LBB205:
+ 1119              	.LBB204:
+ 1120              	.LBB201:
+ 299:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->data += len;
+ 1121              		.loc 1 299 0
+ 1122 04c0 052082E2 		add	r2, r2, #5
+ 1123              	.LBE201:
+ 1124              	.LBE204:
+ 1125              	.LBE205:
+ 1126              	.LBE208:
+ 1127              	.LBB209:
+ 1128              	.LBB185:
+ 318:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return space[0] << 8 | space[1];
+ 1129              		.loc 1 318 0
+ 1130 04c4 0130D0E5 		ldrb	r3, [r0, #1]	@ zero_extendqisi2
+ 1131              	.LBE185:
+ 1132              	.LBE209:
+ 1133              	.LBB210:
+ 1134              	.LBB197:
+ 1135              	.LBB199:
+ 1136              	.LBB203:
+ 298:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len -= len;
+ 1137              		.loc 1 298 0
+ 1138 04c8 B613C5E1 		strh	r1, [r5, #54]	@ movhi
+ 299:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->data += len;
+ 1139              		.loc 1 299 0
+ 1140 04cc 402085E5 		str	r2, [r5, #64]
+ 1141              	.LBE203:
+ 1142              	.LBE199:
+ 309:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return space[0];
+ 1143              		.loc 1 309 0
+ 1144 04d0 012052E5 		ldrb	r2, [r2, #-1]	@ zero_extendqisi2
+ 1145              	.LBE197:
+ 1146              	.LBE210:
+ 1147              	.LBB211:
+ 1148              	.LBB193:
+ 318:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return space[0] << 8 | space[1];
+ 1149              		.loc 1 318 0
+ 1150 04d4 0C3483E1 		orr	r3, r3, ip, asl #8
+ 1151              	.LVL93:
+ 1152              	.LBE193:
+ 1153              	.LBE211:
+ 400:apps/loader/main.c **** 		address = msgb_pull_u32(msg);
+ 1154              		.loc 3 400 0
+ 1155 04d8 0500A0E1 		mov	r0, r5
+ 1156              	.LVL94:
+ 1157 04dc 00308DE5 		str	r3, [sp, #0]
+ 1158              	.LBB212:
+ 1159              	.LBB206:
+ 309:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return space[0];
+ 1160              		.loc 1 309 0
+ 1161 04e0 04208DE5 		str	r2, [sp, #4]
+ 1162              	.LBE206:
+ 1163              	.LBE212:
+ 400:apps/loader/main.c **** 		address = msgb_pull_u32(msg);
+ 1164              		.loc 3 400 0
+ 1165 04e4 FEFFFFEB 		bl	msgb_pull_u32
+ 1166              	.LVL95:
+ 1167              	.LBB213:
+ 1168              	.LBB214:
+ 299:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->data += len;
+ 1169              		.loc 1 299 0
+ 1170 04e8 40A095E5 		ldr	sl, [r5, #64]
+ 298:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len -= len;
+ 1171              		.loc 1 298 0
+ 1172 04ec B623D5E1 		ldrh	r2, [r5, #54]
+ 299:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->data += len;
+ 1173              		.loc 1 299 0
+ 1174 04f0 07A08AE0 		add	sl, sl, r7
+ 298:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len -= len;
+ 1175              		.loc 1 298 0
+ 1176 04f4 022067E0 		rsb	r2, r7, r2
+ 299:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->data += len;
+ 1177              		.loc 1 299 0
+ 1178 04f8 40A085E5 		str	sl, [r5, #64]
+ 1179              	.LBE214:
+ 1180              	.LBE213:
+ 402:apps/loader/main.c **** 		data = msgb_pull(msg, nbytes) - nbytes;
+ 1181              		.loc 3 402 0
+ 1182 04fc 0AA067E0 		rsb	sl, r7, sl
+ 1183              	.LBB216:
+ 1184              	.LBB215:
+ 298:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len -= len;
+ 1185              		.loc 1 298 0
+ 1186 0500 B623C5E1 		strh	r2, [r5, #54]	@ movhi
+ 1187              	.LBE215:
+ 1188              	.LBE216:
+ 400:apps/loader/main.c **** 		address = msgb_pull_u32(msg);
+ 1189              		.loc 3 400 0
+ 1190 0504 00B0A0E1 		mov	fp, r0
+ 1191              	.LVL96:
+ 404:apps/loader/main.c **** 		mycrc = osmo_crc16(0, data, nbytes);
+ 1192              		.loc 3 404 0
+ 1193 0508 0A10A0E1 		mov	r1, sl
+ 1194 050c 0000A0E3 		mov	r0, #0
+ 1195              	.LVL97:
+ 1196 0510 0720A0E1 		mov	r2, r7
+ 1197 0514 FEFFFFEB 		bl	osmo_crc16
+ 406:apps/loader/main.c **** 		if (mycrc == crc) {
+ 1198              		.loc 3 406 0
+ 1199 0518 00309DE5 		ldr	r3, [sp, #0]
+ 1200 051c 030050E1 		cmp	r0, r3
+ 404:apps/loader/main.c **** 		mycrc = osmo_crc16(0, data, nbytes);
+ 1201              		.loc 3 404 0
+ 1202 0520 0090A0E1 		mov	r9, r0
+ 1203              	.LVL98:
+ 406:apps/loader/main.c **** 		if (mycrc == crc) {
+ 1204              		.loc 3 406 0
+ 1205 0524 0500001A 		bne	.L55
+ 407:apps/loader/main.c **** 			res = flash_program(&the_flash, address, data, nbytes);
+ 1206              		.loc 3 407 0
+ 1207 0528 A4009FE5 		ldr	r0, .L62+4
+ 1208              	.LVL99:
+ 1209 052c 0B10A0E1 		mov	r1, fp
+ 1210 0530 0A20A0E1 		mov	r2, sl
+ 1211 0534 0730A0E1 		mov	r3, r7
+ 1212 0538 FEFFFFEB 		bl	flash_program
+ 1213 053c 0080A0E1 		mov	r8, r0
+ 1214              	.LVL100:
+ 1215              	.L55:
+ 410:apps/loader/main.c **** 		msgb_put_u8(reply, LOADER_FLASH_PROGRAM);
+ 1216              		.loc 3 410 0
+ 1217 0540 0400A0E1 		mov	r0, r4
+ 1218 0544 0F10A0E3 		mov	r1, #15
+ 1219 0548 FEFFFFEB 		bl	msgb_put_u8
+ 411:apps/loader/main.c **** 		msgb_put_u8(reply, nbytes);
+ 1220              		.loc 3 411 0
+ 1221 054c 0400A0E1 		mov	r0, r4
+ 1222 0550 0710A0E1 		mov	r1, r7
+ 1223 0554 FEFFFFEB 		bl	msgb_put_u8
+ 412:apps/loader/main.c **** 		msgb_put_u16(reply, mycrc);
+ 1224              		.loc 3 412 0
+ 1225 0558 0400A0E1 		mov	r0, r4
+ 1226 055c 0910A0E1 		mov	r1, r9
+ 1227 0560 FEFFFFEB 		bl	msgb_put_u16
+ 413:apps/loader/main.c **** 		msgb_put_u8(reply, 0);	// XXX align
+ 1228              		.loc 3 413 0
+ 1229 0564 0400A0E1 		mov	r0, r4
+ 1230 0568 0010A0E3 		mov	r1, #0
+ 1231 056c FEFFFFEB 		bl	msgb_put_u8
+ 414:apps/loader/main.c **** 		msgb_put_u8(reply, chip);
+ 1232              		.loc 3 414 0
+ 1233 0570 0400A0E1 		mov	r0, r4
+ 1234 0574 04109DE5 		ldr	r1, [sp, #4]
+ 1235 0578 FEFFFFEB 		bl	msgb_put_u8
+ 415:apps/loader/main.c **** 		msgb_put_u32(reply, address);
+ 1236              		.loc 3 415 0
+ 1237 057c 0400A0E1 		mov	r0, r4
+ 1238 0580 0B10A0E1 		mov	r1, fp
+ 1239 0584 FEFFFFEB 		bl	msgb_put_u32
+ 417:apps/loader/main.c **** 		msgb_put_u32(reply, (uint32_t) res);	// XXX
+ 1240              		.loc 3 417 0
+ 1241 0588 0400A0E1 		mov	r0, r4
+ 1242 058c 0810A0E1 		mov	r1, r8
+ 1243              	.LVL101:
+ 1244              	.L61:
+ 1245 0590 FEFFFFEB 		bl	msgb_put_u32
+ 1246              	.L60:
+ 419:apps/loader/main.c **** 		sercomm_sendmsg(dlci, reply);
+ 1247              		.loc 3 419 0
+ 1248 0594 0600A0E1 		mov	r0, r6
+ 1249 0598 0410A0E1 		mov	r1, r4
+ 1250 059c FEFFFFEB 		bl	sercomm_sendmsg
+ 421:apps/loader/main.c **** 		break;
+ 1251              		.loc 3 421 0
+ 1252 05a0 040000EA 		b	.L28
+ 1253              	.L29:
+ 424:apps/loader/main.c **** 		printf("unknown command %d\n", command);
+ 1254              		.loc 3 424 0
+ 1255 05a4 2C009FE5 		ldr	r0, .L62+8
+ 1256 05a8 0710A0E1 		mov	r1, r7
+ 1257 05ac FEFFFFEB 		bl	printf
+ 426:apps/loader/main.c **** 		msgb_free(reply);
+ 1258              		.loc 3 426 0
+ 1259 05b0 0400A0E1 		mov	r0, r4
+ 1260 05b4 FEFFFFEB 		bl	msgb_free
+ 1261              	.L28:
+ 1262              	.LBE136:
+ 433:apps/loader/main.c **** 	msgb_free(msg);
+ 1263              		.loc 3 433 0
+ 1264 05b8 0500A0E1 		mov	r0, r5
+ 434:apps/loader/main.c **** }
+ 1265              		.loc 3 434 0
+ 1266 05bc 08D08DE2 		add	sp, sp, #8
+ 1267 05c0 F04FBDE8 		ldmfd	sp!, {r4, r5, r6, r7, r8, r9, sl, fp, lr}
+ 433:apps/loader/main.c **** 	msgb_free(msg);
+ 1268              		.loc 3 433 0
+ 1269 05c4 FEFFFFEA 		b	msgb_free
+ 1270              	.LVL102:
+ 1271              	.L25:
+ 434:apps/loader/main.c **** }
+ 1272              		.loc 3 434 0
+ 1273 05c8 08D08DE2 		add	sp, sp, #8
+ 1274 05cc F08FBDE8 		ldmfd	sp!, {r4, r5, r6, r7, r8, r9, sl, fp, pc}
+ 1275              	.L63:
+ 1276              		.align	2
+ 1277              	.L62:
+ 1278 05d0 79000000 		.word	.LC4
+ 1279 05d4 00000000 		.word	the_flash
+ 1280 05d8 9A000000 		.word	.LC5
+ 1281              		.cfi_endproc
+ 1282              	.LFE69:
+ 1284              		.section	.text.main,"ax",%progbits
+ 1285              		.align	2
+ 1286              		.global	main
+ 1288              	main:
+ 1289              	.LFB68:
+ 129:apps/loader/main.c **** {
+ 1290              		.loc 3 129 0
+ 1291              		.cfi_startproc
+ 1292              		@ args = 0, pretend = 0, frame = 0
+ 1293              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1294              	.LVL103:
+ 1295 0000 70402DE9 		stmfd	sp!, {r4, r5, r6, lr}
+ 1296              	.LCFI9:
+ 1297              		.cfi_def_cfa_offset 16
+ 1298              	.LBB217:
+ 179:apps/loader/main.c **** 		for (i = 0; i < the_flash.f_nregions; i++) {
+ 1299              		.loc 3 179 0
+ 1300 0004 E8419FE5 		ldr	r4, .L72
+ 1301              		.cfi_offset 14, -4
+ 1302              		.cfi_offset 6, -8
+ 1303              		.cfi_offset 5, -12
+ 1304              		.cfi_offset 4, -16
+ 128:apps/loader/main.c **** int main(void)
+ 1305              		.loc 3 128 0
+ 1306 0008 075084E2 		add	r5, r4, #7
+ 1307              	.LBE217:
+ 132:apps/loader/main.c **** 	for (i = 0; i < sizeof(phone_ack); i++) {
+ 1308              		.loc 3 132 0
+ 1309 000c 010000EA 		b	.L65
+ 1310              	.LVL104:
+ 1311              	.L66:
+ 133:apps/loader/main.c **** 		putchar_asm(phone_ack[i]);
+ 1312              		.loc 3 133 0 discriminator 2
+ 1313 0010 0100F4E5 		ldrb	r0, [r4, #1]!	@ zero_extendqisi2
+ 1314 0014 FEFFFFEB 		bl	putchar_asm
+ 1315              	.L65:
+ 132:apps/loader/main.c **** 	for (i = 0; i < sizeof(phone_ack); i++) {
+ 1316              		.loc 3 132 0 discriminator 1
+ 1317 0018 050054E1 		cmp	r4, r5
+ 1318 001c FBFFFF1A 		bne	.L66
+ 137:apps/loader/main.c **** 	board_init(0);
+ 1319              		.loc 3 137 0
+ 1320 0020 0000A0E3 		mov	r0, #0
+ 1321 0024 FEFFFFEB 		bl	board_init
+ 138:apps/loader/main.c **** 	sercomm_uart = sercomm_get_uart();
+ 1322              		.loc 3 138 0
+ 1323 0028 FEFFFFEB 		bl	sercomm_get_uart
+ 1324 002c C4319FE5 		ldr	r3, .L72+4
+ 1325 0030 000083E5 		str	r0, [r3, #0]
+ 141:apps/loader/main.c **** 	puts("\n\nOsmocomBB Loader (revision " GIT_REVISION ")\n");
+ 1326              		.loc 3 141 0
+ 1327 0034 C0019FE5 		ldr	r0, .L72+8
+ 1328 0038 FEFFFFEB 		bl	puts
+ 142:apps/loader/main.c **** 	puts(hr);
+ 1329              		.loc 3 142 0
+ 1330 003c BC319FE5 		ldr	r3, .L72+12
+ 1331              	.LBB218:
+ 1332              	.LBB219:
+ 1333              		.file 4 "include/fb/framebuffer.h"
+   1:include/fb/framebuffer.h **** #ifndef _FB_FRAMEBUFFER_H
+   2:include/fb/framebuffer.h **** #define _FB_FRAMEBUFFER_H
+   3:include/fb/framebuffer.h **** 
+   4:include/fb/framebuffer.h **** #include <fb/font.h>
+   5:include/fb/framebuffer.h **** #include <stdint.h>
+   6:include/fb/framebuffer.h **** 
+   7:include/fb/framebuffer.h **** /* color is encoded as <special><red><green><blue> */
+   8:include/fb/framebuffer.h **** /* if a color is "special", then the RGB components most likely
+   9:include/fb/framebuffer.h ****    don't make sense. Use "special" colours when you have to
+  10:include/fb/framebuffer.h ****    mask out bits with transparency or you have to encode
+  11:include/fb/framebuffer.h ****    colours in a fixed color palette... */
+  12:include/fb/framebuffer.h **** 
+  13:include/fb/framebuffer.h **** #define FB_COLOR_WHITE		0x00ffffffU
+  14:include/fb/framebuffer.h **** #define FB_COLOR_BLACK		0x00000000U
+  15:include/fb/framebuffer.h **** #define FB_COLOR_TRANSP		0x01ffffffU
+  16:include/fb/framebuffer.h **** 
+  17:include/fb/framebuffer.h **** #define FB_COLOR_RGB(r,g,b) ((((r) & 0xff)<<16)|(((g)&0xff)<<8)|((b)&0xff))
+  18:include/fb/framebuffer.h **** #define FB_COLOR_RED		FB_COLOR_RGB(0xff,0x00,0x00)
+  19:include/fb/framebuffer.h **** #define FB_COLOR_GREEN		FB_COLOR_RGB(0x00,0xff,0x00)
+  20:include/fb/framebuffer.h **** #define FB_COLOR_BLUE		FB_COLOR_RGB(0x00,0x00,0xff)
+  21:include/fb/framebuffer.h **** 
+  22:include/fb/framebuffer.h **** /* encode */
+  23:include/fb/framebuffer.h **** 
+  24:include/fb/framebuffer.h **** /* decode */
+  25:include/fb/framebuffer.h **** #define FB_COLOR_IS_SPECIAL(v)     (!!((v) & 0xff000000U))
+  26:include/fb/framebuffer.h **** #define FB_COLOR_TO_R(v)		(((v)>>16) & 0xff)
+  27:include/fb/framebuffer.h **** #define FB_COLOR_TO_G(v)		(((v)>> 8) & 0xff)
+  28:include/fb/framebuffer.h **** #define FB_COLOR_TO_B(v)		( (v)      & 0xff)
+  29:include/fb/framebuffer.h **** 
+  30:include/fb/framebuffer.h **** struct framebuffer {
+  31:include/fb/framebuffer.h **** 	char name[8];				// keep it short!
+  32:include/fb/framebuffer.h **** 	void (*init)();				// (re)initialize
+  33:include/fb/framebuffer.h **** 	void (*clear)();			// clear display
+  34:include/fb/framebuffer.h **** 	void (*boxto)(uint16_t x,uint16_t y);	// draw box to xy
+  35:include/fb/framebuffer.h **** 	void (*lineto)(uint16_t x,uint16_t y);	// draw line to xy
+  36:include/fb/framebuffer.h **** 	int (*putstr)(char *c,int maxwidth);	// put text in current font to fb
+  37:include/fb/framebuffer.h **** 	void (*flush)();			// flush changes
+  38:include/fb/framebuffer.h **** 
+  39:include/fb/framebuffer.h **** 	uint16_t width,height;			// width/height of fb
+  40:include/fb/framebuffer.h **** 	uint16_t cursor_x,cursor_y;		// current cursor
+  41:include/fb/framebuffer.h **** 	uint32_t fg_color,bg_color;		// current fg/bg color
+  42:include/fb/framebuffer.h **** 	enum fb_font_id font;			// current font
+  43:include/fb/framebuffer.h **** };
+  44:include/fb/framebuffer.h **** 
+  45:include/fb/framebuffer.h **** /* there is a single framebuffer, the specific driver defines
+  46:include/fb/framebuffer.h ****    the "framebuffer" symbol */
+  47:include/fb/framebuffer.h **** extern struct framebuffer *framebuffer;
+  48:include/fb/framebuffer.h **** 
+  49:include/fb/framebuffer.h **** static inline void
+  50:include/fb/framebuffer.h **** fb_init(){
+  51:include/fb/framebuffer.h **** 	framebuffer->init();
+  52:include/fb/framebuffer.h **** }
+  53:include/fb/framebuffer.h **** 
+  54:include/fb/framebuffer.h **** static inline void
+  55:include/fb/framebuffer.h **** fb_clear(){
+  56:include/fb/framebuffer.h **** 	framebuffer->clear();
+ 1334              		.loc 4 56 0
+ 1335 0040 BC419FE5 		ldr	r4, .L72+16
+ 1336              	.LBE219:
+ 1337              	.LBE218:
+ 142:apps/loader/main.c **** 	puts(hr);
+ 1338              		.loc 3 142 0
+ 1339 0044 000093E5 		ldr	r0, [r3, #0]
+ 1340 0048 FEFFFFEB 		bl	puts
+ 1341              	.LBB221:
+ 1342              	.LBB220:
+ 1343              		.loc 4 56 0
+ 1344 004c 003094E5 		ldr	r3, [r4, #0]
+ 1345 0050 0FE0A0E1 		mov	lr, pc
+ 1346 0054 0CF093E5 		ldr	pc, [r3, #12]
+ 1347              	.LVL105:
+ 1348              	.LBE220:
+ 1349              	.LBE221:
+ 1350              	.LBB222:
+ 1351              	.LBB224:
+  57:include/fb/framebuffer.h **** }
+  58:include/fb/framebuffer.h **** 
+  59:include/fb/framebuffer.h **** static inline void
+  60:include/fb/framebuffer.h **** fb_boxto(uint16_t x,uint16_t y){
+  61:include/fb/framebuffer.h **** 	framebuffer->boxto(x,y);
+  62:include/fb/framebuffer.h **** }
+  63:include/fb/framebuffer.h **** 
+  64:include/fb/framebuffer.h **** static inline void
+  65:include/fb/framebuffer.h **** fb_lineto(uint16_t x,uint16_t y){
+  66:include/fb/framebuffer.h **** 	framebuffer->lineto(x,y);
+  67:include/fb/framebuffer.h **** }
+  68:include/fb/framebuffer.h **** 
+  69:include/fb/framebuffer.h **** static inline int
+  70:include/fb/framebuffer.h **** fb_putstr(char *str,int maxwidth){
+  71:include/fb/framebuffer.h **** 	return framebuffer->putstr(str,maxwidth);
+  72:include/fb/framebuffer.h **** }
+  73:include/fb/framebuffer.h **** 
+  74:include/fb/framebuffer.h **** static inline void
+  75:include/fb/framebuffer.h **** fb_flush(){
+  76:include/fb/framebuffer.h **** 	framebuffer->flush();
+  77:include/fb/framebuffer.h **** }
+  78:include/fb/framebuffer.h **** 
+  79:include/fb/framebuffer.h **** static inline void
+  80:include/fb/framebuffer.h **** fb_gotoxy(uint16_t x,uint16_t y){
+  81:include/fb/framebuffer.h **** 	framebuffer->cursor_x = x;
+  82:include/fb/framebuffer.h **** 	framebuffer->cursor_y = y;
+  83:include/fb/framebuffer.h **** }
+  84:include/fb/framebuffer.h **** 
+  85:include/fb/framebuffer.h **** static inline void
+  86:include/fb/framebuffer.h **** fb_setfg(uint32_t color){
+  87:include/fb/framebuffer.h **** 	framebuffer->fg_color = color;
+ 1352              		.loc 4 87 0
+ 1353 0058 003094E5 		ldr	r3, [r4, #0]
+ 1354              	.LBE224:
+ 1355              	.LBE222:
+ 1356              	.LBB226:
+ 1357              	.LBB227:
+  88:include/fb/framebuffer.h **** }
+  89:include/fb/framebuffer.h **** 
+  90:include/fb/framebuffer.h **** static inline void
+  91:include/fb/framebuffer.h **** fb_setbg(uint32_t color){
+  92:include/fb/framebuffer.h **** 	framebuffer->bg_color = color;
+  93:include/fb/framebuffer.h **** }
+  94:include/fb/framebuffer.h **** 
+  95:include/fb/framebuffer.h **** static inline void
+  96:include/fb/framebuffer.h **** fb_setfont(enum fb_font_id fid){
+  97:include/fb/framebuffer.h **** 	framebuffer->font = fid;
+ 1358              		.loc 4 97 0
+ 1359 005c 0120A0E3 		mov	r2, #1
+ 1360 0060 302083E5 		str	r2, [r3, #48]
+ 1361              	.LBE227:
+ 1362              	.LBE226:
+ 151:apps/loader/main.c **** 	fb_putstr("loader",framebuffer->width-4);
+ 1363              		.loc 3 151 0
+ 1364 0064 B012D3E1 		ldrh	r1, [r3, #32]
+ 1365              	.LBB228:
+ 1366              	.LBB230:
+  81:include/fb/framebuffer.h **** 	framebuffer->cursor_x = x;
+ 1367              		.loc 4 81 0
+ 1368 0068 0220A0E3 		mov	r2, #2	@ movhi
+ 1369              	.LBE230:
+ 1370              	.LBE228:
+ 1371              	.LBB233:
+ 1372              	.LBB223:
+  87:include/fb/framebuffer.h **** 	framebuffer->fg_color = color;
+ 1373              		.loc 4 87 0
+ 1374 006c 0050A0E3 		mov	r5, #0
+ 1375              	.LBE223:
+ 1376              	.LBE233:
+ 1377              	.LBB234:
+ 1378              	.LBB231:
+  81:include/fb/framebuffer.h **** 	framebuffer->cursor_x = x;
+ 1379              		.loc 4 81 0
+ 1380 0070 B422C3E1 		strh	r2, [r3, #36]	@ movhi
+ 1381              	.LBE231:
+ 1382              	.LBE234:
+ 1383              	.LBB235:
+ 1384              	.LBB236:
+  92:include/fb/framebuffer.h **** 	framebuffer->bg_color = color;
+ 1385              		.loc 4 92 0
+ 1386 0074 FF64E0E3 		mvn	r6, #-16777216
+ 1387              	.LBE236:
+ 1388              	.LBE235:
+ 1389              	.LBB238:
+ 1390              	.LBB229:
+  82:include/fb/framebuffer.h **** 	framebuffer->cursor_y = y;
+ 1391              		.loc 4 82 0
+ 1392 0078 1420A0E3 		mov	r2, #20	@ movhi
+ 1393              	.LBE229:
+ 1394              	.LBE238:
+ 1395              	.LBB239:
+ 1396              	.LBB225:
+  87:include/fb/framebuffer.h **** 	framebuffer->fg_color = color;
+ 1397              		.loc 4 87 0
+ 1398 007c 285083E5 		str	r5, [r3, #40]
+ 1399              	.LVL106:
+ 1400              	.LBE225:
+ 1401              	.LBE239:
+ 1402              	.LBB240:
+ 1403              	.LBB232:
+  82:include/fb/framebuffer.h **** 	framebuffer->cursor_y = y;
+ 1404              		.loc 4 82 0
+ 1405 0080 B622C3E1 		strh	r2, [r3, #38]	@ movhi
+ 1406              	.LBE232:
+ 1407              	.LBE240:
+ 1408              	.LBB241:
+ 1409              	.LBB237:
+  92:include/fb/framebuffer.h **** 	framebuffer->bg_color = color;
+ 1410              		.loc 4 92 0
+ 1411 0084 2C6083E5 		str	r6, [r3, #44]
+ 1412              	.LVL107:
+ 1413              	.LBE237:
+ 1414              	.LBE241:
+ 1415              	.LBB242:
+ 1416              	.LBB243:
+  71:include/fb/framebuffer.h **** 	return framebuffer->putstr(str,maxwidth);
+ 1417              		.loc 4 71 0
+ 1418 0088 041041E2 		sub	r1, r1, #4
+ 1419 008c 74019FE5 		ldr	r0, .L72+20
+ 1420 0090 0FE0A0E1 		mov	lr, pc
+ 1421 0094 18F093E5 		ldr	pc, [r3, #24]
+ 1422              	.LVL108:
+ 1423              	.LBE243:
+ 1424              	.LBE242:
+ 1425              	.LBB244:
+ 1426              	.LBB245:
+  87:include/fb/framebuffer.h **** 	framebuffer->fg_color = color;
+ 1427              		.loc 4 87 0
+ 1428 0098 003094E5 		ldr	r3, [r4, #0]
+ 1429 009c FF28A0E3 		mov	r2, #16711680
+ 1430              	.LBE245:
+ 1431              	.LBE244:
+ 157:apps/loader/main.c **** 	fb_boxto(framebuffer->width-3,38);
+ 1432              		.loc 3 157 0
+ 1433 00a0 B002D3E1 		ldrh	r0, [r3, #32]
+ 1434              	.LBB247:
+ 1435              	.LBB246:
+  87:include/fb/framebuffer.h **** 	framebuffer->fg_color = color;
+ 1436              		.loc 4 87 0
+ 1437 00a4 282083E5 		str	r2, [r3, #40]
+ 1438              	.LVL109:
+ 1439              	.LBE246:
+ 1440              	.LBE247:
+ 1441              	.LBB248:
+ 1442              	.LBB249:
+  92:include/fb/framebuffer.h **** 	framebuffer->bg_color = color;
+ 1443              		.loc 4 92 0
+ 1444 00a8 FF20A0E3 		mov	r2, #255
+ 1445 00ac 2C2083E5 		str	r2, [r3, #44]
+ 1446              	.LVL110:
+ 1447              	.LBE249:
+ 1448              	.LBE248:
+ 157:apps/loader/main.c **** 	fb_boxto(framebuffer->width-3,38);
+ 1449              		.loc 3 157 0
+ 1450 00b0 030040E2 		sub	r0, r0, #3
+ 1451              	.LBB250:
+ 1452              	.LBB251:
+  81:include/fb/framebuffer.h **** 	framebuffer->cursor_x = x;
+ 1453              		.loc 4 81 0
+ 1454 00b4 0220A0E3 		mov	r2, #2	@ movhi
+ 1455 00b8 B422C3E1 		strh	r2, [r3, #36]	@ movhi
+ 1456              	.LBE251:
+ 1457              	.LBE250:
+ 157:apps/loader/main.c **** 	fb_boxto(framebuffer->width-3,38);
+ 1458              		.loc 3 157 0
+ 1459 00bc 0008A0E1 		mov	r0, r0, asl #16
+ 1460              	.LBB253:
+ 1461              	.LBB252:
+  82:include/fb/framebuffer.h **** 	framebuffer->cursor_y = y;
+ 1462              		.loc 4 82 0
+ 1463 00c0 1920A0E3 		mov	r2, #25	@ movhi
+ 1464 00c4 B622C3E1 		strh	r2, [r3, #38]	@ movhi
+ 1465              	.LVL111:
+ 1466              	.LBE252:
+ 1467              	.LBE253:
+ 1468              	.LBB254:
+ 1469              	.LBB255:
+  61:include/fb/framebuffer.h **** 	framebuffer->boxto(x,y);
+ 1470              		.loc 4 61 0
+ 1471 00c8 2008A0E1 		mov	r0, r0, lsr #16
+ 1472 00cc 2610A0E3 		mov	r1, #38
+ 1473 00d0 0FE0A0E1 		mov	lr, pc
+ 1474 00d4 10F093E5 		ldr	pc, [r3, #16]
+ 1475              	.LVL112:
+ 1476              	.LBE255:
+ 1477              	.LBE254:
+ 1478              	.LBB256:
+ 1479              	.LBB257:
+  87:include/fb/framebuffer.h **** 	framebuffer->fg_color = color;
+ 1480              		.loc 4 87 0
+ 1481 00d8 003094E5 		ldr	r3, [r4, #0]
+ 1482              	.LBE257:
+ 1483              	.LBE256:
+ 1484              	.LBB259:
+ 1485              	.LBB260:
+  81:include/fb/framebuffer.h **** 	framebuffer->cursor_x = x;
+ 1486              		.loc 4 81 0
+ 1487 00dc 0820A0E3 		mov	r2, #8	@ movhi
+ 1488              	.LBE260:
+ 1489              	.LBE259:
+ 162:apps/loader/main.c **** 	fb_putstr("osmocom-bb",framebuffer->width-4);
+ 1490              		.loc 3 162 0
+ 1491 00e0 B012D3E1 		ldrh	r1, [r3, #32]
+ 1492              	.LBB262:
+ 1493              	.LBB261:
+  81:include/fb/framebuffer.h **** 	framebuffer->cursor_x = x;
+ 1494              		.loc 4 81 0
+ 1495 00e4 B422C3E1 		strh	r2, [r3, #36]	@ movhi
+  82:include/fb/framebuffer.h **** 	framebuffer->cursor_y = y;
+ 1496              		.loc 4 82 0
+ 1497 00e8 2120A0E3 		mov	r2, #33	@ movhi
+ 1498 00ec B622C3E1 		strh	r2, [r3, #38]	@ movhi
+ 1499              	.LBE261:
+ 1500              	.LBE262:
+ 1501              	.LBB263:
+ 1502              	.LBB264:
+ 1503              		.loc 4 97 0
+ 1504 00f0 305083E5 		str	r5, [r3, #48]
+ 1505              	.LBE264:
+ 1506              	.LBE263:
+ 1507              	.LBB265:
+ 1508              	.LBB266:
+  71:include/fb/framebuffer.h **** 	return framebuffer->putstr(str,maxwidth);
+ 1509              		.loc 4 71 0
+ 1510 00f4 041041E2 		sub	r1, r1, #4
+ 1511              	.LBE266:
+ 1512              	.LBE265:
+ 1513              	.LBB268:
+ 1514              	.LBB258:
+  87:include/fb/framebuffer.h **** 	framebuffer->fg_color = color;
+ 1515              		.loc 4 87 0
+ 1516 00f8 286083E5 		str	r6, [r3, #40]
+ 1517              	.LVL113:
+ 1518              	.LBE258:
+ 1519              	.LBE268:
+ 1520              	.LBB269:
+ 1521              	.LBB267:
+  71:include/fb/framebuffer.h **** 	return framebuffer->putstr(str,maxwidth);
+ 1522              		.loc 4 71 0
+ 1523 00fc 08019FE5 		ldr	r0, .L72+24
+ 1524 0100 0FE0A0E1 		mov	lr, pc
+ 1525 0104 18F093E5 		ldr	pc, [r3, #24]
+ 1526              	.LBE267:
+ 1527              	.LBE269:
+ 1528              	.LBB270:
+ 1529              	.LBB271:
+  76:include/fb/framebuffer.h **** 	framebuffer->flush();
+ 1530              		.loc 4 76 0
+ 1531 0108 003094E5 		ldr	r3, [r4, #0]
+ 1532 010c 0FE0A0E1 		mov	lr, pc
+ 1533 0110 1CF093E5 		ldr	pc, [r3, #28]
+ 1534              	.LBE271:
+ 1535              	.LBE270:
+ 167:apps/loader/main.c **** 	printf("Running on %s in environment %s\n", manifest_board,
+ 1536              		.loc 3 167 0
+ 1537 0114 F4309FE5 		ldr	r3, .L72+28
+ 1538 0118 001093E5 		ldr	r1, [r3, #0]
+ 1539 011c F0309FE5 		ldr	r3, .L72+32
+ 171:apps/loader/main.c **** 	if (flash_init(&the_flash, 0)) {
+ 1540              		.loc 3 171 0
+ 1541 0120 F0409FE5 		ldr	r4, .L72+36
+ 167:apps/loader/main.c **** 	printf("Running on %s in environment %s\n", manifest_board,
+ 1542              		.loc 3 167 0
+ 1543 0124 002093E5 		ldr	r2, [r3, #0]
+ 1544 0128 EC009FE5 		ldr	r0, .L72+40
+ 1545 012c FEFFFFEB 		bl	printf
+ 171:apps/loader/main.c **** 	if (flash_init(&the_flash, 0)) {
+ 1546              		.loc 3 171 0
+ 1547 0130 0510A0E1 		mov	r1, r5
+ 1548 0134 0400A0E1 		mov	r0, r4
+ 1549 0138 FEFFFFEB 		bl	flash_init
+ 1550 013c 005050E2 		subs	r5, r0, #0
+ 1551 0140 0200000A 		beq	.L67
+ 172:apps/loader/main.c **** 		puts("Failed to initialize flash!\n");
+ 1552              		.loc 3 172 0
+ 1553 0144 D4009FE5 		ldr	r0, .L72+44
+ 1554 0148 FEFFFFEB 		bl	puts
+ 1555 014c 100000EA 		b	.L68
+ 1556              	.L67:
+ 1557              	.LBB272:
+ 174:apps/loader/main.c **** 		printf("Found flash of %d bytes at 0x%x with %d regions\n",
+ 1558              		.loc 3 174 0
+ 1559 0150 CC009FE5 		ldr	r0, .L72+48
+ 1560 0154 041094E5 		ldr	r1, [r4, #4]
+ 1561 0158 002094E5 		ldr	r2, [r4, #0]
+ 1562 015c 083094E5 		ldr	r3, [r4, #8]
+ 1563 0160 FEFFFFEB 		bl	printf
+ 1564              	.LVL114:
+ 1565 0164 106084E2 		add	r6, r4, #16
+ 179:apps/loader/main.c **** 		for (i = 0; i < the_flash.f_nregions; i++) {
+ 1566              		.loc 3 179 0
+ 1567 0168 050000EA 		b	.L69
+ 1568              	.LVL115:
+ 1569              	.L70:
+ 180:apps/loader/main.c **** 			printf("  Region %d of %d pages with %d bytes each.\n",
+ 1570              		.loc 3 180 0 discriminator 2
+ 1571 016c 0510A0E1 		mov	r1, r5
+ 1572 0170 B0009FE5 		ldr	r0, .L72+52
+ 1573 0174 0C2046E2 		sub	r2, r6, #12
+ 1574 0178 0C0092E8 		ldmia	r2, {r2, r3}	@ phole ldm
+ 1575 017c FEFFFFEB 		bl	printf
+ 179:apps/loader/main.c **** 		for (i = 0; i < the_flash.f_nregions; i++) {
+ 1576              		.loc 3 179 0 discriminator 2
+ 1577 0180 015085E2 		add	r5, r5, #1
+ 1578              	.LVL116:
+ 1579              	.L69:
+ 179:apps/loader/main.c **** 		for (i = 0; i < the_flash.f_nregions; i++) {
+ 1580              		.loc 3 179 0 is_stmt 0 discriminator 1
+ 1581 0184 083094E5 		ldr	r3, [r4, #8]
+ 1582 0188 030055E1 		cmp	r5, r3
+ 1583 018c 0C6086E2 		add	r6, r6, #12
+ 1584 0190 F5FFFF3A 		bcc	.L70
+ 1585              	.LVL117:
+ 1586              	.L68:
+ 1587              	.LBE272:
+ 189:apps/loader/main.c **** 	keypad_set_handler(&key_handler);
+ 1588              		.loc 3 189 0 is_stmt 1
+ 1589 0194 90009FE5 		ldr	r0, .L72+56
+ 1590 0198 FEFFFFEB 		bl	keypad_set_handler
+ 192:apps/loader/main.c **** 	sercomm_register_rx_cb(SC_DLCI_LOADER, &cmd_handler);
+ 1591              		.loc 3 192 0
+ 1592 019c 8C109FE5 		ldr	r1, .L72+60
+ 1593 01a0 0900A0E3 		mov	r0, #9
+ 1594 01a4 FEFFFFEB 		bl	sercomm_register_rx_cb
+ 1595              	.LVL118:
+ 1596              	.LBB273:
+ 1597              	.LBB274:
+ 115:apps/loader/main.c **** 	struct msgb *msg = sercomm_alloc_msgb(9);
+ 1598              		.loc 3 115 0
+ 1599 01a8 0900A0E3 		mov	r0, #9
+ 1600 01ac FEFFFFEB 		bl	sercomm_alloc_msgb
+ 116:apps/loader/main.c **** 	msgb_put_u8(msg, LOADER_INIT);
+ 1601              		.loc 3 116 0
+ 1602 01b0 0010A0E3 		mov	r1, #0
+ 115:apps/loader/main.c **** 	struct msgb *msg = sercomm_alloc_msgb(9);
+ 1603              		.loc 3 115 0
+ 1604 01b4 0040A0E1 		mov	r4, r0
+ 1605              	.LVL119:
+ 116:apps/loader/main.c **** 	msgb_put_u8(msg, LOADER_INIT);
+ 1606              		.loc 3 116 0
+ 1607 01b8 FEFFFFEB 		bl	msgb_put_u8
+ 1608              	.LVL120:
+ 117:apps/loader/main.c **** 	msgb_put_u32(msg, 0);
+ 1609              		.loc 3 117 0
+ 1610 01bc 0400A0E1 		mov	r0, r4
+ 1611 01c0 0010A0E3 		mov	r1, #0
+ 1612 01c4 FEFFFFEB 		bl	msgb_put_u32
+ 118:apps/loader/main.c **** 	msgb_put_u32(msg, &_start);
+ 1613              		.loc 3 118 0
+ 1614 01c8 0400A0E1 		mov	r0, r4
+ 1615 01cc 60109FE5 		ldr	r1, .L72+64
+ 1616 01d0 FEFFFFEB 		bl	msgb_put_u32
+ 119:apps/loader/main.c **** 	sercomm_sendmsg(dlci, msg);
+ 1617              		.loc 3 119 0
+ 1618 01d4 0410A0E1 		mov	r1, r4
+ 1619 01d8 0900A0E3 		mov	r0, #9
+ 1620 01dc FEFFFFEB 		bl	sercomm_sendmsg
+ 1621              	.LBE274:
+ 1622              	.LBE273:
+ 200:apps/loader/main.c **** 		uart_poll(sercomm_uart);
+ 1623              		.loc 3 200 0
+ 1624 01e0 10409FE5 		ldr	r4, .L72+4
+ 1625              	.LVL121:
+ 1626              	.L71:
+ 199:apps/loader/main.c **** 		keypad_poll();
+ 1627              		.loc 3 199 0 discriminator 1
+ 1628 01e4 FEFFFFEB 		bl	keypad_poll
+ 200:apps/loader/main.c **** 		uart_poll(sercomm_uart);
+ 1629              		.loc 3 200 0 discriminator 1
+ 1630 01e8 0000D4E5 		ldrb	r0, [r4, #0]	@ zero_extendqisi2
+ 1631 01ec FEFFFFEB 		bl	uart_poll
+ 1632 01f0 FBFFFFEA 		b	.L71
+ 1633              	.L73:
+ 1634              		.align	2
+ 1635              	.L72:
+ 1636 01f4 FFFFFFFF 		.word	.LANCHOR1-1
+ 1637 01f8 00000000 		.word	.LANCHOR0
+ 1638 01fc AE000000 		.word	.LC6
+ 1639 0200 00000000 		.word	.LANCHOR2
+ 1640 0204 00000000 		.word	framebuffer
+ 1641 0208 F3000000 		.word	.LC7
+ 1642 020c FA000000 		.word	.LC8
+ 1643 0210 00000000 		.word	manifest_board
+ 1644 0214 00000000 		.word	manifest_environment
+ 1645 0218 00000000 		.word	the_flash
+ 1646 021c 05010000 		.word	.LC9
+ 1647 0220 26010000 		.word	.LC10
+ 1648 0224 43010000 		.word	.LC11
+ 1649 0228 74010000 		.word	.LC12
+ 1650 022c 00000000 		.word	key_handler
+ 1651 0230 00000000 		.word	cmd_handler
+ 1652 0234 00000000 		.word	_start
+ 1653              		.cfi_endproc
+ 1654              	.LFE68:
+ 1656              		.global	hr
+ 1657              		.global	flag
+ 1658              		.comm	the_flash,60,4
+ 1659              		.section	.rodata
+ 1660              		.align	2
+ 1661              		.set	.LANCHOR1,. + 0
+ 1664              	phone_ack:
+ 1665 0000 1B       		.byte	27
+ 1666 0001 F6       		.byte	-10
+ 1667 0002 02       		.byte	2
+ 1668 0003 00       		.byte	0
+ 1669 0004 41       		.byte	65
+ 1670 0005 03       		.byte	3
+ 1671 0006 42       		.byte	66
+ 1672 0007 00       		.section	.rodata.str1.1,"aMS",%progbits,1
+ 1673              	.LC0:
+ 1674 0000 73657263 		.ascii	"sercomm_tx\000"
+ 1674      6F6D6D5F 
+ 1674      747800
+ 1675              	.LC1:
+ 1676 000b 6D736762 		.ascii	"msgb(%p): Not enough tailroom msgb_push (%u < %u)\012"
+ 1676      28257029 
+ 1676      3A204E6F 
+ 1676      7420656E 
+ 1676      6F756768 
+ 1677 003d 00       		.ascii	"\000"
+ 1678              	.LC2:
+ 1679 003e 506F7765 		.ascii	"Powering off due to keypress.\012\000"
+ 1679      72696E67 
+ 1679      206F6666 
+ 1679      20647565 
+ 1679      20746F20 
+ 1680              	.LC3:
+ 1681 005d 52657365 		.ascii	"Resetting due to keypress.\012\000"
+ 1681      7474696E 
+ 1681      67206475 
+ 1681      6520746F 
+ 1681      206B6579 
+ 1682              	.LC4:
+ 1683 0079 4661696C 		.ascii	"Failed to allocate reply buffer!\000"
+ 1683      65642074 
+ 1683      6F20616C 
+ 1683      6C6F6361 
+ 1683      74652072 
+ 1684              	.LC5:
+ 1685 009a 756E6B6E 		.ascii	"unknown command %d\012\000"
+ 1685      6F776E20 
+ 1685      636F6D6D 
+ 1685      616E6420 
+ 1685      25640A00 
+ 1686              	.LC6:
+ 1687 00ae 0A0A4F73 		.ascii	"\012\012OsmocomBB Loader (revision osmocon_v0.0.0-1"
+ 1687      6D6F636F 
+ 1687      6D424220 
+ 1687      4C6F6164 
+ 1687      65722028 
+ 1688 00db 3735342D 		.ascii	"754-gfc20a37-modified)\012\000"
+ 1688      67666332 
+ 1688      30613337 
+ 1688      2D6D6F64 
+ 1688      69666965 
+ 1689              	.LC7:
+ 1690 00f3 6C6F6164 		.ascii	"loader\000"
+ 1690      657200
+ 1691              	.LC8:
+ 1692 00fa 6F736D6F 		.ascii	"osmocom-bb\000"
+ 1692      636F6D2D 
+ 1692      626200
+ 1693              	.LC9:
+ 1694 0105 52756E6E 		.ascii	"Running on %s in environment %s\012\000"
+ 1694      696E6720 
+ 1694      6F6E2025 
+ 1694      7320696E 
+ 1694      20656E76 
+ 1695              	.LC10:
+ 1696 0126 4661696C 		.ascii	"Failed to initialize flash!\012\000"
+ 1696      65642074 
+ 1696      6F20696E 
+ 1696      69746961 
+ 1696      6C697A65 
+ 1697              	.LC11:
+ 1698 0143 466F756E 		.ascii	"Found flash of %d bytes at 0x%x with %d regions\012"
+ 1698      6420666C 
+ 1698      61736820 
+ 1698      6F662025 
+ 1698      64206279 
+ 1699 0173 00       		.ascii	"\000"
+ 1700              	.LC12:
+ 1701 0174 20205265 		.ascii	"  Region %d of %d pages with %d bytes each.\012\000"
+ 1701      67696F6E 
+ 1701      20256420 
+ 1701      6F662025 
+ 1701      64207061 
+ 1702              	.LC13:
+ 1703 01a1 3D3D3D3D 		.ascii	"==================================================="
+ 1703      3D3D3D3D 
+ 1703      3D3D3D3D 
+ 1703      3D3D3D3D 
+ 1703      3D3D3D3D 
+ 1704 01d4 3D3D3D3D 		.ascii	"===================\012\000"
+ 1704      3D3D3D3D 
+ 1704      3D3D3D3D 
+ 1704      3D3D3D3D 
+ 1704      3D3D3D0A 
+ 1705              		.data
+ 1706              		.align	2
+ 1707              		.set	.LANCHOR2,. + 0
+ 1710              	hr:
+ 1711 0000 A1010000 		.word	.LC13
+ 1712              		.bss
+ 1713              		.align	2
+ 1714              		.set	.LANCHOR0,. + 0
+ 1717              	sercomm_uart:
+ 1718 0000 00000000 		.space	4
+ 1721              	flag:
+ 1722 0004 00000000 		.space	4
+ 1723              		.text
+ 1724              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 main.c
+     /tmp/ccoUz7hl.s:12     .text.msgb_pull_u32:0000000000000000 $a
+     /tmp/ccoUz7hl.s:14     .text.msgb_pull_u32:0000000000000000 msgb_pull_u32
+     /tmp/ccoUz7hl.s:51     .text.sercomm_alloc_msgb:0000000000000000 $a
+     /tmp/ccoUz7hl.s:53     .text.sercomm_alloc_msgb:0000000000000000 sercomm_alloc_msgb
+     /tmp/ccoUz7hl.s:106    .text.sercomm_alloc_msgb:000000000000003c $d
+     /tmp/ccoUz7hl.s:111    .text.msgb_put:0000000000000000 $a
+     /tmp/ccoUz7hl.s:113    .text.msgb_put:0000000000000000 msgb_put
+     /tmp/ccoUz7hl.s:177    .text.msgb_put:0000000000000054 $d
+     /tmp/ccoUz7hl.s:182    .text.msgb_put_u8:0000000000000000 $a
+     /tmp/ccoUz7hl.s:184    .text.msgb_put_u8:0000000000000000 msgb_put_u8
+     /tmp/ccoUz7hl.s:211    .text.loader_send_simple:0000000000000000 $a
+     /tmp/ccoUz7hl.s:213    .text.loader_send_simple:0000000000000000 loader_send_simple
+     /tmp/ccoUz7hl.s:248    .text.msgb_put_u32:0000000000000000 $a
+     /tmp/ccoUz7hl.s:250    .text.msgb_put_u32:0000000000000000 msgb_put_u32
+     /tmp/ccoUz7hl.s:286    .text.msgb_put_u16:0000000000000000 $a
+     /tmp/ccoUz7hl.s:288    .text.msgb_put_u16:0000000000000000 msgb_put_u16
+     /tmp/ccoUz7hl.s:321    .text.flush_uart:0000000000000000 $a
+     /tmp/ccoUz7hl.s:323    .text.flush_uart:0000000000000000 flush_uart
+     /tmp/ccoUz7hl.s:359    .text.flush_uart:000000000000002c $d
+     /tmp/ccoUz7hl.s:364    .text.key_handler:0000000000000000 $a
+     /tmp/ccoUz7hl.s:366    .text.key_handler:0000000000000000 key_handler
+     /tmp/ccoUz7hl.s:428    .text.key_handler:0000000000000044 $d
+     /tmp/ccoUz7hl.s:436    .text.cmd_handler:0000000000000000 $a
+     /tmp/ccoUz7hl.s:438    .text.cmd_handler:0000000000000000 cmd_handler
+     /tmp/ccoUz7hl.s:514    .text.cmd_handler:0000000000000060 $d
+     /tmp/ccoUz7hl.s:532    .text.cmd_handler:000000000000009c $a
+     /tmp/ccoUz7hl.s:1278   .text.cmd_handler:00000000000005d0 $d
+                            *COM*:000000000000003c the_flash
+     /tmp/ccoUz7hl.s:1285   .text.main:0000000000000000 $a
+     /tmp/ccoUz7hl.s:1288   .text.main:0000000000000000 main
+     /tmp/ccoUz7hl.s:1636   .text.main:00000000000001f4 $d
+     /tmp/ccoUz7hl.s:1710   .data:0000000000000000 hr
+     /tmp/ccoUz7hl.s:1721   .bss:0000000000000004 flag
+     /tmp/ccoUz7hl.s:1660   .rodata:0000000000000000 $d
+     /tmp/ccoUz7hl.s:1664   .rodata:0000000000000000 phone_ack
+     /tmp/ccoUz7hl.s:1706   .data:0000000000000000 $d
+     /tmp/ccoUz7hl.s:1713   .bss:0000000000000000 $d
+     /tmp/ccoUz7hl.s:1717   .bss:0000000000000000 sercomm_uart
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+msgb_alloc
+osmo_panic
+sercomm_sendmsg
+uart_poll
+delay_ms
+puts
+twl3025_power_off
+wdog_reset
+calypso_bootrom
+osmo_crc16
+memcpy
+flash_block_erase
+flash_block_unlock
+flash_block_lock
+flash_block_lockdown
+flash_block_getlock
+flash_program
+printf
+msgb_free
+putchar_asm
+board_init
+sercomm_get_uart
+flash_init
+keypad_set_handler
+sercomm_register_rx_cb
+keypad_poll
+framebuffer
+manifest_board
+manifest_environment
+_start

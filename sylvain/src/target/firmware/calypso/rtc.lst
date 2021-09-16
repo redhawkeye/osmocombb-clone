@@ -1,0 +1,251 @@
+   1              		.file	"rtc.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text.rtc_irq_tick,"ax",%progbits
+  12              		.align	2
+  14              	rtc_irq_tick:
+  15              	.LFB5:
+  16              		.file 1 "calypso/rtc.c"
+   1:calypso/rtc.c **** /* Driver for Calypso RTC controller */
+   2:calypso/rtc.c **** 
+   3:calypso/rtc.c **** /* (C) 2010 by Harald Welte <laforge@gnumonks.org>
+   4:calypso/rtc.c ****  *
+   5:calypso/rtc.c ****  * All Rights Reserved
+   6:calypso/rtc.c ****  *
+   7:calypso/rtc.c ****  * This program is free software; you can redistribute it and/or modify
+   8:calypso/rtc.c ****  * it under the terms of the GNU General Public License as published by
+   9:calypso/rtc.c ****  * the Free Software Foundation; either version 2 of the License, or
+  10:calypso/rtc.c ****  * (at your option) any later version.
+  11:calypso/rtc.c ****  *
+  12:calypso/rtc.c ****  * This program is distributed in the hope that it will be useful,
+  13:calypso/rtc.c ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  14:calypso/rtc.c ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  15:calypso/rtc.c ****  * GNU General Public License for more details.
+  16:calypso/rtc.c ****  *
+  17:calypso/rtc.c ****  * You should have received a copy of the GNU General Public License along
+  18:calypso/rtc.c ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  19:calypso/rtc.c ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  20:calypso/rtc.c ****  *
+  21:calypso/rtc.c ****  */
+  22:calypso/rtc.c **** 
+  23:calypso/rtc.c **** #include <stdint.h>
+  24:calypso/rtc.c **** #include <stdio.h>
+  25:calypso/rtc.c **** 
+  26:calypso/rtc.c **** #include <defines.h>
+  27:calypso/rtc.c **** #include <debug.h>
+  28:calypso/rtc.c **** #include <memory.h>
+  29:calypso/rtc.c **** #include <display.h>
+  30:calypso/rtc.c **** #include <calypso/irq.h>
+  31:calypso/rtc.c **** 
+  32:calypso/rtc.c **** #define BASE_ADDR_RTC	0xfffe1800
+  33:calypso/rtc.c **** #define RTC_REG(x)	((void *)BASE_ADDR_RTC + (x))
+  34:calypso/rtc.c **** 
+  35:calypso/rtc.c **** enum rtc_reg {
+  36:calypso/rtc.c **** 	SECOND_REG		= 0x00,
+  37:calypso/rtc.c **** 	MINUTES_REG		= 0x01,
+  38:calypso/rtc.c **** 	HOURS_REG		= 0x02,
+  39:calypso/rtc.c **** 	DAYS_REG		= 0x03,
+  40:calypso/rtc.c **** 	MONTHS_REG		= 0x04,
+  41:calypso/rtc.c **** 	YEARS_REG		= 0x05,
+  42:calypso/rtc.c **** 	WEEK_REG		= 0x06,
+  43:calypso/rtc.c **** 	/* reserved */
+  44:calypso/rtc.c **** 	ALARM_SECOND_REG	= 0x08,
+  45:calypso/rtc.c **** 	ALARM_MINUTES_REG	= 0x09,
+  46:calypso/rtc.c **** 	ALARM_HOURS_REG		= 0x0a,
+  47:calypso/rtc.c **** 	ALARM_DAYS_REG		= 0x0b,
+  48:calypso/rtc.c **** 	ALARM_MONTHS_REG	= 0x0c,
+  49:calypso/rtc.c **** 	ALARM_YEARS_REG		= 0x0d,
+  50:calypso/rtc.c **** 	/* reserved */
+  51:calypso/rtc.c **** 	/* reserved */
+  52:calypso/rtc.c **** 	CTRL_REG		= 0x10,
+  53:calypso/rtc.c **** 	STATUS_REG		= 0x11,
+  54:calypso/rtc.c **** 	INT_REG			= 0x12,
+  55:calypso/rtc.c **** 	COMP_LSB_REG		= 0x13,
+  56:calypso/rtc.c **** 	COMP_MSB_REG		= 0x14,
+  57:calypso/rtc.c **** 	RES_PROG_REG		= 0x15,
+  58:calypso/rtc.c **** };
+  59:calypso/rtc.c **** 
+  60:calypso/rtc.c **** static int tick_ctr;
+  61:calypso/rtc.c **** 
+  62:calypso/rtc.c **** static void rtc_irq_tick(__unused enum irq_nr nr)
+  63:calypso/rtc.c **** {
+  17              		.loc 1 63 0
+  18              		.cfi_startproc
+  19              		@ args = 0, pretend = 0, frame = 0
+  20              		@ frame_needed = 0, uses_anonymous_args = 0
+  21              	.LVL0:
+  64:calypso/rtc.c **** 	if (tick_ctr & 1)
+  22              		.loc 1 64 0
+  23 0000 48309FE5 		ldr	r3, .L4
+  24 0004 003093E5 		ldr	r3, [r3, #0]
+  25 0008 010013E3 		tst	r3, #1
+  63:calypso/rtc.c **** {
+  26              		.loc 1 63 0
+  27 000c 04E02DE5 		str	lr, [sp, #-4]!
+  28              	.LCFI0:
+  29              		.cfi_def_cfa_offset 4
+  30 0010 3C309FE5 		ldr	r3, .L4+4
+  31              		.loc 1 64 0
+  32 0014 0400000A 		beq	.L2
+  33              		.cfi_offset 14, -4
+  34              	.LVL1:
+  35              	.LBB6:
+  36              	.LBB7:
+  37              		.file 2 "include/display.h"
+   1:include/display.h **** #ifndef _DISPLAY_DRIVER_H
+   2:include/display.h **** #define _DISPLAY_DRIVER_H
+   3:include/display.h **** 
+   4:include/display.h **** enum display_attr {
+   5:include/display.h **** 	DISP_ATTR_INVERT	= 0x0001,
+   6:include/display.h **** };
+   7:include/display.h **** 
+   8:include/display.h **** struct display_driver {
+   9:include/display.h **** 	char *name;
+  10:include/display.h **** 	void (*init)(void);
+  11:include/display.h **** 	void (*set_attr)(unsigned long attr);
+  12:include/display.h **** 	void (*unset_attr)(unsigned long attr);
+  13:include/display.h **** 	void (*clrscr)(void);
+  14:include/display.h **** 	void (*goto_xy)(int xpos, int ypos);
+  15:include/display.h **** 	void (*set_color)(int fgcolor, int bgcolor);
+  16:include/display.h **** 	int (*putc)(unsigned char c);
+  17:include/display.h **** 	int (*puts)(const char *str);
+  18:include/display.h **** };
+  19:include/display.h **** 
+  20:include/display.h **** extern struct display_driver *display;
+  21:include/display.h **** 
+  22:include/display.h **** static inline void display_init(void)
+  23:include/display.h **** {
+  24:include/display.h **** 	display->init();
+  25:include/display.h **** }
+  26:include/display.h **** static inline void display_set_attr(unsigned long attr)
+  27:include/display.h **** {
+  28:include/display.h **** 	display->set_attr(attr);
+  38              		.loc 2 28 0
+  39 0018 003093E5 		ldr	r3, [r3, #0]
+  40 001c 0100A0E3 		mov	r0, #1
+  41              	.LVL2:
+  42 0020 0FE0A0E1 		mov	lr, pc
+  43 0024 08F093E5 		ldr	pc, [r3, #8]
+  44 0028 030000EA 		b	.L3
+  45              	.LVL3:
+  46              	.L2:
+  47              	.LBE7:
+  48              	.LBE6:
+  49              	.LBB8:
+  50              	.LBB9:
+  29:include/display.h **** }
+  30:include/display.h **** static inline void display_unset_attr(unsigned long attr)
+  31:include/display.h **** {
+  32:include/display.h **** 	display->unset_attr(attr);
+  51              		.loc 2 32 0
+  52 002c 003093E5 		ldr	r3, [r3, #0]
+  53 0030 0100A0E3 		mov	r0, #1
+  54              	.LVL4:
+  55 0034 0FE0A0E1 		mov	lr, pc
+  56 0038 0CF093E5 		ldr	pc, [r3, #12]
+  57              	.LVL5:
+  58              	.L3:
+  59              	.LBE9:
+  60              	.LBE8:
+  65:calypso/rtc.c **** 		display_set_attr(DISP_ATTR_INVERT);
+  66:calypso/rtc.c **** 	else
+  67:calypso/rtc.c **** 		display_unset_attr(DISP_ATTR_INVERT);
+  68:calypso/rtc.c **** 	tick_ctr++;
+  61              		.loc 1 68 0
+  62 003c 0C309FE5 		ldr	r3, .L4
+  63 0040 002093E5 		ldr	r2, [r3, #0]
+  64 0044 012082E2 		add	r2, r2, #1
+  65 0048 002083E5 		str	r2, [r3, #0]
+  69:calypso/rtc.c **** }
+  66              		.loc 1 69 0
+  67 004c 04F09DE4 		ldr	pc, [sp], #4
+  68              	.L5:
+  69              		.align	2
+  70              	.L4:
+  71 0050 00000000 		.word	.LANCHOR0
+  72 0054 00000000 		.word	display
+  73              		.cfi_endproc
+  74              	.LFE5:
+  76              		.section	.text.rtc_init,"ax",%progbits
+  77              		.align	2
+  78              		.global	rtc_init
+  80              	rtc_init:
+  81              	.LFB6:
+  70:calypso/rtc.c **** 
+  71:calypso/rtc.c **** void rtc_init(void)
+  72:calypso/rtc.c **** {
+  82              		.loc 1 72 0
+  83              		.cfi_startproc
+  84              		@ args = 0, pretend = 0, frame = 0
+  85              		@ frame_needed = 0, uses_anonymous_args = 0
+  86 0000 04E02DE5 		str	lr, [sp, #-4]!
+  87              	.LCFI1:
+  88              		.cfi_def_cfa_offset 4
+  73:calypso/rtc.c **** 	irq_register_handler(IRQ_RTC_TIMER, &rtc_irq_tick);
+  89              		.loc 1 73 0
+  90 0004 0900A0E3 		mov	r0, #9
+  91 0008 3C109FE5 		ldr	r1, .L7
+  92              		.cfi_offset 14, -4
+  93 000c FEFFFFEB 		bl	irq_register_handler
+  74:calypso/rtc.c **** 	irq_config(IRQ_RTC_TIMER, 0, 1, 0);
+  94              		.loc 1 74 0
+  95 0010 0010A0E3 		mov	r1, #0
+  96 0014 0120A0E3 		mov	r2, #1
+  97 0018 0130A0E1 		mov	r3, r1
+  98 001c 0900A0E3 		mov	r0, #9
+  99 0020 FEFFFFEB 		bl	irq_config
+  75:calypso/rtc.c **** 	irq_enable(IRQ_RTC_TIMER);
+ 100              		.loc 1 75 0
+ 101 0024 0900A0E3 		mov	r0, #9
+ 102 0028 FEFFFFEB 		bl	irq_enable
+  76:calypso/rtc.c **** 
+  77:calypso/rtc.c **** 	/* clear power-up reset */
+  78:calypso/rtc.c **** 	writeb(0x80, RTC_REG(STATUS_REG));
+ 103              		.loc 1 78 0
+ 104 002c 1C309FE5 		ldr	r3, .L7+4
+ 105 0030 7F20E0E3 		mvn	r2, #127
+ 106 0034 EE2043E5 		strb	r2, [r3, #-238]
+  79:calypso/rtc.c **** 	/* enable RTC running */
+  80:calypso/rtc.c **** 	writeb(0x01, RTC_REG(CTRL_REG));
+ 107              		.loc 1 80 0
+ 108 0038 812082E2 		add	r2, r2, #129
+ 109 003c EF2043E5 		strb	r2, [r3, #-239]
+  81:calypso/rtc.c **** 	/* enable periodic interrupts every second */
+  82:calypso/rtc.c **** 	writeb(0x04, RTC_REG(INT_REG));
+ 110              		.loc 1 82 0
+ 111 0040 032082E2 		add	r2, r2, #3
+ 112 0044 ED2043E5 		strb	r2, [r3, #-237]
+  83:calypso/rtc.c **** }
+ 113              		.loc 1 83 0
+ 114 0048 04F09DE4 		ldr	pc, [sp], #4
+ 115              	.L8:
+ 116              		.align	2
+ 117              	.L7:
+ 118 004c 00000000 		.word	rtc_irq_tick
+ 119 0050 FF18FEFF 		.word	-124673
+ 120              		.cfi_endproc
+ 121              	.LFE6:
+ 123              		.bss
+ 124              		.align	2
+ 125              		.set	.LANCHOR0,. + 0
+ 128              	tick_ctr:
+ 129 0000 00000000 		.space	4
+ 130              		.text
+ 131              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 rtc.c
+     /tmp/ccEcq99F.s:12     .text.rtc_irq_tick:0000000000000000 $a
+     /tmp/ccEcq99F.s:14     .text.rtc_irq_tick:0000000000000000 rtc_irq_tick
+     /tmp/ccEcq99F.s:71     .text.rtc_irq_tick:0000000000000050 $d
+     /tmp/ccEcq99F.s:77     .text.rtc_init:0000000000000000 $a
+     /tmp/ccEcq99F.s:80     .text.rtc_init:0000000000000000 rtc_init
+     /tmp/ccEcq99F.s:118    .text.rtc_init:000000000000004c $d
+     /tmp/ccEcq99F.s:124    .bss:0000000000000000 $d
+     /tmp/ccEcq99F.s:128    .bss:0000000000000000 tick_ctr
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+display
+irq_register_handler
+irq_config
+irq_enable

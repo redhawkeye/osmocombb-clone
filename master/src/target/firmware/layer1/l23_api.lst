@@ -1,0 +1,3423 @@
+   1              		.file	"l23_api.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text.audio_set_enabled,"ax",%progbits
+  12              		.align	2
+  14              	audio_set_enabled:
+  15              	.LFB61:
+  16              		.file 1 "layer1/l23_api.c"
+   1:layer1/l23_api.c **** /* Synchronous part of GSM Layer 1: API to Layer2+ */
+   2:layer1/l23_api.c **** 
+   3:layer1/l23_api.c **** /* (C) 2010 by Holger Hans Peter Freyther <zecke@selfish.org>
+   4:layer1/l23_api.c ****  *
+   5:layer1/l23_api.c ****  * All Rights Reserved
+   6:layer1/l23_api.c ****  *
+   7:layer1/l23_api.c ****  * This program is free software; you can redistribute it and/or modify
+   8:layer1/l23_api.c ****  * it under the terms of the GNU General Public License as published by
+   9:layer1/l23_api.c ****  * the Free Software Foundation; either version 2 of the License, or
+  10:layer1/l23_api.c ****  * (at your option) any later version.
+  11:layer1/l23_api.c ****  *
+  12:layer1/l23_api.c ****  * This program is distributed in the hope that it will be useful,
+  13:layer1/l23_api.c ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  14:layer1/l23_api.c ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  15:layer1/l23_api.c ****  * GNU General Public License for more details.
+  16:layer1/l23_api.c ****  *
+  17:layer1/l23_api.c ****  * You should have received a copy of the GNU General Public License along
+  18:layer1/l23_api.c ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  19:layer1/l23_api.c ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  20:layer1/l23_api.c ****  *
+  21:layer1/l23_api.c ****  */
+  22:layer1/l23_api.c **** 
+  23:layer1/l23_api.c **** #define DEBUG
+  24:layer1/l23_api.c **** 
+  25:layer1/l23_api.c **** #include <stdint.h>
+  26:layer1/l23_api.c **** #include <stdio.h>
+  27:layer1/l23_api.c **** #include <string.h>
+  28:layer1/l23_api.c **** 
+  29:layer1/l23_api.c **** #include <debug.h>
+  30:layer1/l23_api.c **** #include <byteorder.h>
+  31:layer1/l23_api.c **** 
+  32:layer1/l23_api.c **** #include <asm/system.h>
+  33:layer1/l23_api.c **** 
+  34:layer1/l23_api.c **** #include <osmocom/core/msgb.h>
+  35:layer1/l23_api.c **** #include <osmocom/gsm/protocol/gsm_04_08.h>
+  36:layer1/l23_api.c **** #include <comm/sercomm.h>
+  37:layer1/l23_api.c **** 
+  38:layer1/l23_api.c **** #include <layer1/sync.h>
+  39:layer1/l23_api.c **** #include <layer1/async.h>
+  40:layer1/l23_api.c **** #include <layer1/mframe_sched.h>
+  41:layer1/l23_api.c **** #include <layer1/prim.h>
+  42:layer1/l23_api.c **** #include <layer1/tpu_window.h>
+  43:layer1/l23_api.c **** #include <layer1/sched_gsmtime.h>
+  44:layer1/l23_api.c **** 
+  45:layer1/l23_api.c **** #include <abb/twl3025.h>
+  46:layer1/l23_api.c **** #include <rf/trf6151.h>
+  47:layer1/l23_api.c **** #include <calypso/sim.h>
+  48:layer1/l23_api.c **** #include <calypso/dsp.h>
+  49:layer1/l23_api.c **** 
+  50:layer1/l23_api.c **** #include <l1ctl_proto.h>
+  51:layer1/l23_api.c **** 
+  52:layer1/l23_api.c **** /* the size we will allocate struct msgb* for HDLC */
+  53:layer1/l23_api.c **** #define L3_MSG_HEAD 4
+  54:layer1/l23_api.c **** #define L3_MSG_DATA 200
+  55:layer1/l23_api.c **** #define L3_MSG_SIZE (L3_MSG_HEAD + sizeof(struct l1ctl_hdr) + L3_MSG_DATA)
+  56:layer1/l23_api.c **** 
+  57:layer1/l23_api.c **** void (*l1a_l23_tx_cb)(struct msgb *msg) = NULL;
+  58:layer1/l23_api.c **** 
+  59:layer1/l23_api.c **** void l1_queue_for_l2(struct msgb *msg)
+  60:layer1/l23_api.c **** {
+  61:layer1/l23_api.c **** 	if (l1a_l23_tx_cb) {
+  62:layer1/l23_api.c **** 		l1a_l23_tx_cb(msg);
+  63:layer1/l23_api.c **** 		return;
+  64:layer1/l23_api.c **** 	}
+  65:layer1/l23_api.c **** 	/* forward via serial for now */
+  66:layer1/l23_api.c **** 	sercomm_sendmsg(SC_DLCI_L1A_L23, msg);
+  67:layer1/l23_api.c **** }
+  68:layer1/l23_api.c **** 
+  69:layer1/l23_api.c **** enum mf_type {
+  70:layer1/l23_api.c **** 	MFNONE,
+  71:layer1/l23_api.c **** 	MF51,
+  72:layer1/l23_api.c **** 	MF26ODD,
+  73:layer1/l23_api.c **** 	MF26EVEN
+  74:layer1/l23_api.c **** };
+  75:layer1/l23_api.c **** static uint32_t chan_nr2mf_task_mask(uint8_t chan_nr, uint8_t neigh_mode)
+  76:layer1/l23_api.c **** {
+  77:layer1/l23_api.c **** 	uint8_t cbits = chan_nr >> 3;
+  78:layer1/l23_api.c **** 	uint8_t tn = chan_nr & 0x7;
+  79:layer1/l23_api.c **** 	uint8_t lch_idx;
+  80:layer1/l23_api.c **** 	enum mframe_task master_task = 0;
+  81:layer1/l23_api.c **** 	uint32_t neigh_task = 0;
+  82:layer1/l23_api.c **** 	enum mf_type multiframe;
+  83:layer1/l23_api.c **** 
+  84:layer1/l23_api.c **** 	if (cbits == 0x01) {
+  85:layer1/l23_api.c **** 		lch_idx = 0;
+  86:layer1/l23_api.c **** 		master_task = (tn & 1) ? MF_TASK_TCH_F_ODD : MF_TASK_TCH_F_EVEN;
+  87:layer1/l23_api.c **** 		multiframe = (tn & 1) ? MF26ODD : MF26EVEN;
+  88:layer1/l23_api.c **** 	} else if ((cbits & 0x1e) == 0x02) {
+  89:layer1/l23_api.c **** 		lch_idx = cbits & 0x1;
+  90:layer1/l23_api.c **** 		master_task = MF_TASK_TCH_H_0 + lch_idx;
+  91:layer1/l23_api.c **** 	} else if ((cbits & 0x1c) == 0x04) {
+  92:layer1/l23_api.c **** 		lch_idx = cbits & 0x3;
+  93:layer1/l23_api.c **** 		master_task = MF_TASK_SDCCH4_0 + lch_idx;
+  94:layer1/l23_api.c **** 		multiframe = MF51;
+  95:layer1/l23_api.c **** 	} else if ((cbits & 0x18) == 0x08) {
+  96:layer1/l23_api.c **** 		lch_idx = cbits & 0x7;
+  97:layer1/l23_api.c **** 		master_task = MF_TASK_SDCCH8_0 + lch_idx;
+  98:layer1/l23_api.c **** 		multiframe = MF51;
+  99:layer1/l23_api.c **** #if 0
+ 100:layer1/l23_api.c **** 	} else if (cbits == 0x10) {
+ 101:layer1/l23_api.c **** 		/* FIXME: when to do extended BCCH? */
+ 102:layer1/l23_api.c **** 		master_task = MF_TASK_BCCH_NORM;
+ 103:layer1/l23_api.c **** 	} else if (cbits == 0x11 || cbits == 0x12) {
+ 104:layer1/l23_api.c **** 		/* FIXME: how to decide CCCH norm/extd? */
+ 105:layer1/l23_api.c **** 		master_task = MF_TASK_BCCH_CCCH;
+ 106:layer1/l23_api.c **** #endif
+ 107:layer1/l23_api.c **** 	}
+ 108:layer1/l23_api.c **** 	switch (neigh_mode) {
+ 109:layer1/l23_api.c **** 	case NEIGH_MODE_PM:
+ 110:layer1/l23_api.c **** 		switch (multiframe) {
+ 111:layer1/l23_api.c **** 		case MF51:
+ 112:layer1/l23_api.c **** 			neigh_task = (1 << MF_TASK_NEIGH_PM51);
+ 113:layer1/l23_api.c **** 			break;
+ 114:layer1/l23_api.c **** 		case MF26EVEN:
+ 115:layer1/l23_api.c **** 			neigh_task = (1 << MF_TASK_NEIGH_PM26E);
+ 116:layer1/l23_api.c **** 			break;
+ 117:layer1/l23_api.c **** 		case MF26ODD:
+ 118:layer1/l23_api.c **** 			neigh_task = (1 << MF_TASK_NEIGH_PM26O);
+ 119:layer1/l23_api.c **** 			break;
+ 120:layer1/l23_api.c **** 		}
+ 121:layer1/l23_api.c **** 		break;
+ 122:layer1/l23_api.c **** 	}
+ 123:layer1/l23_api.c **** 	return (1 << master_task) | neigh_task;
+ 124:layer1/l23_api.c **** }
+ 125:layer1/l23_api.c **** 
+ 126:layer1/l23_api.c **** static int  chan_nr2dchan_type(uint8_t chan_nr)
+ 127:layer1/l23_api.c **** {
+ 128:layer1/l23_api.c **** 	uint8_t cbits = chan_nr >> 3;
+ 129:layer1/l23_api.c **** 
+ 130:layer1/l23_api.c **** 	if (cbits == 0x01) {
+ 131:layer1/l23_api.c **** 		return GSM_DCHAN_TCH_F;
+ 132:layer1/l23_api.c **** 	} else if ((cbits & 0x1e) == 0x02) {
+ 133:layer1/l23_api.c **** 		return GSM_DCHAN_TCH_H;
+ 134:layer1/l23_api.c **** 	} else if ((cbits & 0x1c) == 0x04) {
+ 135:layer1/l23_api.c **** 		return GSM_DCHAN_SDCCH_4;
+ 136:layer1/l23_api.c **** 	} else if ((cbits & 0x18) == 0x08) {
+ 137:layer1/l23_api.c **** 		return GSM_DCHAN_SDCCH_8;
+ 138:layer1/l23_api.c **** 	}
+ 139:layer1/l23_api.c **** 	return GSM_DCHAN_UNKNOWN;
+ 140:layer1/l23_api.c **** }
+ 141:layer1/l23_api.c **** 
+ 142:layer1/l23_api.c **** static int chan_nr_is_tch(uint8_t chan_nr)
+ 143:layer1/l23_api.c **** {
+ 144:layer1/l23_api.c **** 	return ((chan_nr >> 3) == 0x01 ||		/* TCH/F */
+ 145:layer1/l23_api.c **** 		((chan_nr >> 3) & 0x1e) == 0x02);	/* TCH/H */
+ 146:layer1/l23_api.c **** }
+ 147:layer1/l23_api.c **** 
+ 148:layer1/l23_api.c **** static void audio_set_enabled(uint8_t tch_mode, uint8_t audio_mode)
+ 149:layer1/l23_api.c **** {
+  17              		.loc 1 149 0
+  18              		.cfi_startproc
+  19              		@ args = 0, pretend = 0, frame = 0
+  20              		@ frame_needed = 0, uses_anonymous_args = 0
+  21              	.LVL0:
+  22 0000 30402DE9 		stmfd	sp!, {r4, r5, lr}
+  23              	.LCFI0:
+  24              		.cfi_def_cfa_offset 12
+ 150:layer1/l23_api.c **** 	if (tch_mode == GSM48_CMODE_SIGN) {
+  25              		.loc 1 150 0
+  26 0004 005050E2 		subs	r5, r0, #0
+  27              		.cfi_offset 14, -4
+  28              		.cfi_offset 5, -8
+  29              		.cfi_offset 4, -12
+ 149:layer1/l23_api.c **** {
+  30              		.loc 1 149 0
+  31 0008 0140A0E1 		mov	r4, r1
+  32              		.loc 1 150 0
+  33 000c 0500001A 		bne	.L2
+ 151:layer1/l23_api.c **** 		twl3025_unit_enable(TWL3025_UNIT_VUL, 0);
+  34              		.loc 1 151 0
+  35 0010 040080E2 		add	r0, r0, #4
+  36              	.LVL1:
+  37 0014 0510A0E1 		mov	r1, r5
+  38              	.LVL2:
+  39 0018 FEFFFFEB 		bl	twl3025_unit_enable
+ 152:layer1/l23_api.c **** 		twl3025_unit_enable(TWL3025_UNIT_VDL, 0);
+  40              		.loc 1 152 0
+  41 001c 0300A0E3 		mov	r0, #3
+  42 0020 0510A0E1 		mov	r1, r5
+  43 0024 060000EA 		b	.L3
+  44              	.LVL3:
+  45              	.L2:
+ 153:layer1/l23_api.c **** 	} else {
+ 154:layer1/l23_api.c **** 		twl3025_unit_enable(TWL3025_UNIT_VUL,
+  46              		.loc 1 154 0
+  47 0028 0400A0E3 		mov	r0, #4
+  48              	.LVL4:
+  49 002c 011001E2 		and	r1, r1, #1
+  50              	.LVL5:
+  51 0030 FEFFFFEB 		bl	twl3025_unit_enable
+ 155:layer1/l23_api.c **** 		                    !!(audio_mode & AUDIO_TX_MICROPHONE));
+ 156:layer1/l23_api.c **** 		twl3025_unit_enable(TWL3025_UNIT_VDL,
+  52              		.loc 1 156 0
+  53 0034 040014E3 		tst	r4, #4
+  54 0038 0300A0E3 		mov	r0, #3
+  55 003c 0010A003 		moveq	r1, #0
+  56 0040 0110A013 		movne	r1, #1
+  57              	.L3:
+ 157:layer1/l23_api.c **** 		                    !!(audio_mode & AUDIO_RX_SPEAKER));
+ 158:layer1/l23_api.c **** 	}
+ 159:layer1/l23_api.c **** }
+  58              		.loc 1 159 0
+  59 0044 3040BDE8 		ldmfd	sp!, {r4, r5, lr}
+ 156:layer1/l23_api.c **** 		twl3025_unit_enable(TWL3025_UNIT_VDL,
+  60              		.loc 1 156 0
+  61 0048 FEFFFFEA 		b	twl3025_unit_enable
+  62              		.cfi_endproc
+  63              	.LFE61:
+  65              		.section	.text.msgb_put,"ax",%progbits
+  66              		.align	2
+  68              	msgb_put:
+  69              	.LFB35:
+  70              		.file 2 "../../shared/libosmocore/include/osmocom/core/msgb.h"
+   1:../../shared/libosmocore/include/osmocom/core/msgb.h **** #ifndef _MSGB_H
+   2:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define _MSGB_H
+   3:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+   4:../../shared/libosmocore/include/osmocom/core/msgb.h **** /* (C) 2008 by Harald Welte <laforge@gnumonks.org>
+   5:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * All Rights Reserved
+   6:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+   7:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This program is free software; you can redistribute it and/or modify
+   8:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * it under the terms of the GNU General Public License as published by
+   9:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * the Free Software Foundation; either version 2 of the License, or
+  10:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * (at your option) any later version.
+  11:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+  12:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This program is distributed in the hope that it will be useful,
+  13:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  14:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  15:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * GNU General Public License for more details.
+  16:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+  17:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * You should have received a copy of the GNU General Public License along
+  18:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  19:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  20:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+  21:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+  22:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  23:../../shared/libosmocore/include/osmocom/core/msgb.h **** #include <stdint.h>
+  24:../../shared/libosmocore/include/osmocom/core/msgb.h **** #include <osmocom/core/linuxlist.h>
+  25:../../shared/libosmocore/include/osmocom/core/msgb.h **** #include <osmocom/core/utils.h>
+  26:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  27:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \defgroup msgb Message buffers
+  28:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  @{
+  29:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+  30:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  31:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \file msgb.h
+  32:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \brief Osmocom message buffers
+  33:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * The Osmocom message buffers are modelled after the 'struct skb'
+  34:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * inside the Linux kernel network stack.  As they exist in userspace,
+  35:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * they are much simplified.  However, terminology such as headroom,
+  36:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * tailroom, push/pull/put etc. remains the same.
+  37:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+  38:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  39:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define MSGB_DEBUG
+  40:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  41:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief Osmocom message buffer */
+  42:../../shared/libosmocore/include/osmocom/core/msgb.h **** struct msgb {
+  43:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	struct llist_head list; /*!< \brief linked list header */
+  44:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  45:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  46:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	/* Part of which TRX logical channel we were received / transmitted */
+  47:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	/* FIXME: move them into the control buffer */
+  48:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	union {
+  49:../../shared/libosmocore/include/osmocom/core/msgb.h **** 		void *dst; /*!< \brief reference of origin/destination */
+  50:../../shared/libosmocore/include/osmocom/core/msgb.h **** 		struct gsm_bts_trx *trx;
+  51:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	};
+  52:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	struct gsm_lchan *lchan; /*!< \brief logical channel */
+  53:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  54:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *l1h; /*!< \brief pointer to Layer1 header (if any) */
+  55:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *l2h; /*!< \brief pointer to A-bis layer 2 header: OML, RSL(RLL), NS */
+  56:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *l3h; /*!< \brief pointer to Layer 3 header. For OML: FOM; RSL: 04.08; GPRS: BSSGP *
+  57:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *l4h; /*!< \brief pointer to layer 4 header */
+  58:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  59:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned long cb[5]; /*!< \brief control buffer */
+  60:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  61:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint16_t data_len;   /*!< \brief length of underlying data array */
+  62:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint16_t len;	     /*!< \brief length of bytes used in msgb */
+  63:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  64:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *head;	/*!< \brief start of underlying memory buffer */
+  65:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *tail;	/*!< \brief end of message in buffer */
+  66:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *data;	/*!< \brief start of message in buffer */
+  67:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char _data[0]; /*!< \brief optional immediate data array */
+  68:../../shared/libosmocore/include/osmocom/core/msgb.h **** };
+  69:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  70:../../shared/libosmocore/include/osmocom/core/msgb.h **** extern struct msgb *msgb_alloc(uint16_t size, const char *name);
+  71:../../shared/libosmocore/include/osmocom/core/msgb.h **** extern void msgb_free(struct msgb *m);
+  72:../../shared/libosmocore/include/osmocom/core/msgb.h **** extern void msgb_enqueue(struct llist_head *queue, struct msgb *msg);
+  73:../../shared/libosmocore/include/osmocom/core/msgb.h **** extern struct msgb *msgb_dequeue(struct llist_head *queue);
+  74:../../shared/libosmocore/include/osmocom/core/msgb.h **** extern void msgb_reset(struct msgb *m);
+  75:../../shared/libosmocore/include/osmocom/core/msgb.h **** uint16_t msgb_length(const struct msgb *msg);
+  76:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  77:../../shared/libosmocore/include/osmocom/core/msgb.h **** #ifdef MSGB_DEBUG
+  78:../../shared/libosmocore/include/osmocom/core/msgb.h **** #include <osmocom/core/panic.h>
+  79:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define MSGB_ABORT(msg, fmt, args ...) do {		\
+  80:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	osmo_panic("msgb(%p): " fmt, msg, ## args);	\
+  81:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	} while(0)
+  82:../../shared/libosmocore/include/osmocom/core/msgb.h **** #else
+  83:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define MSGB_ABORT(msg, fmt, args ...)
+  84:../../shared/libosmocore/include/osmocom/core/msgb.h **** #endif
+  85:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  86:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief obtain L1 header of msgb */
+  87:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define msgb_l1(m)	((void *)(m->l1h))
+  88:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief obtain L2 header of msgb */
+  89:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define msgb_l2(m)	((void *)(m->l2h))
+  90:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief obtain L3 header of msgb */
+  91:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define msgb_l3(m)	((void *)(m->l3h))
+  92:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief obtain SMS header of msgb */
+  93:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define msgb_sms(m)	((void *)(m->l4h))
+  94:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  95:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief determine length of L1 message
+  96:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+  97:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns size of L1 message in bytes
+  98:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+  99:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function computes the number of bytes between the tail of the
+ 100:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * message and the layer 1 header.
+ 101:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 102:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline unsigned int msgb_l1len(const struct msgb *msgb)
+ 103:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 104:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->tail - (uint8_t *)msgb_l1(msgb);
+ 105:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 106:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 107:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief determine length of L2 message
+ 108:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 109:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns size of L2 message in bytes
+ 110:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 111:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function computes the number of bytes between the tail of the
+ 112:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * message and the layer 2 header.
+ 113:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 114:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline unsigned int msgb_l2len(const struct msgb *msgb)
+ 115:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 116:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->tail - (uint8_t *)msgb_l2(msgb);
+ 117:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 118:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 119:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief determine length of L3 message
+ 120:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 121:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns size of L3 message in bytes
+ 122:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 123:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function computes the number of bytes between the tail of the
+ 124:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * message and the layer 3 header.
+ 125:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 126:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline unsigned int msgb_l3len(const struct msgb *msgb)
+ 127:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 128:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->tail - (uint8_t *)msgb_l3(msgb);
+ 129:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 130:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 131:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief determine the length of the header
+ 132:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 133:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns number of bytes between start of buffer and start of msg
+ 134:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 135:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function computes the length difference between the underlying
+ 136:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * data buffer and the used section of the \a msgb.
+ 137:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 138:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline unsigned int msgb_headlen(const struct msgb *msgb)
+ 139:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 140:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->len - msgb->data_len;
+ 141:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 142:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 143:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief determine how much tail room is left in msgb
+ 144:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 145:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns number of bytes remaining at end of msgb
+ 146:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 147:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function computes the amount of octets left in the underlying
+ 148:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * data buffer after the end of the message.
+ 149:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 150:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline int msgb_tailroom(const struct msgb *msgb)
+ 151:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 152:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return (msgb->head + msgb->data_len) - msgb->tail;
+ 153:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 154:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 155:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief determine the amount of headroom in msgb
+ 156:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 157:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns number of bytes left ahead of message start in msgb
+ 158:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 159:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function computes the amount of bytes left in the underlying
+ 160:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * data buffer before the start of the actual message.
+ 161:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 162:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline int msgb_headroom(const struct msgb *msgb)
+ 163:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 164:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return (msgb->data - msgb->head);
+ 165:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 166:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 167:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief append data to end of message buffer
+ 168:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 169:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] len number of bytes to append to message
+ 170:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns pointer to start of newly-appended data
+ 171:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 172:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function will move the \a tail pointer of the message buffer \a
+ 173:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * len bytes further, thus enlarging the message by \a len bytes.
+ 174:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 175:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * The return value is a pointer to start of the newly added section at
+ 176:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * the end of the message and can be used for actually filling/copying
+ 177:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * data into it.
+ 178:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 179:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline unsigned char *msgb_put(struct msgb *msgb, unsigned int len)
+ 180:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+  71              		.loc 2 180 0
+  72              		.cfi_startproc
+  73              		@ args = 0, pretend = 0, frame = 0
+  74              		@ frame_needed = 0, uses_anonymous_args = 0
+  75              	.LVL6:
+  76              	.LBB175:
+  77              	.LBB176:
+ 152:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return (msgb->head + msgb->data_len) - msgb->tail;
+  78              		.loc 2 152 0
+  79 0000 B433D0E1 		ldrh	r3, [r0, #52]
+  80 0004 382090E5 		ldr	r2, [r0, #56]
+  81              	.LBE176:
+  82              	.LBE175:
+  83              		.loc 2 180 0
+  84 0008 70402DE9 		stmfd	sp!, {r4, r5, r6, lr}
+  85              	.LCFI1:
+  86              		.cfi_def_cfa_offset 16
+ 181:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *tmp = msgb->tail;
+  87              		.loc 2 181 0
+  88 000c 3C6090E5 		ldr	r6, [r0, #60]
+  89              		.cfi_offset 14, -4
+  90              		.cfi_offset 6, -8
+  91              		.cfi_offset 5, -12
+  92              		.cfi_offset 4, -16
+  93              	.LVL7:
+  94              	.LBB178:
+  95              	.LBB177:
+ 152:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return (msgb->head + msgb->data_len) - msgb->tail;
+  96              		.loc 2 152 0
+  97 0010 032082E0 		add	r2, r2, r3
+  98 0014 022066E0 		rsb	r2, r6, r2
+  99              	.LBE177:
+ 100              	.LBE178:
+ 182:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	if (msgb_tailroom(msgb) < (int) len)
+ 101              		.loc 2 182 0
+ 102 0018 010052E1 		cmp	r2, r1
+ 180:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 103              		.loc 2 180 0
+ 104 001c 0040A0E1 		mov	r4, r0
+ 105              	.LVL8:
+ 106 0020 0150A0E1 		mov	r5, r1
+ 107              		.loc 2 182 0
+ 108              	.LVL9:
+ 183:../../shared/libosmocore/include/osmocom/core/msgb.h **** 		MSGB_ABORT(msgb, "Not enough tailroom msgb_push (%u < %u)\n",
+ 109              		.loc 2 183 0
+ 110 0024 28009FB5 		ldrlt	r0, .L6
+ 111              	.LVL10:
+ 112 0028 0410A0B1 		movlt	r1, r4
+ 113              	.LVL11:
+ 114 002c 0530A0B1 		movlt	r3, r5
+ 115 0030 FEFFFFBB 		bllt	osmo_panic
+ 116              	.LVL12:
+ 117              	.L5:
+ 184:../../shared/libosmocore/include/osmocom/core/msgb.h **** 			   msgb_tailroom(msgb), len);
+ 185:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->tail += len;
+ 118              		.loc 2 185 0
+ 119 0034 3C3094E5 		ldr	r3, [r4, #60]
+ 120 0038 053083E0 		add	r3, r3, r5
+ 121 003c 3C3084E5 		str	r3, [r4, #60]
+ 186:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len += len;
+ 122              		.loc 2 186 0
+ 123 0040 B633D4E1 		ldrh	r3, [r4, #54]
+ 124 0044 035085E0 		add	r5, r5, r3
+ 125              	.LVL13:
+ 126 0048 B653C4E1 		strh	r5, [r4, #54]	@ movhi
+ 187:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return tmp;
+ 188:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 127              		.loc 2 188 0
+ 128 004c 0600A0E1 		mov	r0, r6
+ 129 0050 7080BDE8 		ldmfd	sp!, {r4, r5, r6, pc}
+ 130              	.L7:
+ 131              		.align	2
+ 132              	.L6:
+ 133 0054 00000000 		.word	.LC0
+ 134              		.cfi_endproc
+ 135              	.LFE35:
+ 137              		.section	.text.l1a_l23_rx,"ax",%progbits
+ 138              		.align	2
+ 139              		.global	l1a_l23_rx
+ 141              	l1a_l23_rx:
+ 142              	.LFB82:
+ 160:layer1/l23_api.c **** 
+ 161:layer1/l23_api.c **** struct msgb *l1ctl_msgb_alloc(uint8_t msg_type)
+ 162:layer1/l23_api.c **** {
+ 163:layer1/l23_api.c **** 	struct msgb *msg;
+ 164:layer1/l23_api.c **** 	struct l1ctl_hdr *l1h;
+ 165:layer1/l23_api.c **** 
+ 166:layer1/l23_api.c **** 	msg = msgb_alloc_headroom(L3_MSG_SIZE, L3_MSG_HEAD, "l1ctl");
+ 167:layer1/l23_api.c **** 	if (!msg) {
+ 168:layer1/l23_api.c **** 		while (1) {
+ 169:layer1/l23_api.c **** 			puts("OOPS. Out of buffers...\n");
+ 170:layer1/l23_api.c **** 		}
+ 171:layer1/l23_api.c **** 
+ 172:layer1/l23_api.c **** 		return NULL;
+ 173:layer1/l23_api.c **** 	}
+ 174:layer1/l23_api.c **** 	l1h = (struct l1ctl_hdr *) msgb_put(msg, sizeof(*l1h));
+ 175:layer1/l23_api.c **** 	l1h->msg_type = msg_type;
+ 176:layer1/l23_api.c **** 	l1h->flags = 0;
+ 177:layer1/l23_api.c **** 
+ 178:layer1/l23_api.c **** 	msg->l1h = (uint8_t *)l1h;
+ 179:layer1/l23_api.c **** 
+ 180:layer1/l23_api.c **** 	return msg;
+ 181:layer1/l23_api.c **** }
+ 182:layer1/l23_api.c **** 
+ 183:layer1/l23_api.c **** struct msgb *l1_create_l2_msg(int msg_type, uint32_t fn, uint16_t snr,
+ 184:layer1/l23_api.c **** 			      uint16_t arfcn)
+ 185:layer1/l23_api.c **** {
+ 186:layer1/l23_api.c **** 	struct l1ctl_info_dl *dl;
+ 187:layer1/l23_api.c **** 	struct msgb *msg = l1ctl_msgb_alloc(msg_type);
+ 188:layer1/l23_api.c **** 
+ 189:layer1/l23_api.c **** 	dl = (struct l1ctl_info_dl *) msgb_put(msg, sizeof(*dl));
+ 190:layer1/l23_api.c **** 	dl->frame_nr = htonl(fn);
+ 191:layer1/l23_api.c **** 	dl->snr = snr;
+ 192:layer1/l23_api.c **** 	dl->band_arfcn = htons(arfcn);
+ 193:layer1/l23_api.c **** 
+ 194:layer1/l23_api.c **** 	return msg;
+ 195:layer1/l23_api.c **** }
+ 196:layer1/l23_api.c **** 
+ 197:layer1/l23_api.c **** /* receive a L1CTL_FBSB_REQ from L23 */
+ 198:layer1/l23_api.c **** static void l1ctl_rx_fbsb_req(struct msgb *msg)
+ 199:layer1/l23_api.c **** {
+ 200:layer1/l23_api.c **** 	struct l1ctl_hdr *l1h = (struct l1ctl_hdr *) msg->data;
+ 201:layer1/l23_api.c **** 	struct l1ctl_fbsb_req *sync_req = (struct l1ctl_fbsb_req *) l1h->data;
+ 202:layer1/l23_api.c **** 
+ 203:layer1/l23_api.c **** 	if (sizeof(*sync_req) > msg->len) {
+ 204:layer1/l23_api.c **** 		printf("Short sync msg. %u\n", msg->len);
+ 205:layer1/l23_api.c **** 		return;
+ 206:layer1/l23_api.c **** 	}
+ 207:layer1/l23_api.c **** 
+ 208:layer1/l23_api.c **** 	printd("L1CTL_FBSB_REQ (arfcn=%u, flags=0x%x)\n",
+ 209:layer1/l23_api.c **** 		ntohs(sync_req->band_arfcn), sync_req->flags);
+ 210:layer1/l23_api.c **** 
+ 211:layer1/l23_api.c **** 	/* reset scheduler and hardware */
+ 212:layer1/l23_api.c **** 	l1s_reset();
+ 213:layer1/l23_api.c **** 
+ 214:layer1/l23_api.c **** 	/* pre-set the CCCH mode */
+ 215:layer1/l23_api.c **** 	l1s.serving_cell.ccch_mode = sync_req->ccch_mode;
+ 216:layer1/l23_api.c **** 
+ 217:layer1/l23_api.c **** 	printd("Starting FCCH Recognition\n");
+ 218:layer1/l23_api.c **** 	l1s_fbsb_req(1, sync_req);
+ 219:layer1/l23_api.c **** }
+ 220:layer1/l23_api.c **** 
+ 221:layer1/l23_api.c **** /* receive a L1CTL_DM_EST_REQ from L23 */
+ 222:layer1/l23_api.c **** static void l1ctl_rx_dm_est_req(struct msgb *msg)
+ 223:layer1/l23_api.c **** {
+ 224:layer1/l23_api.c **** 	struct l1ctl_hdr *l1h = (struct l1ctl_hdr *) msg->data;
+ 225:layer1/l23_api.c **** 	struct l1ctl_info_ul *ul = (struct l1ctl_info_ul *) l1h->data;
+ 226:layer1/l23_api.c **** 	struct l1ctl_dm_est_req *est_req = (struct l1ctl_dm_est_req *) ul->payload;
+ 227:layer1/l23_api.c **** 
+ 228:layer1/l23_api.c **** 	printd("L1CTL_DM_EST_REQ (arfcn=%u, chan_nr=0x%02x, tsc=%u)\n",
+ 229:layer1/l23_api.c **** 		ntohs(est_req->h0.band_arfcn), ul->chan_nr, est_req->tsc);
+ 230:layer1/l23_api.c **** 
+ 231:layer1/l23_api.c **** 	/* disable neighbour cell measurement of C0 TS 0 */
+ 232:layer1/l23_api.c **** 	mframe_disable(MF_TASK_NEIGH_PM51_C0T0);
+ 233:layer1/l23_api.c **** 
+ 234:layer1/l23_api.c **** 	/* configure dedicated channel state */
+ 235:layer1/l23_api.c **** 	l1s.dedicated.type = chan_nr2dchan_type(ul->chan_nr);
+ 236:layer1/l23_api.c **** 	l1s.dedicated.tsc  = est_req->tsc;
+ 237:layer1/l23_api.c **** 	l1s.dedicated.tn   = ul->chan_nr & 0x7;
+ 238:layer1/l23_api.c **** 	l1s.dedicated.h    = est_req->h;
+ 239:layer1/l23_api.c **** 
+ 240:layer1/l23_api.c **** 	if (est_req->h) {
+ 241:layer1/l23_api.c **** 		int i;
+ 242:layer1/l23_api.c **** 		l1s.dedicated.h1.hsn  = est_req->h1.hsn;
+ 243:layer1/l23_api.c **** 		l1s.dedicated.h1.maio = est_req->h1.maio;
+ 244:layer1/l23_api.c **** 		l1s.dedicated.h1.n    = est_req->h1.n;
+ 245:layer1/l23_api.c **** 		for (i=0; i<est_req->h1.n; i++)
+ 246:layer1/l23_api.c **** 			l1s.dedicated.h1.ma[i] = ntohs(est_req->h1.ma[i]);
+ 247:layer1/l23_api.c **** 	} else {
+ 248:layer1/l23_api.c **** 		l1s.dedicated.h0.arfcn = ntohs(est_req->h0.band_arfcn);
+ 249:layer1/l23_api.c **** 	}
+ 250:layer1/l23_api.c **** 
+ 251:layer1/l23_api.c **** 	/* TCH config */
+ 252:layer1/l23_api.c **** 	if (chan_nr_is_tch(ul->chan_nr)) {
+ 253:layer1/l23_api.c **** 		/* Mode */
+ 254:layer1/l23_api.c **** 		l1a_tch_mode_set(est_req->tch_mode);
+ 255:layer1/l23_api.c **** 		l1a_audio_mode_set(est_req->audio_mode);
+ 256:layer1/l23_api.c **** 
+ 257:layer1/l23_api.c **** 		/* Sync */
+ 258:layer1/l23_api.c **** 		l1s.tch_sync = 1;	/* can be set without locking */
+ 259:layer1/l23_api.c **** 
+ 260:layer1/l23_api.c **** 		/* Audio path */
+ 261:layer1/l23_api.c **** 		audio_set_enabled(est_req->tch_mode, est_req->audio_mode);
+ 262:layer1/l23_api.c **** 	}
+ 263:layer1/l23_api.c **** 
+ 264:layer1/l23_api.c **** 	/* figure out which MF tasks to enable */
+ 265:layer1/l23_api.c **** 	l1a_mftask_set(chan_nr2mf_task_mask(ul->chan_nr, NEIGH_MODE_PM));
+ 266:layer1/l23_api.c **** }
+ 267:layer1/l23_api.c **** 
+ 268:layer1/l23_api.c **** /* receive a L1CTL_DM_FREQ_REQ from L23 */
+ 269:layer1/l23_api.c **** static void l1ctl_rx_dm_freq_req(struct msgb *msg)
+ 270:layer1/l23_api.c **** {
+ 271:layer1/l23_api.c **** 	struct l1ctl_hdr *l1h = (struct l1ctl_hdr *) msg->data;
+ 272:layer1/l23_api.c **** 	struct l1ctl_info_ul *ul = (struct l1ctl_info_ul *) l1h->data;
+ 273:layer1/l23_api.c **** 	struct l1ctl_dm_freq_req *freq_req =
+ 274:layer1/l23_api.c **** 			(struct l1ctl_dm_freq_req *) ul->payload;
+ 275:layer1/l23_api.c **** 
+ 276:layer1/l23_api.c **** 	printd("L1CTL_DM_FREQ_REQ (arfcn=%u, tsc=%u)\n",
+ 277:layer1/l23_api.c **** 		ntohs(freq_req->h0.band_arfcn), freq_req->tsc);
+ 278:layer1/l23_api.c **** 
+ 279:layer1/l23_api.c **** 	/* configure dedicated channel state */
+ 280:layer1/l23_api.c **** 	l1s.dedicated.st_tsc  = freq_req->tsc;
+ 281:layer1/l23_api.c **** 	l1s.dedicated.st_h    = freq_req->h;
+ 282:layer1/l23_api.c **** 
+ 283:layer1/l23_api.c **** 	if (freq_req->h) {
+ 284:layer1/l23_api.c **** 		int i;
+ 285:layer1/l23_api.c **** 		l1s.dedicated.st_h1.hsn  = freq_req->h1.hsn;
+ 286:layer1/l23_api.c **** 		l1s.dedicated.st_h1.maio = freq_req->h1.maio;
+ 287:layer1/l23_api.c **** 		l1s.dedicated.st_h1.n    = freq_req->h1.n;
+ 288:layer1/l23_api.c **** 		for (i=0; i<freq_req->h1.n; i++)
+ 289:layer1/l23_api.c **** 			l1s.dedicated.st_h1.ma[i] = ntohs(freq_req->h1.ma[i]);
+ 290:layer1/l23_api.c **** 	} else {
+ 291:layer1/l23_api.c **** 		l1s.dedicated.st_h0.arfcn = ntohs(freq_req->h0.band_arfcn);
+ 292:layer1/l23_api.c **** 	}
+ 293:layer1/l23_api.c **** 
+ 294:layer1/l23_api.c **** 	l1a_freq_req(ntohs(freq_req->fn));
+ 295:layer1/l23_api.c **** }
+ 296:layer1/l23_api.c **** 
+ 297:layer1/l23_api.c **** /* receive a L1CTL_CRYPTO_REQ from L23 */
+ 298:layer1/l23_api.c **** static void l1ctl_rx_crypto_req(struct msgb *msg)
+ 299:layer1/l23_api.c **** {
+ 300:layer1/l23_api.c **** 	struct l1ctl_hdr *l1h = (struct l1ctl_hdr *) msg->data;
+ 301:layer1/l23_api.c **** 	struct l1ctl_info_ul *ul = (struct l1ctl_info_ul *) l1h->data;
+ 302:layer1/l23_api.c **** 	struct l1ctl_crypto_req *cr = (struct l1ctl_crypto_req *) ul->payload;
+ 303:layer1/l23_api.c **** 	uint8_t key_len = msg->len - sizeof(*l1h) - sizeof(*ul) - sizeof(*cr);
+ 304:layer1/l23_api.c **** 
+ 305:layer1/l23_api.c **** 	printd("L1CTL_CRYPTO_REQ (algo=A5/%u, len=%u)\n", cr->algo, key_len);
+ 306:layer1/l23_api.c **** 
+ 307:layer1/l23_api.c **** 	if (cr->algo && key_len != 8) {
+ 308:layer1/l23_api.c **** 		printd("L1CTL_CRYPTO_REQ -> Invalid key\n");
+ 309:layer1/l23_api.c **** 		return;
+ 310:layer1/l23_api.c **** 	}
+ 311:layer1/l23_api.c **** 
+ 312:layer1/l23_api.c **** 	dsp_load_ciph_param(cr->algo, cr->key);
+ 313:layer1/l23_api.c **** }
+ 314:layer1/l23_api.c **** 
+ 315:layer1/l23_api.c **** /* receive a L1CTL_DM_REL_REQ from L23 */
+ 316:layer1/l23_api.c **** static void l1ctl_rx_dm_rel_req(struct msgb *msg)
+ 317:layer1/l23_api.c **** {
+ 318:layer1/l23_api.c **** 	struct l1ctl_hdr *l1h = (struct l1ctl_hdr *) msg->data;
+ 319:layer1/l23_api.c **** 	struct l1ctl_info_ul *ul = (struct l1ctl_info_ul *) l1h->data;
+ 320:layer1/l23_api.c **** 
+ 321:layer1/l23_api.c **** 	printd("L1CTL_DM_REL_REQ\n");
+ 322:layer1/l23_api.c **** 	l1a_mftask_set(0);
+ 323:layer1/l23_api.c **** 	l1s.dedicated.type = GSM_DCHAN_NONE;
+ 324:layer1/l23_api.c **** 	l1a_txq_msgb_flush(&l1s.tx_queue[L1S_CHAN_MAIN]);
+ 325:layer1/l23_api.c **** 	l1a_txq_msgb_flush(&l1s.tx_queue[L1S_CHAN_SACCH]);
+ 326:layer1/l23_api.c **** 	l1a_txq_msgb_flush(&l1s.tx_queue[L1S_CHAN_TRAFFIC]);
+ 327:layer1/l23_api.c **** 	l1a_meas_msgb_set(NULL);
+ 328:layer1/l23_api.c **** 	dsp_load_ciph_param(0, NULL);
+ 329:layer1/l23_api.c **** 	l1a_tch_mode_set(GSM48_CMODE_SIGN);
+ 330:layer1/l23_api.c **** 	audio_set_enabled(GSM48_CMODE_SIGN, 0);
+ 331:layer1/l23_api.c **** 	l1s.neigh_pm.n = 0;
+ 332:layer1/l23_api.c **** }
+ 333:layer1/l23_api.c **** 
+ 334:layer1/l23_api.c **** /* receive a L1CTL_PARAM_REQ from L23 */
+ 335:layer1/l23_api.c **** static void l1ctl_rx_param_req(struct msgb *msg)
+ 336:layer1/l23_api.c **** {
+ 337:layer1/l23_api.c **** 	struct l1ctl_hdr *l1h = (struct l1ctl_hdr *) msg->data;
+ 338:layer1/l23_api.c **** 	struct l1ctl_info_ul *ul = (struct l1ctl_info_ul *) l1h->data;
+ 339:layer1/l23_api.c **** 	struct l1ctl_par_req *par_req = (struct l1ctl_par_req *) ul->payload;
+ 340:layer1/l23_api.c **** 
+ 341:layer1/l23_api.c **** 	printd("L1CTL_PARAM_REQ (ta=%d, tx_power=%d)\n", par_req->ta,
+ 342:layer1/l23_api.c **** 		par_req->tx_power);
+ 343:layer1/l23_api.c **** 
+ 344:layer1/l23_api.c **** 	l1s.ta = par_req->ta;
+ 345:layer1/l23_api.c **** 	l1s.tx_power = par_req->tx_power;
+ 346:layer1/l23_api.c **** }
+ 347:layer1/l23_api.c **** 
+ 348:layer1/l23_api.c **** /* receive a L1CTL_RACH_REQ from L23 */
+ 349:layer1/l23_api.c **** static void l1ctl_rx_rach_req(struct msgb *msg)
+ 350:layer1/l23_api.c **** {
+ 351:layer1/l23_api.c **** 	struct l1ctl_hdr *l1h = (struct l1ctl_hdr *) msg->data;
+ 352:layer1/l23_api.c **** 	struct l1ctl_info_ul *ul = (struct l1ctl_info_ul *) l1h->data;
+ 353:layer1/l23_api.c **** 	struct l1ctl_rach_req *rach_req = (struct l1ctl_rach_req *) ul->payload;
+ 354:layer1/l23_api.c **** 
+ 355:layer1/l23_api.c **** 	printd("L1CTL_RACH_REQ (ra=0x%02x, offset=%d combined=%d)\n",
+ 356:layer1/l23_api.c **** 		rach_req->ra, ntohs(rach_req->offset), rach_req->combined);
+ 357:layer1/l23_api.c **** 
+ 358:layer1/l23_api.c **** 	l1a_rach_req(ntohs(rach_req->offset), rach_req->combined,
+ 359:layer1/l23_api.c **** 		rach_req->ra);
+ 360:layer1/l23_api.c **** }
+ 361:layer1/l23_api.c **** 
+ 362:layer1/l23_api.c **** /* receive a L1CTL_DATA_REQ from L23 */
+ 363:layer1/l23_api.c **** static void l1ctl_rx_data_req(struct msgb *msg)
+ 364:layer1/l23_api.c **** {
+ 365:layer1/l23_api.c **** 	struct l1ctl_hdr *l1h = (struct l1ctl_hdr *) msg->data;
+ 366:layer1/l23_api.c **** 	struct l1ctl_info_ul *ul = (struct l1ctl_info_ul *) l1h->data;
+ 367:layer1/l23_api.c **** 	struct l1ctl_data_ind *data_ind = (struct l1ctl_data_ind *) ul->payload;
+ 368:layer1/l23_api.c **** 	struct llist_head *tx_queue;
+ 369:layer1/l23_api.c **** 
+ 370:layer1/l23_api.c **** 	printd("L1CTL_DATA_REQ (link_id=0x%02x)\n", ul->link_id);
+ 371:layer1/l23_api.c **** 
+ 372:layer1/l23_api.c **** 	msg->l3h = data_ind->data;
+ 373:layer1/l23_api.c **** 	if (ul->link_id & 0x40) {
+ 374:layer1/l23_api.c **** 		struct gsm48_hdr *gh = (struct gsm48_hdr *)(data_ind->data + 5);
+ 375:layer1/l23_api.c **** 		if (gh->proto_discr == GSM48_PDISC_RR
+ 376:layer1/l23_api.c **** 		 && gh->msg_type == GSM48_MT_RR_MEAS_REP) {
+ 377:layer1/l23_api.c **** 			printd("updating measurement report\n");
+ 378:layer1/l23_api.c **** 			l1a_meas_msgb_set(msg);
+ 379:layer1/l23_api.c **** 			return;
+ 380:layer1/l23_api.c **** 		}
+ 381:layer1/l23_api.c **** 		tx_queue = &l1s.tx_queue[L1S_CHAN_SACCH];
+ 382:layer1/l23_api.c **** 	} else
+ 383:layer1/l23_api.c **** 		tx_queue = &l1s.tx_queue[L1S_CHAN_MAIN];
+ 384:layer1/l23_api.c **** 
+ 385:layer1/l23_api.c **** 	printd("ul=%p, ul->payload=%p, data_ind=%p, data_ind->data=%p l3h=%p\n",
+ 386:layer1/l23_api.c **** 		ul, ul->payload, data_ind, data_ind->data, msg->l3h);
+ 387:layer1/l23_api.c **** 
+ 388:layer1/l23_api.c **** 	l1a_txq_msgb_enq(tx_queue, msg);
+ 389:layer1/l23_api.c **** }
+ 390:layer1/l23_api.c **** 
+ 391:layer1/l23_api.c **** /* receive a L1CTL_PM_REQ from L23 */
+ 392:layer1/l23_api.c **** static void l1ctl_rx_pm_req(struct msgb *msg)
+ 393:layer1/l23_api.c **** {
+ 394:layer1/l23_api.c **** 	struct l1ctl_hdr *l1h = (struct l1ctl_hdr *) msg->data;
+ 395:layer1/l23_api.c **** 	struct l1ctl_pm_req *pm_req = (struct l1ctl_pm_req *) l1h->data;
+ 396:layer1/l23_api.c **** 
+ 397:layer1/l23_api.c **** 	switch (pm_req->type) {
+ 398:layer1/l23_api.c **** 	case 1:
+ 399:layer1/l23_api.c **** 		l1s.pm.mode = 1;
+ 400:layer1/l23_api.c **** 		l1s.pm.range.arfcn_start =
+ 401:layer1/l23_api.c **** 				ntohs(pm_req->range.band_arfcn_from);
+ 402:layer1/l23_api.c **** 		l1s.pm.range.arfcn_next =
+ 403:layer1/l23_api.c **** 				ntohs(pm_req->range.band_arfcn_from);
+ 404:layer1/l23_api.c **** 		l1s.pm.range.arfcn_end =
+ 405:layer1/l23_api.c **** 				ntohs(pm_req->range.band_arfcn_to);
+ 406:layer1/l23_api.c **** 		printf("L1CTL_PM_REQ start=%u end=%u\n",
+ 407:layer1/l23_api.c **** 			l1s.pm.range.arfcn_start, l1s.pm.range.arfcn_end);
+ 408:layer1/l23_api.c **** 		break;
+ 409:layer1/l23_api.c **** 	}
+ 410:layer1/l23_api.c **** 	l1s_reset_hw(); /* must reset, otherwise measurement results are delayed */
+ 411:layer1/l23_api.c **** 	l1s_pm_test(1, l1s.pm.range.arfcn_next);
+ 412:layer1/l23_api.c **** }
+ 413:layer1/l23_api.c **** 
+ 414:layer1/l23_api.c **** /* Transmit a L1CTL_RESET_IND or L1CTL_RESET_CONF */
+ 415:layer1/l23_api.c **** void l1ctl_tx_reset(uint8_t msg_type, uint8_t reset_type)
+ 416:layer1/l23_api.c **** {
+ 417:layer1/l23_api.c **** 	struct msgb *msg = l1ctl_msgb_alloc(msg_type);
+ 418:layer1/l23_api.c **** 	struct l1ctl_reset *reset_resp;
+ 419:layer1/l23_api.c **** 	reset_resp = (struct l1ctl_reset *)
+ 420:layer1/l23_api.c **** 				msgb_put(msg, sizeof(*reset_resp));
+ 421:layer1/l23_api.c **** 	reset_resp->type = reset_type;
+ 422:layer1/l23_api.c **** 
+ 423:layer1/l23_api.c **** 	l1_queue_for_l2(msg);
+ 424:layer1/l23_api.c **** }
+ 425:layer1/l23_api.c **** 
+ 426:layer1/l23_api.c **** /* receive a L1CTL_RESET_REQ from L23 */
+ 427:layer1/l23_api.c **** static void l1ctl_rx_reset_req(struct msgb *msg)
+ 428:layer1/l23_api.c **** {
+ 429:layer1/l23_api.c **** 	struct l1ctl_hdr *l1h = (struct l1ctl_hdr *) msg->data;
+ 430:layer1/l23_api.c **** 	struct l1ctl_reset *reset_req =
+ 431:layer1/l23_api.c **** 				(struct l1ctl_reset *) l1h->data;
+ 432:layer1/l23_api.c **** 
+ 433:layer1/l23_api.c **** 	switch (reset_req->type) {
+ 434:layer1/l23_api.c **** 	case L1CTL_RES_T_FULL:
+ 435:layer1/l23_api.c **** 		printf("L1CTL_RESET_REQ: FULL!\n");
+ 436:layer1/l23_api.c **** 		l1s_reset();
+ 437:layer1/l23_api.c **** 		l1s_reset_hw();
+ 438:layer1/l23_api.c **** 		audio_set_enabled(GSM48_CMODE_SIGN, 0);
+ 439:layer1/l23_api.c **** 		l1ctl_tx_reset(L1CTL_RESET_CONF, reset_req->type);
+ 440:layer1/l23_api.c **** 		break;
+ 441:layer1/l23_api.c **** 	case L1CTL_RES_T_SCHED:
+ 442:layer1/l23_api.c **** 		printf("L1CTL_RESET_REQ: SCHED!\n");
+ 443:layer1/l23_api.c **** 		l1ctl_tx_reset(L1CTL_RESET_CONF, reset_req->type);
+ 444:layer1/l23_api.c **** 		sched_gsmtime_reset();
+ 445:layer1/l23_api.c **** 		break;
+ 446:layer1/l23_api.c **** 	default:
+ 447:layer1/l23_api.c **** 		printf("unknown L1CTL_RESET_REQ type\n");
+ 448:layer1/l23_api.c **** 		break;
+ 449:layer1/l23_api.c **** 	}
+ 450:layer1/l23_api.c **** }
+ 451:layer1/l23_api.c **** 
+ 452:layer1/l23_api.c **** /* Transmit a L1CTL_CCCH_MODE_CONF */
+ 453:layer1/l23_api.c **** static void l1ctl_tx_ccch_mode_conf(uint8_t ccch_mode)
+ 454:layer1/l23_api.c **** {
+ 455:layer1/l23_api.c **** 	struct msgb *msg = l1ctl_msgb_alloc(L1CTL_CCCH_MODE_CONF);
+ 456:layer1/l23_api.c **** 	struct l1ctl_ccch_mode_conf *mode_conf;
+ 457:layer1/l23_api.c **** 	mode_conf = (struct l1ctl_ccch_mode_conf *)
+ 458:layer1/l23_api.c **** 				msgb_put(msg, sizeof(*mode_conf));
+ 459:layer1/l23_api.c **** 	mode_conf->ccch_mode = ccch_mode;
+ 460:layer1/l23_api.c **** 
+ 461:layer1/l23_api.c **** 	l1_queue_for_l2(msg);
+ 462:layer1/l23_api.c **** }
+ 463:layer1/l23_api.c **** 
+ 464:layer1/l23_api.c **** /* receive a L1CTL_CCCH_MODE_REQ from L23 */
+ 465:layer1/l23_api.c **** static void l1ctl_rx_ccch_mode_req(struct msgb *msg)
+ 466:layer1/l23_api.c **** {
+ 467:layer1/l23_api.c **** 	struct l1ctl_hdr *l1h = (struct l1ctl_hdr *) msg->data;
+ 468:layer1/l23_api.c **** 	struct l1ctl_ccch_mode_req *ccch_mode_req =
+ 469:layer1/l23_api.c **** 		(struct l1ctl_ccch_mode_req *) l1h->data;
+ 470:layer1/l23_api.c **** 	uint8_t ccch_mode = ccch_mode_req->ccch_mode;
+ 471:layer1/l23_api.c **** 
+ 472:layer1/l23_api.c **** 	/* pre-set the CCCH mode */
+ 473:layer1/l23_api.c **** 	l1s.serving_cell.ccch_mode = ccch_mode;
+ 474:layer1/l23_api.c **** 
+ 475:layer1/l23_api.c **** 	/* Update task */
+ 476:layer1/l23_api.c **** 	mframe_disable(MF_TASK_CCCH_COMB);
+ 477:layer1/l23_api.c **** 	mframe_disable(MF_TASK_CCCH);
+ 478:layer1/l23_api.c **** 
+ 479:layer1/l23_api.c **** 	if (ccch_mode == CCCH_MODE_COMBINED)
+ 480:layer1/l23_api.c **** 		mframe_enable(MF_TASK_CCCH_COMB);
+ 481:layer1/l23_api.c **** 	else if (ccch_mode == CCCH_MODE_NON_COMBINED)
+ 482:layer1/l23_api.c **** 		mframe_enable(MF_TASK_CCCH);
+ 483:layer1/l23_api.c **** 
+ 484:layer1/l23_api.c **** 	l1ctl_tx_ccch_mode_conf(ccch_mode);
+ 485:layer1/l23_api.c **** }
+ 486:layer1/l23_api.c **** 
+ 487:layer1/l23_api.c **** /* Transmit a L1CTL_TCH_MODE_CONF */
+ 488:layer1/l23_api.c **** static void l1ctl_tx_tch_mode_conf(uint8_t tch_mode, uint8_t audio_mode)
+ 489:layer1/l23_api.c **** {
+ 490:layer1/l23_api.c **** 	struct msgb *msg = l1ctl_msgb_alloc(L1CTL_TCH_MODE_CONF);
+ 491:layer1/l23_api.c **** 	struct l1ctl_tch_mode_conf *mode_conf;
+ 492:layer1/l23_api.c **** 	mode_conf = (struct l1ctl_tch_mode_conf *)
+ 493:layer1/l23_api.c **** 				msgb_put(msg, sizeof(*mode_conf));
+ 494:layer1/l23_api.c **** 	mode_conf->tch_mode = tch_mode;
+ 495:layer1/l23_api.c **** 	mode_conf->audio_mode = audio_mode;
+ 496:layer1/l23_api.c **** 
+ 497:layer1/l23_api.c **** 	l1_queue_for_l2(msg);
+ 498:layer1/l23_api.c **** }
+ 499:layer1/l23_api.c **** 
+ 500:layer1/l23_api.c **** /* receive a L1CTL_TCH_MODE_REQ from L23 */
+ 501:layer1/l23_api.c **** static void l1ctl_rx_tch_mode_req(struct msgb *msg)
+ 502:layer1/l23_api.c **** {
+ 503:layer1/l23_api.c **** 	struct l1ctl_hdr *l1h = (struct l1ctl_hdr *) msg->data;
+ 504:layer1/l23_api.c **** 	struct l1ctl_tch_mode_req *tch_mode_req =
+ 505:layer1/l23_api.c **** 		(struct l1ctl_tch_mode_req *) l1h->data;
+ 506:layer1/l23_api.c **** 	uint8_t tch_mode = tch_mode_req->tch_mode;
+ 507:layer1/l23_api.c **** 	uint8_t audio_mode = tch_mode_req->audio_mode;
+ 508:layer1/l23_api.c **** 
+ 509:layer1/l23_api.c **** 	printd("L1CTL_TCH_MODE_REQ (tch_mode=0x%02x audio_mode=0x%02x)\n",
+ 510:layer1/l23_api.c **** 		tch_mode, audio_mode);
+ 511:layer1/l23_api.c **** 	tch_mode = l1a_tch_mode_set(tch_mode);
+ 512:layer1/l23_api.c **** 	audio_mode = l1a_audio_mode_set(audio_mode);
+ 513:layer1/l23_api.c **** 
+ 514:layer1/l23_api.c **** 	audio_set_enabled(tch_mode, audio_mode);
+ 515:layer1/l23_api.c **** 
+ 516:layer1/l23_api.c **** 	l1s.tch_sync = 1; /* Needed for audio to work */
+ 517:layer1/l23_api.c **** 
+ 518:layer1/l23_api.c **** 	l1ctl_tx_tch_mode_conf(tch_mode, audio_mode);
+ 519:layer1/l23_api.c **** }
+ 520:layer1/l23_api.c **** 
+ 521:layer1/l23_api.c **** /* receive a L1CTL_NEIGH_PM_REQ from L23 */
+ 522:layer1/l23_api.c **** static void l1ctl_rx_neigh_pm_req(struct msgb *msg)
+ 523:layer1/l23_api.c **** {
+ 524:layer1/l23_api.c **** 	struct l1ctl_hdr *l1h = (struct l1ctl_hdr *) msg->data;
+ 525:layer1/l23_api.c **** 	struct l1ctl_neigh_pm_req *pm_req =
+ 526:layer1/l23_api.c **** 		(struct l1ctl_neigh_pm_req *) l1h->data;
+ 527:layer1/l23_api.c **** 	int i;
+ 528:layer1/l23_api.c **** 
+ 529:layer1/l23_api.c **** 	/* reset list in order to prevent race condition */
+ 530:layer1/l23_api.c **** 	l1s.neigh_pm.n = 0; /* atomic */
+ 531:layer1/l23_api.c **** 	l1s.neigh_pm.second = 0;
+ 532:layer1/l23_api.c **** 	/* now reset pointer and fill list */
+ 533:layer1/l23_api.c **** 	l1s.neigh_pm.pos = 0;
+ 534:layer1/l23_api.c **** 	l1s.neigh_pm.running = 0;
+ 535:layer1/l23_api.c **** 	for (i = 0; i < pm_req->n; i++) {
+ 536:layer1/l23_api.c **** 		l1s.neigh_pm.band_arfcn[i] = ntohs(pm_req->band_arfcn[i]);
+ 537:layer1/l23_api.c **** 		l1s.neigh_pm.tn[i] = pm_req->tn[i];
+ 538:layer1/l23_api.c **** 	}
+ 539:layer1/l23_api.c **** 	printf("L1CTL_NEIGH_PM_REQ new list with %u entries\n", pm_req->n);
+ 540:layer1/l23_api.c **** 	l1s.neigh_pm.n = pm_req->n; /* atomic */
+ 541:layer1/l23_api.c **** 
+ 542:layer1/l23_api.c **** 	/* on C0 enable PM on frame 51 */
+ 543:layer1/l23_api.c **** 	if (l1s.dedicated.type == GSM_DCHAN_NONE)
+ 544:layer1/l23_api.c **** 		mframe_enable(MF_TASK_NEIGH_PM51_C0T0);
+ 545:layer1/l23_api.c **** }
+ 546:layer1/l23_api.c **** 
+ 547:layer1/l23_api.c **** /* receive a L1CTL_TRAFFIC_REQ from L23 */
+ 548:layer1/l23_api.c **** static void l1ctl_rx_traffic_req(struct msgb *msg)
+ 549:layer1/l23_api.c **** {
+ 550:layer1/l23_api.c **** 	struct l1ctl_hdr *l1h = (struct l1ctl_hdr *) msg->data;
+ 551:layer1/l23_api.c **** 	struct l1ctl_info_ul *ul = (struct l1ctl_info_ul *) l1h->data;
+ 552:layer1/l23_api.c **** 	struct l1ctl_traffic_req *tr = (struct l1ctl_traffic_req *) ul->payload;
+ 553:layer1/l23_api.c **** 	int num = 0;
+ 554:layer1/l23_api.c **** 
+ 555:layer1/l23_api.c **** 	/* printd("L1CTL_TRAFFIC_REQ\n"); */ /* Very verbose, can overwelm serial */
+ 556:layer1/l23_api.c **** 
+ 557:layer1/l23_api.c **** 	msg->l2h = tr->data;
+ 558:layer1/l23_api.c **** 
+ 559:layer1/l23_api.c **** 	num = l1a_txq_msgb_count(&l1s.tx_queue[L1S_CHAN_TRAFFIC]);
+ 560:layer1/l23_api.c **** 	if (num >= 4) {
+ 561:layer1/l23_api.c **** 		printd("dropping traffic frame\n");
+ 562:layer1/l23_api.c **** 		msgb_free(msg);
+ 563:layer1/l23_api.c **** 		return;
+ 564:layer1/l23_api.c **** 	}
+ 565:layer1/l23_api.c **** 
+ 566:layer1/l23_api.c **** 	l1a_txq_msgb_enq(&l1s.tx_queue[L1S_CHAN_TRAFFIC], msg);
+ 567:layer1/l23_api.c **** }
+ 568:layer1/l23_api.c **** 
+ 569:layer1/l23_api.c **** static void l1ctl_sim_req(struct msgb *msg)
+ 570:layer1/l23_api.c **** {
+ 571:layer1/l23_api.c **** 	uint16_t len = msg->len - sizeof(struct l1ctl_hdr);
+ 572:layer1/l23_api.c **** 	uint8_t *data = msg->data + sizeof(struct l1ctl_hdr);
+ 573:layer1/l23_api.c **** 
+ 574:layer1/l23_api.c **** #if 1 /* for debugging only */
+ 575:layer1/l23_api.c **** 	{
+ 576:layer1/l23_api.c **** 		int i;
+ 577:layer1/l23_api.c **** 		printf("SIM Request (%u): ", len);
+ 578:layer1/l23_api.c **** 		for (i = 0; i < len; i++)
+ 579:layer1/l23_api.c **** 			printf("%02x ", data[i]);
+ 580:layer1/l23_api.c **** 		puts("\n");
+ 581:layer1/l23_api.c **** 	}
+ 582:layer1/l23_api.c **** #endif
+ 583:layer1/l23_api.c **** 
+ 584:layer1/l23_api.c ****    sim_apdu(len, data);
+ 585:layer1/l23_api.c **** }
+ 586:layer1/l23_api.c **** 
+ 587:layer1/l23_api.c **** static struct llist_head l23_rx_queue = LLIST_HEAD_INIT(l23_rx_queue);
+ 588:layer1/l23_api.c **** 
+ 589:layer1/l23_api.c **** /* callback from SERCOMM when L2 sends a message to L1 */
+ 590:layer1/l23_api.c **** void l1a_l23_rx(uint8_t dlci, struct msgb *msg)
+ 591:layer1/l23_api.c **** {
+ 143              		.loc 1 591 0
+ 144              		.cfi_startproc
+ 145              		@ args = 0, pretend = 0, frame = 0
+ 146              		@ frame_needed = 0, uses_anonymous_args = 0
+ 147              	.LVL14:
+ 148 0000 10402DE9 		stmfd	sp!, {r4, lr}
+ 149              	.LCFI2:
+ 150              		.cfi_def_cfa_offset 8
+ 151              	.LBB179:
+ 592:layer1/l23_api.c **** 	unsigned long flags;
+ 593:layer1/l23_api.c **** 
+ 594:layer1/l23_api.c **** 	local_firq_save(flags);
+ 152              		.loc 1 594 0
+ 153              	@ 594 "layer1/l23_api.c" 1
+ 154 0004 00400FE1 		mrs	r4, cpsr		@ local_firq_save
+ 155 0008 C03084E3 		orr	r3, r4, #0xC0
+ 156 000c 03F021E1 		msr	cpsr_c, r3
+ 157              	@ 0 "" 2
+ 158              	.LBE179:
+ 595:layer1/l23_api.c **** 	msgb_enqueue(&l23_rx_queue, msg);
+ 159              		.loc 1 595 0
+ 160 0010 08009FE5 		ldr	r0, .L9
+ 161              	.LVL15:
+ 162              		.cfi_offset 14, -4
+ 163              		.cfi_offset 4, -8
+ 164 0014 FEFFFFEB 		bl	msgb_enqueue
+ 165              	.LVL16:
+ 596:layer1/l23_api.c **** 	local_irq_restore(flags);
+ 166              		.loc 1 596 0
+ 167              	@ 596 "layer1/l23_api.c" 1
+ 168 0018 04F021E1 		msr	cpsr_c, r4		@ local_irq_restore
+ 169              	
+ 170              	@ 0 "" 2
+ 597:layer1/l23_api.c **** }
+ 171              		.loc 1 597 0
+ 172 001c 1080BDE8 		ldmfd	sp!, {r4, pc}
+ 173              	.L10:
+ 174              		.align	2
+ 175              	.L9:
+ 176 0020 00000000 		.word	.LANCHOR0
+ 177              		.cfi_endproc
+ 178              	.LFE82:
+ 180              		.section	.text.l1_queue_for_l2,"ax",%progbits
+ 181              		.align	2
+ 182              		.global	l1_queue_for_l2
+ 184              	l1_queue_for_l2:
+ 185              	.LFB57:
+  60:layer1/l23_api.c **** {
+ 186              		.loc 1 60 0
+ 187              		.cfi_startproc
+ 188              		@ args = 0, pretend = 0, frame = 0
+ 189              		@ frame_needed = 0, uses_anonymous_args = 0
+ 190              	.LVL17:
+  61:layer1/l23_api.c **** 	if (l1a_l23_tx_cb) {
+ 191              		.loc 1 61 0
+ 192 0000 28309FE5 		ldr	r3, .L14
+ 193 0004 003093E5 		ldr	r3, [r3, #0]
+ 194 0008 000053E3 		cmp	r3, #0
+  60:layer1/l23_api.c **** {
+ 195              		.loc 1 60 0
+ 196 000c 04E02DE5 		str	lr, [sp, #-4]!
+ 197              	.LCFI3:
+ 198              		.cfi_def_cfa_offset 4
+  60:layer1/l23_api.c **** {
+ 199              		.loc 1 60 0
+ 200 0010 0010A0E1 		mov	r1, r0
+  61:layer1/l23_api.c **** 	if (l1a_l23_tx_cb) {
+ 201              		.loc 1 61 0
+ 202 0014 0200000A 		beq	.L12
+ 203              		.cfi_offset 14, -4
+  62:layer1/l23_api.c **** 		l1a_l23_tx_cb(msg);
+ 204              		.loc 1 62 0
+ 205 0018 0FE0A0E1 		mov	lr, pc
+ 206 001c 13FF2FE1 		bx	r3
+ 207              	.LVL18:
+  67:layer1/l23_api.c **** }
+ 208              		.loc 1 67 0
+ 209 0020 04F09DE4 		ldr	pc, [sp], #4
+ 210              	.LVL19:
+ 211              	.L12:
+  66:layer1/l23_api.c **** 	sercomm_sendmsg(SC_DLCI_L1A_L23, msg);
+ 212              		.loc 1 66 0
+ 213 0024 0500A0E3 		mov	r0, #5
+ 214              	.LVL20:
+  67:layer1/l23_api.c **** }
+ 215              		.loc 1 67 0
+ 216 0028 04E09DE4 		ldr	lr, [sp], #4
+  66:layer1/l23_api.c **** 	sercomm_sendmsg(SC_DLCI_L1A_L23, msg);
+ 217              		.loc 1 66 0
+ 218 002c FEFFFFEA 		b	sercomm_sendmsg
+ 219              	.LVL21:
+ 220              	.L15:
+ 221              		.align	2
+ 222              	.L14:
+ 223 0030 00000000 		.word	.LANCHOR1
+ 224              		.cfi_endproc
+ 225              	.LFE57:
+ 227              		.section	.text.l1ctl_msgb_alloc,"ax",%progbits
+ 228              		.align	2
+ 229              		.global	l1ctl_msgb_alloc
+ 231              	l1ctl_msgb_alloc:
+ 232              	.LFB62:
+ 162:layer1/l23_api.c **** {
+ 233              		.loc 1 162 0
+ 234              		.cfi_startproc
+ 235              		@ args = 0, pretend = 0, frame = 0
+ 236              		@ frame_needed = 0, uses_anonymous_args = 0
+ 237              	.LVL22:
+ 238 0000 30402DE9 		stmfd	sp!, {r4, r5, lr}
+ 239              	.LCFI4:
+ 240              		.cfi_def_cfa_offset 12
+ 241              	.LBB180:
+ 242              	.LBB181:
+ 189:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 190:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief append a uint8 value to the end of the message
+ 191:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 192:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] word unsigned 8bit byte to be appended
+ 193:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 194:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline void msgb_put_u8(struct msgb *msgb, uint8_t word)
+ 195:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 196:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint8_t *space = msgb_put(msgb, 1);
+ 197:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	space[0] = word & 0xFF;
+ 198:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 199:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 200:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief append a uint16 value to the end of the message
+ 201:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 202:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] word unsigned 16bit byte to be appended
+ 203:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 204:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline void msgb_put_u16(struct msgb *msgb, uint16_t word)
+ 205:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 206:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint8_t *space = msgb_put(msgb, 2);
+ 207:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	space[0] = word >> 8 & 0xFF;
+ 208:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	space[1] = word & 0xFF;
+ 209:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 210:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 211:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief append a uint32 value to the end of the message
+ 212:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 213:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] word unsigned 32bit byte to be appended
+ 214:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 215:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline void msgb_put_u32(struct msgb *msgb, uint32_t word)
+ 216:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 217:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint8_t *space = msgb_put(msgb, 4);
+ 218:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	space[0] = word >> 24 & 0xFF;
+ 219:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	space[1] = word >> 16 & 0xFF;
+ 220:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	space[2] = word >> 8 & 0xFF;
+ 221:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	space[3] = word & 0xFF;
+ 222:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 223:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 224:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief remove data from end of message
+ 225:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 226:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] len number of bytes to remove from end
+ 227:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 228:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline unsigned char *msgb_get(struct msgb *msgb, unsigned int len)
+ 229:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 230:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *tmp = msgb->data - len;
+ 231:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	if (msgb_length(msgb) < len)
+ 232:../../shared/libosmocore/include/osmocom/core/msgb.h **** 		MSGB_ABORT(msgb, "msgb too small to get %u (len %u)\n",
+ 233:../../shared/libosmocore/include/osmocom/core/msgb.h **** 			   len, msgb_length(msgb));
+ 234:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->tail -= len;
+ 235:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len -= len;
+ 236:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return tmp;
+ 237:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 238:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief remove uint8 from end of message
+ 239:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 240:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns 8bit value taken from end of msgb
+ 241:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 242:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline uint8_t msgb_get_u8(struct msgb *msgb)
+ 243:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 244:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint8_t *space = msgb_get(msgb, 1);
+ 245:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return space[0];
+ 246:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 247:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief remove uint16 from end of message
+ 248:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 249:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns 16bit value taken from end of msgb
+ 250:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 251:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline uint16_t msgb_get_u16(struct msgb *msgb)
+ 252:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 253:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint8_t *space = msgb_get(msgb, 2);
+ 254:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return space[0] << 8 | space[1];
+ 255:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 256:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief remove uint32 from end of message
+ 257:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 258:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns 32bit value taken from end of msgb
+ 259:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 260:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline uint32_t msgb_get_u32(struct msgb *msgb)
+ 261:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 262:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint8_t *space = msgb_get(msgb, 4);
+ 263:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return space[0] << 24 | space[1] << 16 | space[2] << 8 | space[3];
+ 264:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 265:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 266:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief prepend (push) some data to start of message
+ 267:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 268:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] len number of bytes to pre-pend
+ 269:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns pointer to newly added portion at start of \a msgb
+ 270:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 271:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function moves the \a data pointer of the \ref msgb further
+ 272:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * to the front (by \a len bytes), thereby enlarging the message by \a
+ 273:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * len bytes.
+ 274:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 275:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * The return value is a pointer to the newly added section in the
+ 276:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * beginning of the message.  It can be used to fill/copy data into it.
+ 277:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 278:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline unsigned char *msgb_push(struct msgb *msgb, unsigned int len)
+ 279:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 280:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	if (msgb_headroom(msgb) < (int) len)
+ 281:../../shared/libosmocore/include/osmocom/core/msgb.h **** 		MSGB_ABORT(msgb, "Not enough headroom msgb_push (%u < %u)\n",
+ 282:../../shared/libosmocore/include/osmocom/core/msgb.h **** 			   msgb_headroom(msgb), len);
+ 283:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->data -= len;
+ 284:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len += len;
+ 285:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->data;
+ 286:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 287:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief remove (pull) a header from the front of the message buffer
+ 288:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 289:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] len number of octets to be pulled
+ 290:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns pointer to new start of msgb
+ 291:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 292:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function moves the \a data pointer of the \ref msgb further back
+ 293:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * in the message, thereby shrinking the size of the message by \a len
+ 294:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * bytes.
+ 295:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 296:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline unsigned char *msgb_pull(struct msgb *msgb, unsigned int len)
+ 297:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 298:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len -= len;
+ 299:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->data += len;
+ 300:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 301:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 302:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief remove uint8 from front of message
+ 303:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 304:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns 8bit value taken from end of msgb
+ 305:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 306:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline uint8_t msgb_pull_u8(struct msgb *msgb)
+ 307:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 308:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint8_t *space = msgb_pull(msgb, 1) - 1;
+ 309:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return space[0];
+ 310:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 311:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief remove uint16 from front of message
+ 312:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 313:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns 16bit value taken from end of msgb
+ 314:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 315:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline uint16_t msgb_pull_u16(struct msgb *msgb)
+ 316:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 317:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint8_t *space = msgb_pull(msgb, 2) - 2;
+ 318:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return space[0] << 8 | space[1];
+ 319:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 320:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief remove uint32 from front of message
+ 321:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 322:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns 32bit value taken from end of msgb
+ 323:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 324:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline uint32_t msgb_pull_u32(struct msgb *msgb)
+ 325:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 326:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint8_t *space = msgb_pull(msgb, 4) - 4;
+ 327:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return space[0] << 24 | space[1] << 16 | space[2] << 8 | space[3];
+ 328:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 329:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 330:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief Increase headroom of empty msgb, reducing the tailroom
+ 331:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msg message buffer
+ 332:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] len amount of extra octets to be reserved as headroom
+ 333:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 334:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function reserves some memory at the beginning of the underlying
+ 335:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * data buffer.  The idea is to reserve space in case further headers
+ 336:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * have to be pushed to the \ref msgb during further processing.
+ 337:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 338:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * Calling this function leads to undefined reusults if it is called on
+ 339:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * a non-empty \ref msgb.
+ 340:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 341:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline void msgb_reserve(struct msgb *msg, int len)
+ 342:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 343:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msg->data += len;
+ 344:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msg->tail += len;
+ 345:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 346:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 347:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief Trim the msgb to a given absolute length
+ 348:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msg message buffer
+ 349:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] len new total length of buffer
+ 350:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns 0 in case of success, negative in case of error
+ 351:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 352:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline int msgb_trim(struct msgb *msg, int len)
+ 353:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 354:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	if (len > msg->data_len)
+ 355:../../shared/libosmocore/include/osmocom/core/msgb.h **** 		return -1;
+ 356:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 357:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msg->len = len;
+ 358:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msg->tail = msg->data + len;
+ 359:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 360:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return 0;
+ 361:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 362:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 363:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief Trim the msgb to a given layer3 length
+ 364:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \pram[in] msg message buffer
+ 365:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] l3len new layer3 length
+ 366:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns 0 in case of success, negative in case of error
+ 367:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 368:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline int msgb_l3trim(struct msgb *msg, int l3len)
+ 369:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 370:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb_trim(msg, (msg->l3h - msg->data) + l3len);
+ 371:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 372:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 373:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief Allocate message buffer with specified headroom
+ 374:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] size size in bytes, including headroom
+ 375:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] headroom headroom in bytes
+ 376:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] name human-readable name
+ 377:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns allocated message buffer with specified headroom
+ 378:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 379:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function is a convenience wrapper around \ref msgb_alloc
+ 380:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * followed by \ref msgb_reserve in order to create a new \ref msgb with
+ 381:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * user-specified amount of headroom.
+ 382:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 383:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline struct msgb *msgb_alloc_headroom(int size, int headroom,
+ 384:../../shared/libosmocore/include/osmocom/core/msgb.h **** 						const char *name)
+ 385:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 386:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	osmo_static_assert(size > headroom, headroom_bigger);
+ 387:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 388:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	struct msgb *msg = msgb_alloc(size, name);
+ 243              		.loc 2 388 0
+ 244 0004 54109FE5 		ldr	r1, .L19
+ 245              	.LBE181:
+ 246              	.LBE180:
+ 162:layer1/l23_api.c **** {
+ 247              		.loc 1 162 0
+ 248 0008 FF5000E2 		and	r5, r0, #255
+ 249              		.cfi_offset 14, -4
+ 250              		.cfi_offset 5, -8
+ 251              		.cfi_offset 4, -12
+ 252              	.LBB185:
+ 253              	.LBB184:
+ 254              		.loc 2 388 0
+ 255 000c D000A0E3 		mov	r0, #208
+ 256              	.LVL23:
+ 257 0010 FEFFFFEB 		bl	msgb_alloc
+ 258              	.LVL24:
+ 389:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	if (msg)
+ 259              		.loc 2 389 0
+ 260 0014 004050E2 		subs	r4, r0, #0
+ 261 0018 0D00000A 		beq	.L18
+ 262              	.LVL25:
+ 263              	.LBB182:
+ 264              	.LBB183:
+ 343:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msg->data += len;
+ 265              		.loc 2 343 0
+ 266 001c 403094E5 		ldr	r3, [r4, #64]
+ 267 0020 043083E2 		add	r3, r3, #4
+ 268 0024 403084E5 		str	r3, [r4, #64]
+ 344:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msg->tail += len;
+ 269              		.loc 2 344 0
+ 270 0028 3C3094E5 		ldr	r3, [r4, #60]
+ 271 002c 043083E2 		add	r3, r3, #4
+ 272 0030 3C3084E5 		str	r3, [r4, #60]
+ 273              	.LBE183:
+ 274              	.LBE182:
+ 275              	.LBE184:
+ 276              	.LBE185:
+ 174:layer1/l23_api.c **** 	l1h = (struct l1ctl_hdr *) msgb_put(msg, sizeof(*l1h));
+ 277              		.loc 1 174 0
+ 278 0034 0410A0E3 		mov	r1, #4
+ 279 0038 FEFFFFEB 		bl	msgb_put
+ 280              	.LVL26:
+ 176:layer1/l23_api.c **** 	l1h->flags = 0;
+ 281              		.loc 1 176 0
+ 282 003c 0030A0E3 		mov	r3, #0
+ 175:layer1/l23_api.c **** 	l1h->msg_type = msg_type;
+ 283              		.loc 1 175 0
+ 284 0040 0050C0E5 		strb	r5, [r0, #0]
+ 176:layer1/l23_api.c **** 	l1h->flags = 0;
+ 285              		.loc 1 176 0
+ 286 0044 0130C0E5 		strb	r3, [r0, #1]
+ 178:layer1/l23_api.c **** 	msg->l1h = (uint8_t *)l1h;
+ 287              		.loc 1 178 0
+ 288 0048 100084E5 		str	r0, [r4, #16]
+ 181:layer1/l23_api.c **** }
+ 289              		.loc 1 181 0
+ 290 004c 0400A0E1 		mov	r0, r4
+ 291              	.LVL27:
+ 292 0050 3080BDE8 		ldmfd	sp!, {r4, r5, pc}
+ 293              	.LVL28:
+ 294              	.L18:
+ 169:layer1/l23_api.c **** 			puts("OOPS. Out of buffers...\n");
+ 295              		.loc 1 169 0 discriminator 1
+ 296 0054 08009FE5 		ldr	r0, .L19+4
+ 297 0058 FEFFFFEB 		bl	puts
+ 298 005c FCFFFFEA 		b	.L18
+ 299              	.L20:
+ 300              		.align	2
+ 301              	.L19:
+ 302 0060 33000000 		.word	.LC1
+ 303 0064 39000000 		.word	.LC2
+ 304              		.cfi_endproc
+ 305              	.LFE62:
+ 307              		.section	.text.l1_create_l2_msg,"ax",%progbits
+ 308              		.align	2
+ 309              		.global	l1_create_l2_msg
+ 311              	l1_create_l2_msg:
+ 312              	.LFB63:
+ 185:layer1/l23_api.c **** {
+ 313              		.loc 1 185 0
+ 314              		.cfi_startproc
+ 315              		@ args = 0, pretend = 0, frame = 0
+ 316              		@ frame_needed = 0, uses_anonymous_args = 0
+ 317              	.LVL29:
+ 318 0000 F0412DE9 		stmfd	sp!, {r4, r5, r6, r7, r8, lr}
+ 319              	.LCFI5:
+ 320              		.cfi_def_cfa_offset 24
+ 185:layer1/l23_api.c **** {
+ 321              		.loc 1 185 0
+ 322 0004 0228A0E1 		mov	r2, r2, asl #16
+ 323              	.LVL30:
+ 187:layer1/l23_api.c **** 	struct msgb *msg = l1ctl_msgb_alloc(msg_type);
+ 324              		.loc 1 187 0
+ 325 0008 FF0000E2 		and	r0, r0, #255
+ 326              	.LVL31:
+ 185:layer1/l23_api.c **** {
+ 327              		.loc 1 185 0
+ 328 000c 0368A0E1 		mov	r6, r3, asl #16
+ 329              		.cfi_offset 14, -4
+ 330              		.cfi_offset 8, -8
+ 331              		.cfi_offset 7, -12
+ 332              		.cfi_offset 6, -16
+ 333              		.cfi_offset 5, -20
+ 334              		.cfi_offset 4, -24
+ 335 0010 0140A0E1 		mov	r4, r1
+ 336 0014 2258A0E1 		mov	r5, r2, lsr #16
+ 187:layer1/l23_api.c **** 	struct msgb *msg = l1ctl_msgb_alloc(msg_type);
+ 337              		.loc 1 187 0
+ 338 0018 FEFFFFEB 		bl	l1ctl_msgb_alloc
+ 339              	.LVL32:
+ 189:layer1/l23_api.c **** 	dl = (struct l1ctl_info_dl *) msgb_put(msg, sizeof(*dl));
+ 340              		.loc 1 189 0
+ 341 001c 0C10A0E3 		mov	r1, #12
+ 187:layer1/l23_api.c **** 	struct msgb *msg = l1ctl_msgb_alloc(msg_type);
+ 342              		.loc 1 187 0
+ 343 0020 0070A0E1 		mov	r7, r0
+ 344              	.LVL33:
+ 189:layer1/l23_api.c **** 	dl = (struct l1ctl_info_dl *) msgb_put(msg, sizeof(*dl));
+ 345              		.loc 1 189 0
+ 346 0024 FEFFFFEB 		bl	msgb_put
+ 347              	.LVL34:
+ 348              	.LBB186:
+ 349              	.LBB187:
+ 350              	.LBB188:
+ 351              		.file 3 "include/asm/swab.h"
+   1:include/asm/swab.h **** /*
+   2:include/asm/swab.h ****  *  arch/arm/include/asm/byteorder.h
+   3:include/asm/swab.h ****  *
+   4:include/asm/swab.h ****  * ARM Endian-ness.  In little endian mode, the data bus is connected such
+   5:include/asm/swab.h ****  * that byte accesses appear as:
+   6:include/asm/swab.h ****  *  0 = d0...d7, 1 = d8...d15, 2 = d16...d23, 3 = d24...d31
+   7:include/asm/swab.h ****  * and word accesses (data or instruction) appear as:
+   8:include/asm/swab.h ****  *  d0...d31
+   9:include/asm/swab.h ****  *
+  10:include/asm/swab.h ****  * When in big endian mode, byte accesses appear as:
+  11:include/asm/swab.h ****  *  0 = d24...d31, 1 = d16...d23, 2 = d8...d15, 3 = d0...d7
+  12:include/asm/swab.h ****  * and word accesses (data or instruction) appear as:
+  13:include/asm/swab.h ****  *  d0...d31
+  14:include/asm/swab.h ****  */
+  15:include/asm/swab.h **** #ifndef __ASM_ARM_SWAB_H
+  16:include/asm/swab.h **** #define __ASM_ARM_SWAB_H
+  17:include/asm/swab.h **** 
+  18:include/asm/swab.h **** #include <stdint.h>
+  19:include/asm/swab.h **** #include <defines.h>
+  20:include/asm/swab.h **** 
+  21:include/asm/swab.h **** static inline uint32_t __arch_swab32(uint32_t x)
+  22:include/asm/swab.h **** {
+  23:include/asm/swab.h **** 	uint32_t t;
+  24:include/asm/swab.h **** 
+  25:include/asm/swab.h **** #ifndef __thumb__
+  26:include/asm/swab.h **** 	if (!__builtin_constant_p(x)) {
+  27:include/asm/swab.h **** 		/*
+  28:include/asm/swab.h **** 		 * The compiler needs a bit of a hint here to always do the
+  29:include/asm/swab.h **** 		 * right thing and not screw it up to different degrees
+  30:include/asm/swab.h **** 		 * depending on the gcc version.
+  31:include/asm/swab.h **** 		 */
+  32:include/asm/swab.h **** 		asm ("eor\t%0, %1, %1, ror #16" : "=r" (t) : "r" (x));
+ 352              		.loc 3 32 0
+ 353              	@ 32 "include/asm/swab.h" 1
+ 354 0028 643824E0 		eor	r3, r4, r4, ror #16
+ 355              	@ 0 "" 2
+ 356              	.LVL35:
+  33:include/asm/swab.h **** 	} else
+  34:include/asm/swab.h **** #endif
+  35:include/asm/swab.h **** 		t = x ^ ((x << 16) | (x >> 16)); /* eor r1,r0,r0,ror #16 */
+  36:include/asm/swab.h **** 
+  37:include/asm/swab.h **** 	x = (x << 24) | (x >> 8);		/* mov r0,r0,ror #8      */
+  38:include/asm/swab.h **** 	t &= ~0x00FF0000;			/* bic r1,r1,#0x00FF0000 */
+ 357              		.loc 3 38 0
+ 358 002c FF38C3E3 		bic	r3, r3, #16711680
+ 359              	.LVL36:
+  39:include/asm/swab.h **** 	x ^= (t >> 8);				/* eor r0,r0,r1,lsr #8   */
+ 360              		.loc 3 39 0
+ 361 0030 2334A0E1 		mov	r3, r3, lsr #8
+ 362              	.LVL37:
+ 363 0034 644423E0 		eor	r4, r3, r4, ror #8
+ 364              	.LVL38:
+ 365              	.LBE188:
+ 366              	.LBE187:
+ 367              	.LBE186:
+ 185:layer1/l23_api.c **** {
+ 368              		.loc 1 185 0
+ 369 0038 2688A0E1 		mov	r8, r6, lsr #16
+ 370              	.LBB189:
+ 371              	.LBB190:
+ 372              		.file 4 "include/swab.h"
+   1:include/swab.h **** #ifndef _LINUX_SWAB_H
+   2:include/swab.h **** #define _LINUX_SWAB_H
+   3:include/swab.h **** 
+   4:include/swab.h **** #include <stdint.h>
+   5:include/swab.h **** #include <defines.h>
+   6:include/swab.h **** #include <asm/swab.h>
+   7:include/swab.h **** 
+   8:include/swab.h **** /*
+   9:include/swab.h ****  * casts are necessary for constants, because we never know how for sure
+  10:include/swab.h ****  * how U/UL/ULL map to uint16_t, uint32_t, uint64_t. At least not in a portable way.
+  11:include/swab.h ****  */
+  12:include/swab.h **** #define ___constant_swab16(x) ((uint16_t)(				\
+  13:include/swab.h **** 	(((uint16_t)(x) & (uint16_t)0x00ffU) << 8) |			\
+  14:include/swab.h **** 	(((uint16_t)(x) & (uint16_t)0xff00U) >> 8)))
+  15:include/swab.h **** 
+  16:include/swab.h **** #define ___constant_swab32(x) ((uint32_t)(				\
+  17:include/swab.h **** 	(((uint32_t)(x) & (uint32_t)0x000000ffUL) << 24) |		\
+  18:include/swab.h **** 	(((uint32_t)(x) & (uint32_t)0x0000ff00UL) <<  8) |		\
+  19:include/swab.h **** 	(((uint32_t)(x) & (uint32_t)0x00ff0000UL) >>  8) |		\
+  20:include/swab.h **** 	(((uint32_t)(x) & (uint32_t)0xff000000UL) >> 24)))
+  21:include/swab.h **** 
+  22:include/swab.h **** #define ___constant_swab64(x) ((uint64_t)(				\
+  23:include/swab.h **** 	(((uint64_t)(x) & (uint64_t)0x00000000000000ffULL) << 56) |	\
+  24:include/swab.h **** 	(((uint64_t)(x) & (uint64_t)0x000000000000ff00ULL) << 40) |	\
+  25:include/swab.h **** 	(((uint64_t)(x) & (uint64_t)0x0000000000ff0000ULL) << 24) |	\
+  26:include/swab.h **** 	(((uint64_t)(x) & (uint64_t)0x00000000ff000000ULL) <<  8) |	\
+  27:include/swab.h **** 	(((uint64_t)(x) & (uint64_t)0x000000ff00000000ULL) >>  8) |	\
+  28:include/swab.h **** 	(((uint64_t)(x) & (uint64_t)0x0000ff0000000000ULL) >> 24) |	\
+  29:include/swab.h **** 	(((uint64_t)(x) & (uint64_t)0x00ff000000000000ULL) >> 40) |	\
+  30:include/swab.h **** 	(((uint64_t)(x) & (uint64_t)0xff00000000000000ULL) >> 56)))
+  31:include/swab.h **** 
+  32:include/swab.h **** #define ___constant_swahw32(x) ((uint32_t)(			\
+  33:include/swab.h **** 	(((uint32_t)(x) & (uint32_t)0x0000ffffUL) << 16) |		\
+  34:include/swab.h **** 	(((uint32_t)(x) & (uint32_t)0xffff0000UL) >> 16)))
+  35:include/swab.h **** 
+  36:include/swab.h **** #define ___constant_swahb32(x) ((uint32_t)(			\
+  37:include/swab.h **** 	(((uint32_t)(x) & (uint32_t)0x00ff00ffUL) << 8) |		\
+  38:include/swab.h **** 	(((uint32_t)(x) & (uint32_t)0xff00ff00UL) >> 8)))
+  39:include/swab.h **** 
+  40:include/swab.h **** /*
+  41:include/swab.h ****  * Implement the following as inlines, but define the interface using
+  42:include/swab.h ****  * macros to allow constant folding when possible:
+  43:include/swab.h ****  * ___swab16, ___swab32, ___swab64, ___swahw32, ___swahb32
+  44:include/swab.h ****  */
+  45:include/swab.h **** 
+  46:include/swab.h **** static inline __attribute_const__ uint16_t __fswab16(uint16_t val)
+  47:include/swab.h **** {
+  48:include/swab.h **** #ifdef __arch_swab16
+  49:include/swab.h **** 	return __arch_swab16(val);
+  50:include/swab.h **** #else
+  51:include/swab.h **** 	return ___constant_swab16(val);
+ 373              		.loc 4 51 0
+ 374 003c 266CA0E1 		mov	r6, r6, lsr #24
+ 375              	.LBE190:
+ 376              	.LBE189:
+ 190:layer1/l23_api.c **** 	dl->frame_nr = htonl(fn);
+ 377              		.loc 1 190 0
+ 378 0040 2434A0E1 		mov	r3, r4, lsr #8
+ 379              	.LBB192:
+ 380              	.LBB191:
+ 381              		.loc 4 51 0
+ 382 0044 088486E1 		orr	r8, r6, r8, asl #8
+ 383              	.LBE191:
+ 384              	.LBE192:
+ 190:layer1/l23_api.c **** 	dl->frame_nr = htonl(fn);
+ 385              		.loc 1 190 0
+ 386 0048 0440C0E5 		strb	r4, [r0, #4]
+ 387 004c 0530C0E5 		strb	r3, [r0, #5]
+ 192:layer1/l23_api.c **** 	dl->band_arfcn = htons(arfcn);
+ 388              		.loc 1 192 0
+ 389 0050 0280C0E5 		strb	r8, [r0, #2]
+ 190:layer1/l23_api.c **** 	dl->frame_nr = htonl(fn);
+ 390              		.loc 1 190 0
+ 391 0054 2438A0E1 		mov	r3, r4, lsr #16
+ 192:layer1/l23_api.c **** 	dl->band_arfcn = htons(arfcn);
+ 392              		.loc 1 192 0
+ 393 0058 2884A0E1 		mov	r8, r8, lsr #8
+ 190:layer1/l23_api.c **** 	dl->frame_nr = htonl(fn);
+ 394              		.loc 1 190 0
+ 395 005c 244CA0E1 		mov	r4, r4, lsr #24
+ 396              	.LVL39:
+ 397 0060 0630C0E5 		strb	r3, [r0, #6]
+ 398 0064 0740C0E5 		strb	r4, [r0, #7]
+ 191:layer1/l23_api.c **** 	dl->snr = snr;
+ 399              		.loc 1 191 0
+ 400 0068 0950C0E5 		strb	r5, [r0, #9]
+ 192:layer1/l23_api.c **** 	dl->band_arfcn = htons(arfcn);
+ 401              		.loc 1 192 0
+ 402 006c 0380C0E5 		strb	r8, [r0, #3]
+ 195:layer1/l23_api.c **** }
+ 403              		.loc 1 195 0
+ 404 0070 0700A0E1 		mov	r0, r7
+ 405              	.LVL40:
+ 406 0074 F081BDE8 		ldmfd	sp!, {r4, r5, r6, r7, r8, pc}
+ 407              		.cfi_endproc
+ 408              	.LFE63:
+ 410              		.section	.text.l1ctl_tx_reset,"ax",%progbits
+ 411              		.align	2
+ 412              		.global	l1ctl_tx_reset
+ 414              	l1ctl_tx_reset:
+ 415              	.LFB73:
+ 416:layer1/l23_api.c **** {
+ 416              		.loc 1 416 0
+ 417              		.cfi_startproc
+ 418              		@ args = 0, pretend = 0, frame = 0
+ 419              		@ frame_needed = 0, uses_anonymous_args = 0
+ 420              	.LVL41:
+ 421 0000 30402DE9 		stmfd	sp!, {r4, r5, lr}
+ 422              	.LCFI6:
+ 423              		.cfi_def_cfa_offset 12
+ 416:layer1/l23_api.c **** {
+ 424              		.loc 1 416 0
+ 425 0004 FF0000E2 		and	r0, r0, #255
+ 426              	.LVL42:
+ 427 0008 FF5001E2 		and	r5, r1, #255
+ 428              		.cfi_offset 14, -4
+ 429              		.cfi_offset 5, -8
+ 430              		.cfi_offset 4, -12
+ 417:layer1/l23_api.c **** 	struct msgb *msg = l1ctl_msgb_alloc(msg_type);
+ 431              		.loc 1 417 0
+ 432 000c FEFFFFEB 		bl	l1ctl_msgb_alloc
+ 433              	.LVL43:
+ 420:layer1/l23_api.c **** 				msgb_put(msg, sizeof(*reset_resp));
+ 434              		.loc 1 420 0
+ 435 0010 0410A0E3 		mov	r1, #4
+ 417:layer1/l23_api.c **** 	struct msgb *msg = l1ctl_msgb_alloc(msg_type);
+ 436              		.loc 1 417 0
+ 437 0014 0040A0E1 		mov	r4, r0
+ 438              	.LVL44:
+ 420:layer1/l23_api.c **** 				msgb_put(msg, sizeof(*reset_resp));
+ 439              		.loc 1 420 0
+ 440 0018 FEFFFFEB 		bl	msgb_put
+ 441              	.LVL45:
+ 421:layer1/l23_api.c **** 	reset_resp->type = reset_type;
+ 442              		.loc 1 421 0
+ 443 001c 0050C0E5 		strb	r5, [r0, #0]
+ 423:layer1/l23_api.c **** 	l1_queue_for_l2(msg);
+ 444              		.loc 1 423 0
+ 445 0020 0400A0E1 		mov	r0, r4
+ 446              	.LVL46:
+ 424:layer1/l23_api.c **** }
+ 447              		.loc 1 424 0
+ 448 0024 3040BDE8 		ldmfd	sp!, {r4, r5, lr}
+ 423:layer1/l23_api.c **** 	l1_queue_for_l2(msg);
+ 449              		.loc 1 423 0
+ 450 0028 FEFFFFEA 		b	l1_queue_for_l2
+ 451              		.cfi_endproc
+ 452              	.LFE73:
+ 454              		.section	.text.l1a_l23_handler,"ax",%progbits
+ 455              		.align	2
+ 456              		.global	l1a_l23_handler
+ 458              	l1a_l23_handler:
+ 459              	.LFB83:
+ 598:layer1/l23_api.c **** 
+ 599:layer1/l23_api.c **** void l1a_l23_handler(void)
+ 600:layer1/l23_api.c **** {
+ 460              		.loc 1 600 0
+ 461              		.cfi_startproc
+ 462              		@ args = 0, pretend = 0, frame = 0
+ 463              		@ frame_needed = 0, uses_anonymous_args = 0
+ 464 0000 F3412DE9 		stmfd	sp!, {r0, r1, r4, r5, r6, r7, r8, lr}
+ 465              	.LCFI7:
+ 466              		.cfi_def_cfa_offset 32
+ 467              	.LBB266:
+ 601:layer1/l23_api.c **** 	struct msgb *msg;
+ 602:layer1/l23_api.c **** 	struct l1ctl_hdr *l1h;
+ 603:layer1/l23_api.c **** 	unsigned long flags;
+ 604:layer1/l23_api.c **** 
+ 605:layer1/l23_api.c **** 	local_firq_save(flags);
+ 468              		.loc 1 605 0
+ 469              	@ 605 "layer1/l23_api.c" 1
+ 470 0004 00400FE1 		mrs	r4, cpsr		@ local_firq_save
+ 471 0008 C03084E3 		orr	r3, r4, #0xC0
+ 472 000c 03F021E1 		msr	cpsr_c, r3
+ 473              	@ 0 "" 2
+ 474              	.LBE266:
+ 606:layer1/l23_api.c **** 	msg = msgb_dequeue(&l23_rx_queue);
+ 475              		.loc 1 606 0
+ 476 0010 B4089FE5 		ldr	r0, .L92
+ 477              		.cfi_offset 14, -4
+ 478              		.cfi_offset 8, -8
+ 479              		.cfi_offset 7, -12
+ 480              		.cfi_offset 6, -16
+ 481              		.cfi_offset 5, -20
+ 482              		.cfi_offset 4, -24
+ 483              		.cfi_offset 1, -28
+ 484              		.cfi_offset 0, -32
+ 485 0014 FEFFFFEB 		bl	msgb_dequeue
+ 486 0018 0060A0E1 		mov	r6, r0
+ 487              	.LVL47:
+ 607:layer1/l23_api.c **** 	local_irq_restore(flags);
+ 488              		.loc 1 607 0
+ 489              	@ 607 "layer1/l23_api.c" 1
+ 490 001c 04F021E1 		msr	cpsr_c, r4		@ local_irq_restore
+ 491              	
+ 492              	@ 0 "" 2
+ 608:layer1/l23_api.c **** 	if (!msg)
+ 493              		.loc 1 608 0
+ 494 0020 000050E3 		cmp	r0, #0
+ 495 0024 2602000A 		beq	.L23
+ 609:layer1/l23_api.c **** 		return;
+ 610:layer1/l23_api.c **** 
+ 611:layer1/l23_api.c **** 	l1h = (struct l1ctl_hdr *) msg->data;
+ 612:layer1/l23_api.c **** 
+ 613:layer1/l23_api.c **** #if 0
+ 614:layer1/l23_api.c **** 	{
+ 615:layer1/l23_api.c **** 		int i;
+ 616:layer1/l23_api.c **** 		printf("l1a_l23_rx_cb (%u): ", msg->len);
+ 617:layer1/l23_api.c **** 		for (i = 0; i < msg->len; i++)
+ 618:layer1/l23_api.c **** 			printf("%02x ", msg->data[i]);
+ 619:layer1/l23_api.c **** 		puts("\n");
+ 620:layer1/l23_api.c **** 	}
+ 621:layer1/l23_api.c **** #endif
+ 622:layer1/l23_api.c **** 
+ 623:layer1/l23_api.c **** 	msg->l1h = msg->data;
+ 624:layer1/l23_api.c **** 
+ 625:layer1/l23_api.c **** 	if (sizeof(*l1h) > msg->len) {
+ 496              		.loc 1 625 0
+ 497 0028 B613D0E1 		ldrh	r1, [r0, #54]
+ 611:layer1/l23_api.c **** 	l1h = (struct l1ctl_hdr *) msg->data;
+ 498              		.loc 1 611 0
+ 499 002c 404090E5 		ldr	r4, [r0, #64]
+ 500              	.LVL48:
+ 501              		.loc 1 625 0
+ 502 0030 030051E3 		cmp	r1, #3
+ 623:layer1/l23_api.c **** 	msg->l1h = msg->data;
+ 503              		.loc 1 623 0
+ 504 0034 104080E5 		str	r4, [r0, #16]
+ 626:layer1/l23_api.c **** 		printf("l1a_l23_cb: Short message. %u\n", msg->len);
+ 505              		.loc 1 626 0
+ 506 0038 90089F95 		ldrls	r0, .L92+4
+ 507              	.LVL49:
+ 625:layer1/l23_api.c **** 	if (sizeof(*l1h) > msg->len) {
+ 508              		.loc 1 625 0
+ 509 003c 2300009A 		bls	.L87
+ 627:layer1/l23_api.c **** 		goto exit_msgbfree;
+ 628:layer1/l23_api.c **** 	}
+ 629:layer1/l23_api.c **** 
+ 630:layer1/l23_api.c **** 	switch (l1h->msg_type) {
+ 510              		.loc 1 630 0
+ 511 0040 0030D4E5 		ldrb	r3, [r4, #0]	@ zero_extendqisi2
+ 512 0044 013043E2 		sub	r3, r3, #1
+ 513 0048 1B0053E3 		cmp	r3, #27
+ 514 004c 03F19F97 		ldrls	pc, [pc, r3, asl #2]
+ 515 0050 170200EA 		b	.L26
+ 516              	.L42:
+ 517 0054 C4000000 		.word	.L27
+ 518 0058 B4080000 		.word	.L26
+ 519 005c B4080000 		.word	.L26
+ 520 0060 E8040000 		.word	.L28
+ 521 0064 2C010000 		.word	.L29
+ 522 0068 48050000 		.word	.L30
+ 523 006c B4080000 		.word	.L26
+ 524 0070 D0050000 		.word	.L31
+ 525 0074 B4080000 		.word	.L26
+ 526 0078 B4080000 		.word	.L26
+ 527 007c B4080000 		.word	.L26
+ 528 0080 B4080000 		.word	.L26
+ 529 0084 70060000 		.word	.L32
+ 530 0088 B4080000 		.word	.L26
+ 531 008c B4080000 		.word	.L26
+ 532 0090 DC060000 		.word	.L33
+ 533 0094 B4080000 		.word	.L26
+ 534 0098 30030000 		.word	.L34
+ 535 009c 94030000 		.word	.L35
+ 536 00a0 C4030000 		.word	.L36
+ 537 00a4 AC040000 		.word	.L37
+ 538 00a8 60080000 		.word	.L38
+ 539 00ac B4080000 		.word	.L26
+ 540 00b0 34070000 		.word	.L39
+ 541 00b4 B4080000 		.word	.L26
+ 542 00b8 A4070000 		.word	.L40
+ 543 00bc B4080000 		.word	.L26
+ 544 00c0 30080000 		.word	.L41
+ 545              	.L27:
+ 546              	.LVL50:
+ 547              	.LBB267:
+ 548              	.LBB268:
+ 203:layer1/l23_api.c **** 	if (sizeof(*sync_req) > msg->len) {
+ 549              		.loc 1 203 0
+ 550 00c4 0C0051E3 		cmp	r1, #12
+ 551 00c8 0200008A 		bhi	.L43
+ 204:layer1/l23_api.c **** 		printf("Short sync msg. %u\n", msg->len);
+ 552              		.loc 1 204 0
+ 553 00cc 00089FE5 		ldr	r0, .L92+8
+ 554              	.LVL51:
+ 555              	.L87:
+ 556 00d0 FEFFFFEB 		bl	printf
+ 557              	.LVL52:
+ 558 00d4 F60100EA 		b	.L26
+ 559              	.LVL53:
+ 560              	.L43:
+ 201:layer1/l23_api.c **** 	struct l1ctl_fbsb_req *sync_req = (struct l1ctl_fbsb_req *) l1h->data;
+ 561              		.loc 1 201 0
+ 562 00d8 045084E2 		add	r5, r4, #4
+ 208:layer1/l23_api.c **** 	printd("L1CTL_FBSB_REQ (arfcn=%u, flags=0x%x)\n",
+ 563              		.loc 1 208 0
+ 564 00dc 0430D4E5 		ldrb	r3, [r4, #4]	@ zero_extendqisi2
+ 565 00e0 0110D5E5 		ldrb	r1, [r5, #1]	@ zero_extendqisi2
+ 566 00e4 011483E1 		orr	r1, r3, r1, asl #8
+ 567              	.LVL54:
+ 568              	.LBB269:
+ 569              	.LBB270:
+ 570              		.loc 4 51 0
+ 571 00e8 2134A0E1 		mov	r3, r1, lsr #8
+ 572 00ec 011483E1 		orr	r1, r3, r1, asl #8
+ 573              	.LVL55:
+ 574              	.LBE270:
+ 575              	.LBE269:
+ 208:layer1/l23_api.c **** 	printd("L1CTL_FBSB_REQ (arfcn=%u, flags=0x%x)\n",
+ 576              		.loc 1 208 0
+ 577 00f0 0118A0E1 		mov	r1, r1, asl #16
+ 578 00f4 2118A0E1 		mov	r1, r1, lsr #16
+ 579 00f8 0920D5E5 		ldrb	r2, [r5, #9]	@ zero_extendqisi2
+ 580 00fc D4079FE5 		ldr	r0, .L92+12
+ 581 0100 FEFFFFEB 		bl	printf
+ 212:layer1/l23_api.c **** 	l1s_reset();
+ 582              		.loc 1 212 0
+ 583 0104 FEFFFFEB 		bl	l1s_reset
+ 215:layer1/l23_api.c **** 	l1s.serving_cell.ccch_mode = sync_req->ccch_mode;
+ 584              		.loc 1 215 0
+ 585 0108 0B20D5E5 		ldrb	r2, [r5, #11]	@ zero_extendqisi2
+ 586 010c C8379FE5 		ldr	r3, .L92+16
+ 217:layer1/l23_api.c **** 	printd("Starting FCCH Recognition\n");
+ 587              		.loc 1 217 0
+ 588 0110 C8079FE5 		ldr	r0, .L92+20
+ 215:layer1/l23_api.c **** 	l1s.serving_cell.ccch_mode = sync_req->ccch_mode;
+ 589              		.loc 1 215 0
+ 590 0114 1B20C3E5 		strb	r2, [r3, #27]
+ 217:layer1/l23_api.c **** 	printd("Starting FCCH Recognition\n");
+ 591              		.loc 1 217 0
+ 592 0118 FEFFFFEB 		bl	puts
+ 218:layer1/l23_api.c **** 	l1s_fbsb_req(1, sync_req);
+ 593              		.loc 1 218 0
+ 594 011c 0100A0E3 		mov	r0, #1
+ 595 0120 0510A0E1 		mov	r1, r5
+ 596 0124 FEFFFFEB 		bl	l1s_fbsb_req
+ 597 0128 E10100EA 		b	.L26
+ 598              	.LVL56:
+ 599              	.L29:
+ 600              	.LBE268:
+ 601              	.LBE267:
+ 602              	.LBB271:
+ 603              	.LBB272:
+ 225:layer1/l23_api.c **** 	struct l1ctl_info_ul *ul = (struct l1ctl_info_ul *) l1h->data;
+ 604              		.loc 1 225 0
+ 605 012c 047084E2 		add	r7, r4, #4
+ 606              	.LVL57:
+ 226:layer1/l23_api.c **** 	struct l1ctl_dm_est_req *est_req = (struct l1ctl_dm_est_req *) ul->payload;
+ 607              		.loc 1 226 0
+ 608 0130 045087E2 		add	r5, r7, #4
+ 609              	.LVL58:
+ 228:layer1/l23_api.c **** 	printd("L1CTL_DM_EST_REQ (arfcn=%u, chan_nr=0x%02x, tsc=%u)\n",
+ 610              		.loc 1 228 0
+ 611 0134 0230D5E5 		ldrb	r3, [r5, #2]	@ zero_extendqisi2
+ 612 0138 0310D5E5 		ldrb	r1, [r5, #3]	@ zero_extendqisi2
+ 613 013c 011483E1 		orr	r1, r3, r1, asl #8
+ 614              	.LVL59:
+ 615              	.LBB273:
+ 616              	.LBB274:
+ 617              		.loc 4 51 0
+ 618 0140 2134A0E1 		mov	r3, r1, lsr #8
+ 619 0144 011483E1 		orr	r1, r3, r1, asl #8
+ 620              	.LVL60:
+ 621              	.LBE274:
+ 622              	.LBE273:
+ 228:layer1/l23_api.c **** 	printd("L1CTL_DM_EST_REQ (arfcn=%u, chan_nr=0x%02x, tsc=%u)\n",
+ 623              		.loc 1 228 0
+ 624 0148 0118A0E1 		mov	r1, r1, asl #16
+ 625 014c 0420D4E5 		ldrb	r2, [r4, #4]	@ zero_extendqisi2
+ 626 0150 2118A0E1 		mov	r1, r1, lsr #16
+ 627 0154 0430D7E5 		ldrb	r3, [r7, #4]	@ zero_extendqisi2
+ 628 0158 84079FE5 		ldr	r0, .L92+24
+ 629 015c FEFFFFEB 		bl	printf
+ 232:layer1/l23_api.c **** 	mframe_disable(MF_TASK_NEIGH_PM51_C0T0);
+ 630              		.loc 1 232 0
+ 631 0160 1400A0E3 		mov	r0, #20
+ 632 0164 FEFFFFEB 		bl	mframe_disable
+ 633              	.LVL61:
+ 634              	.LBB275:
+ 635              	.LBB276:
+ 128:layer1/l23_api.c **** 	uint8_t cbits = chan_nr >> 3;
+ 636              		.loc 1 128 0
+ 637 0168 0420D4E5 		ldrb	r2, [r4, #4]	@ zero_extendqisi2
+ 638 016c A221A0E1 		mov	r2, r2, lsr #3
+ 639              	.LVL62:
+ 130:layer1/l23_api.c **** 	if (cbits == 0x01) {
+ 640              		.loc 1 130 0
+ 641 0170 010052E3 		cmp	r2, #1
+ 131:layer1/l23_api.c **** 		return GSM_DCHAN_TCH_F;
+ 642              		.loc 1 131 0
+ 643 0174 0420A003 		moveq	r2, #4
+ 644              	.LVL63:
+ 130:layer1/l23_api.c **** 	if (cbits == 0x01) {
+ 645              		.loc 1 130 0
+ 646 0178 0B00000A 		beq	.L44
+ 132:layer1/l23_api.c **** 	} else if ((cbits & 0x1e) == 0x02) {
+ 647              		.loc 1 132 0
+ 648 017c 1E3002E2 		and	r3, r2, #30
+ 649 0180 020053E3 		cmp	r3, #2
+ 133:layer1/l23_api.c **** 		return GSM_DCHAN_TCH_H;
+ 650              		.loc 1 133 0
+ 651 0184 0320A003 		moveq	r2, #3
+ 132:layer1/l23_api.c **** 	} else if ((cbits & 0x1e) == 0x02) {
+ 652              		.loc 1 132 0
+ 653 0188 0700000A 		beq	.L44
+ 134:layer1/l23_api.c **** 	} else if ((cbits & 0x1c) == 0x04) {
+ 654              		.loc 1 134 0
+ 655 018c 1C3002E2 		and	r3, r2, #28
+ 656 0190 040053E3 		cmp	r3, #4
+ 135:layer1/l23_api.c **** 		return GSM_DCHAN_SDCCH_4;
+ 657              		.loc 1 135 0
+ 658 0194 0120A003 		moveq	r2, #1
+ 134:layer1/l23_api.c **** 	} else if ((cbits & 0x1c) == 0x04) {
+ 659              		.loc 1 134 0
+ 660 0198 0300000A 		beq	.L44
+ 136:layer1/l23_api.c **** 	} else if ((cbits & 0x18) == 0x08) {
+ 661              		.loc 1 136 0
+ 662 019c 182002E2 		and	r2, r2, #24
+ 137:layer1/l23_api.c **** 		return GSM_DCHAN_SDCCH_8;
+ 663              		.loc 1 137 0
+ 664 01a0 080052E3 		cmp	r2, #8
+ 665 01a4 0520A013 		movne	r2, #5
+ 666 01a8 0220A003 		moveq	r2, #2
+ 667              	.L44:
+ 668              	.LBE276:
+ 669              	.LBE275:
+ 235:layer1/l23_api.c **** 	l1s.dedicated.type = chan_nr2dchan_type(ul->chan_nr);
+ 670              		.loc 1 235 0
+ 671 01ac 28379FE5 		ldr	r3, .L92+16
+ 672 01b0 082B83E5 		str	r2, [r3, #2824]
+ 236:layer1/l23_api.c **** 	l1s.dedicated.tsc  = est_req->tsc;
+ 673              		.loc 1 236 0
+ 674 01b4 0420D7E5 		ldrb	r2, [r7, #4]	@ zero_extendqisi2
+ 675 01b8 0D2BC3E5 		strb	r2, [r3, #2829]
+ 237:layer1/l23_api.c **** 	l1s.dedicated.tn   = ul->chan_nr & 0x7;
+ 676              		.loc 1 237 0
+ 677 01bc 0420D4E5 		ldrb	r2, [r4, #4]	@ zero_extendqisi2
+ 678 01c0 072002E2 		and	r2, r2, #7
+ 679 01c4 0E2BC3E5 		strb	r2, [r3, #2830]
+ 238:layer1/l23_api.c **** 	l1s.dedicated.h    = est_req->h;
+ 680              		.loc 1 238 0
+ 681 01c8 0120D5E5 		ldrb	r2, [r5, #1]	@ zero_extendqisi2
+ 682 01cc 0F2BC3E5 		strb	r2, [r3, #2831]
+ 240:layer1/l23_api.c **** 	if (est_req->h) {
+ 683              		.loc 1 240 0
+ 684 01d0 0120D5E5 		ldrb	r2, [r5, #1]	@ zero_extendqisi2
+ 685 01d4 000052E3 		cmp	r2, #0
+ 686 01d8 1500000A 		beq	.L45
+ 687              	.LBB277:
+ 242:layer1/l23_api.c **** 		l1s.dedicated.h1.hsn  = est_req->h1.hsn;
+ 688              		.loc 1 242 0
+ 689 01dc 0220D5E5 		ldrb	r2, [r5, #2]	@ zero_extendqisi2
+ 690 01e0 102BC3E5 		strb	r2, [r3, #2832]
+ 243:layer1/l23_api.c **** 		l1s.dedicated.h1.maio = est_req->h1.maio;
+ 691              		.loc 1 243 0
+ 692 01e4 0320D5E5 		ldrb	r2, [r5, #3]	@ zero_extendqisi2
+ 693 01e8 112BC3E5 		strb	r2, [r3, #2833]
+ 244:layer1/l23_api.c **** 		l1s.dedicated.h1.n    = est_req->h1.n;
+ 694              		.loc 1 244 0
+ 695 01ec 0420D5E5 		ldrb	r2, [r5, #4]	@ zero_extendqisi2
+ 696 01f0 122BC3E5 		strb	r2, [r3, #2834]
+ 697              	.LVL64:
+ 698 01f4 EC269FE5 		ldr	r2, .L92+28
+ 245:layer1/l23_api.c **** 		for (i=0; i<est_req->h1.n; i++)
+ 699              		.loc 1 245 0
+ 700 01f8 0030A0E3 		mov	r3, #0
+ 701 01fc 080000EA 		b	.L46
+ 702              	.LVL65:
+ 703              	.L47:
+ 246:layer1/l23_api.c **** 			l1s.dedicated.h1.ma[i] = ntohs(est_req->h1.ma[i]);
+ 704              		.loc 1 246 0
+ 705 0200 020083E2 		add	r0, r3, #2
+ 706 0204 800085E0 		add	r0, r5, r0, asl #1
+ 707 0208 0210D0E5 		ldrb	r1, [r0, #2]	@ zero_extendqisi2
+ 708 020c 0300D0E5 		ldrb	r0, [r0, #3]	@ zero_extendqisi2
+ 709 0210 001481E1 		orr	r1, r1, r0, asl #8
+ 710              	.LVL66:
+ 711              	.LBB278:
+ 712              	.LBB279:
+ 713              		.loc 4 51 0
+ 714 0214 2104A0E1 		mov	r0, r1, lsr #8
+ 715 0218 011480E1 		orr	r1, r0, r1, asl #8
+ 716              	.LVL67:
+ 717              	.LBE279:
+ 718              	.LBE278:
+ 246:layer1/l23_api.c **** 			l1s.dedicated.h1.ma[i] = ntohs(est_req->h1.ma[i]);
+ 719              		.loc 1 246 0
+ 720 021c B210E2E1 		strh	r1, [r2, #2]!	@ movhi
+ 245:layer1/l23_api.c **** 		for (i=0; i<est_req->h1.n; i++)
+ 721              		.loc 1 245 0
+ 722 0220 013083E2 		add	r3, r3, #1
+ 723              	.LVL68:
+ 724              	.L46:
+ 725 0224 0410D5E5 		ldrb	r1, [r5, #4]	@ zero_extendqisi2
+ 726 0228 010053E1 		cmp	r3, r1
+ 727 022c F3FFFFBA 		blt	.L47
+ 728 0230 060000EA 		b	.L48
+ 729              	.LVL69:
+ 730              	.L45:
+ 731              	.LBE277:
+ 248:layer1/l23_api.c **** 		l1s.dedicated.h0.arfcn = ntohs(est_req->h0.band_arfcn);
+ 732              		.loc 1 248 0
+ 733 0234 0310D5E5 		ldrb	r1, [r5, #3]	@ zero_extendqisi2
+ 734 0238 0220D5E5 		ldrb	r2, [r5, #2]	@ zero_extendqisi2
+ 735 023c 012482E1 		orr	r2, r2, r1, asl #8
+ 736              	.LVL70:
+ 737              	.LBB280:
+ 738              	.LBB281:
+ 739              		.loc 4 51 0
+ 740 0240 2214A0E1 		mov	r1, r2, lsr #8
+ 741 0244 022481E1 		orr	r2, r1, r2, asl #8
+ 742              	.LVL71:
+ 743              	.LBE281:
+ 744              	.LBE280:
+ 248:layer1/l23_api.c **** 		l1s.dedicated.h0.arfcn = ntohs(est_req->h0.band_arfcn);
+ 745              		.loc 1 248 0
+ 746 0248 B11EA0E3 		mov	r1, #2832
+ 747 024c B12083E1 		strh	r2, [r3, r1]	@ movhi
+ 748              	.L48:
+ 749              	.LVL72:
+ 750              	.LBB282:
+ 751              	.LBB283:
+ 144:layer1/l23_api.c **** 	return ((chan_nr >> 3) == 0x01 ||		/* TCH/F */
+ 752              		.loc 1 144 0
+ 753 0250 0430D4E5 		ldrb	r3, [r4, #4]	@ zero_extendqisi2
+ 754 0254 A331A0E1 		mov	r3, r3, lsr #3
+ 755 0258 010053E3 		cmp	r3, #1
+ 756 025c 0200000A 		beq	.L49
+ 145:layer1/l23_api.c **** 		((chan_nr >> 3) & 0x1e) == 0x02);	/* TCH/H */
+ 757              		.loc 1 145 0
+ 758 0260 1E3003E2 		and	r3, r3, #30
+ 144:layer1/l23_api.c **** 	return ((chan_nr >> 3) == 0x01 ||		/* TCH/F */
+ 759              		.loc 1 144 0
+ 760 0264 020053E3 		cmp	r3, #2
+ 761 0268 0900001A 		bne	.L50
+ 762              	.L49:
+ 763              	.LBE283:
+ 764              	.LBE282:
+ 254:layer1/l23_api.c **** 		l1a_tch_mode_set(est_req->tch_mode);
+ 765              		.loc 1 254 0
+ 766 026c 8600D5E5 		ldrb	r0, [r5, #134]	@ zero_extendqisi2
+ 767 0270 FEFFFFEB 		bl	l1a_tch_mode_set
+ 768              	.LVL73:
+ 255:layer1/l23_api.c **** 		l1a_audio_mode_set(est_req->audio_mode);
+ 769              		.loc 1 255 0
+ 770 0274 8700D5E5 		ldrb	r0, [r5, #135]	@ zero_extendqisi2
+ 771 0278 FEFFFFEB 		bl	l1a_audio_mode_set
+ 258:layer1/l23_api.c **** 		l1s.tch_sync = 1;	/* can be set without locking */
+ 772              		.loc 1 258 0
+ 773 027c 58369FE5 		ldr	r3, .L92+16
+ 774 0280 0120A0E3 		mov	r2, #1
+ 775 0284 4B2AC3E5 		strb	r2, [r3, #2635]
+ 261:layer1/l23_api.c **** 		audio_set_enabled(est_req->tch_mode, est_req->audio_mode);
+ 776              		.loc 1 261 0
+ 777 0288 8600D5E5 		ldrb	r0, [r5, #134]	@ zero_extendqisi2
+ 778 028c 8710D5E5 		ldrb	r1, [r5, #135]	@ zero_extendqisi2
+ 779 0290 FEFFFFEB 		bl	audio_set_enabled
+ 780              	.L50:
+ 265:layer1/l23_api.c **** 	l1a_mftask_set(chan_nr2mf_task_mask(ul->chan_nr, NEIGH_MODE_PM));
+ 781              		.loc 1 265 0
+ 782 0294 0420D4E5 		ldrb	r2, [r4, #4]	@ zero_extendqisi2
+ 783              	.LVL74:
+ 784              	.LBB284:
+ 785              	.LBB285:
+  77:layer1/l23_api.c **** 	uint8_t cbits = chan_nr >> 3;
+ 786              		.loc 1 77 0
+ 787 0298 A231A0E1 		mov	r3, r2, lsr #3
+ 788              	.LVL75:
+  84:layer1/l23_api.c **** 	if (cbits == 0x01) {
+ 789              		.loc 1 84 0
+ 790 029c 010053E3 		cmp	r3, #1
+ 791 02a0 0600001A 		bne	.L51
+ 792              	.LVL76:
+  86:layer1/l23_api.c **** 		master_task = (tn & 1) ? MF_TASK_TCH_F_ODD : MF_TASK_TCH_F_EVEN;
+ 793              		.loc 1 86 0
+ 794 02a4 012002E2 		and	r2, r2, #1
+ 795              	.LVL77:
+  87:layer1/l23_api.c **** 		multiframe = (tn & 1) ? MF26ODD : MF26EVEN;
+ 796              		.loc 1 87 0
+ 797 02a8 000052E3 		cmp	r2, #0
+ 798 02ac 0320A003 		moveq	r2, #3
+ 799 02b0 0220A013 		movne	r2, #2
+ 800 02b4 1030A003 		moveq	r3, #16
+ 801 02b8 1130A013 		movne	r3, #17
+ 802              	.LVL78:
+ 803 02bc 120000EA 		b	.L52
+ 804              	.LVL79:
+ 805              	.L51:
+  88:layer1/l23_api.c **** 	} else if ((cbits & 0x1e) == 0x02) {
+ 806              		.loc 1 88 0
+ 807 02c0 1E2003E2 		and	r2, r3, #30
+ 808              	.LVL80:
+ 809 02c4 020052E3 		cmp	r2, #2
+  89:layer1/l23_api.c **** 		lch_idx = cbits & 0x1;
+ 810              		.loc 1 89 0
+ 811 02c8 01300302 		andeq	r3, r3, #1
+ 812              	.LVL81:
+  90:layer1/l23_api.c **** 		master_task = MF_TASK_TCH_H_0 + lch_idx;
+ 813              		.loc 1 90 0
+ 814 02cc 12308302 		addeq	r3, r3, #18
+ 815              	.LVL82:
+ 816 02d0 0020A003 		moveq	r2, #0
+  88:layer1/l23_api.c **** 	} else if ((cbits & 0x1e) == 0x02) {
+ 817              		.loc 1 88 0
+ 818 02d4 0C00000A 		beq	.L52
+  91:layer1/l23_api.c **** 	} else if ((cbits & 0x1c) == 0x04) {
+ 819              		.loc 1 91 0
+ 820 02d8 1C2003E2 		and	r2, r3, #28
+ 821 02dc 040052E3 		cmp	r2, #4
+  92:layer1/l23_api.c **** 		lch_idx = cbits & 0x3;
+ 822              		.loc 1 92 0
+ 823 02e0 03300302 		andeq	r3, r3, #3
+ 824              	.LVL83:
+  93:layer1/l23_api.c **** 		master_task = MF_TASK_SDCCH4_0 + lch_idx;
+ 825              		.loc 1 93 0
+ 826 02e4 04308302 		addeq	r3, r3, #4
+  91:layer1/l23_api.c **** 	} else if ((cbits & 0x1c) == 0x04) {
+ 827              		.loc 1 91 0
+ 828 02e8 0600000A 		beq	.L85
+  95:layer1/l23_api.c **** 	} else if ((cbits & 0x18) == 0x08) {
+ 829              		.loc 1 95 0
+ 830 02ec 182003E2 		and	r2, r3, #24
+ 831 02f0 080052E3 		cmp	r2, #8
+ 832 02f4 0020A013 		movne	r2, #0
+  80:layer1/l23_api.c **** 	enum mframe_task master_task = 0;
+ 833              		.loc 1 80 0
+ 834 02f8 0230A011 		movne	r3, r2
+  95:layer1/l23_api.c **** 	} else if ((cbits & 0x18) == 0x08) {
+ 835              		.loc 1 95 0
+ 836 02fc 0200001A 		bne	.L52
+  96:layer1/l23_api.c **** 		lch_idx = cbits & 0x7;
+ 837              		.loc 1 96 0
+ 838 0300 073003E2 		and	r3, r3, #7
+  97:layer1/l23_api.c **** 		master_task = MF_TASK_SDCCH8_0 + lch_idx;
+ 839              		.loc 1 97 0
+ 840 0304 083083E2 		add	r3, r3, #8
+ 841              	.L85:
+ 842              	.LVL84:
+  98:layer1/l23_api.c **** 		multiframe = MF51;
+ 843              		.loc 1 98 0
+ 844 0308 0120A0E3 		mov	r2, #1
+ 845              	.LVL85:
+ 846              	.L52:
+  97:layer1/l23_api.c **** 		master_task = MF_TASK_SDCCH8_0 + lch_idx;
+ 847              		.loc 1 97 0
+ 848 030c 012042E2 		sub	r2, r2, #1
+ 849              	.LVL86:
+ 850 0310 020052E3 		cmp	r2, #2
+ 851 0314 D0159F95 		ldrls	r1, .L92+32
+ 852 0318 02219197 		ldrls	r2, [r1, r2, asl #2]
+ 853              	.LVL87:
+ 854              	.LBE285:
+ 855 031c 0020A083 		movhi	r2, #0
+ 856              	.LVL88:
+ 857              	.LBE284:
+ 265:layer1/l23_api.c **** 	l1a_mftask_set(chan_nr2mf_task_mask(ul->chan_nr, NEIGH_MODE_PM));
+ 858              		.loc 1 265 0
+ 859 0320 0100A0E3 		mov	r0, #1
+ 860 0324 100382E1 		orr	r0, r2, r0, asl r3
+ 861 0328 FEFFFFEB 		bl	l1a_mftask_set
+ 862              	.LVL89:
+ 863              	.LBE272:
+ 864              	.LBE271:
+ 631:layer1/l23_api.c **** 	case L1CTL_FBSB_REQ:
+ 632:layer1/l23_api.c **** 		l1ctl_rx_fbsb_req(msg);
+ 633:layer1/l23_api.c **** 		break;
+ 634:layer1/l23_api.c **** 	case L1CTL_DM_EST_REQ:
+ 635:layer1/l23_api.c **** 		l1ctl_rx_dm_est_req(msg);
+ 636:layer1/l23_api.c **** 		break;
+ 865              		.loc 1 636 0
+ 866 032c 600100EA 		b	.L26
+ 867              	.LVL90:
+ 868              	.L34:
+ 869              	.LBB286:
+ 870              	.LBB287:
+ 323:layer1/l23_api.c **** 	l1s.dedicated.type = GSM_DCHAN_NONE;
+ 871              		.loc 1 323 0
+ 872 0330 A4559FE5 		ldr	r5, .L92+16
+ 321:layer1/l23_api.c **** 	printd("L1CTL_DM_REL_REQ\n");
+ 873              		.loc 1 321 0
+ 874 0334 B4059FE5 		ldr	r0, .L92+36
+ 323:layer1/l23_api.c **** 	l1s.dedicated.type = GSM_DCHAN_NONE;
+ 875              		.loc 1 323 0
+ 876 0338 0040A0E3 		mov	r4, #0
+ 877              	.LVL91:
+ 321:layer1/l23_api.c **** 	printd("L1CTL_DM_REL_REQ\n");
+ 878              		.loc 1 321 0
+ 879 033c FEFFFFEB 		bl	puts
+ 880              	.LVL92:
+ 322:layer1/l23_api.c **** 	l1a_mftask_set(0);
+ 881              		.loc 1 322 0
+ 882 0340 0000A0E3 		mov	r0, #0
+ 883 0344 FEFFFFEB 		bl	l1a_mftask_set
+ 324:layer1/l23_api.c **** 	l1a_txq_msgb_flush(&l1s.tx_queue[L1S_CHAN_MAIN]);
+ 884              		.loc 1 324 0
+ 885 0348 A50E85E2 		add	r0, r5, #2640
+ 323:layer1/l23_api.c **** 	l1s.dedicated.type = GSM_DCHAN_NONE;
+ 886              		.loc 1 323 0
+ 887 034c 084B85E5 		str	r4, [r5, #2824]
+ 324:layer1/l23_api.c **** 	l1a_txq_msgb_flush(&l1s.tx_queue[L1S_CHAN_MAIN]);
+ 888              		.loc 1 324 0
+ 889 0350 FEFFFFEB 		bl	l1a_txq_msgb_flush
+ 325:layer1/l23_api.c **** 	l1a_txq_msgb_flush(&l1s.tx_queue[L1S_CHAN_SACCH]);
+ 890              		.loc 1 325 0
+ 891 0354 98059FE5 		ldr	r0, .L92+40
+ 892 0358 FEFFFFEB 		bl	l1a_txq_msgb_flush
+ 326:layer1/l23_api.c **** 	l1a_txq_msgb_flush(&l1s.tx_queue[L1S_CHAN_TRAFFIC]);
+ 893              		.loc 1 326 0
+ 894 035c A60E85E2 		add	r0, r5, #2656
+ 895 0360 FEFFFFEB 		bl	l1a_txq_msgb_flush
+ 327:layer1/l23_api.c **** 	l1a_meas_msgb_set(NULL);
+ 896              		.loc 1 327 0
+ 897 0364 0400A0E1 		mov	r0, r4
+ 898 0368 FEFFFFEB 		bl	l1a_meas_msgb_set
+ 328:layer1/l23_api.c **** 	dsp_load_ciph_param(0, NULL);
+ 899              		.loc 1 328 0
+ 900 036c 0410A0E1 		mov	r1, r4
+ 901 0370 0400A0E1 		mov	r0, r4
+ 902 0374 FEFFFFEB 		bl	dsp_load_ciph_param
+ 329:layer1/l23_api.c **** 	l1a_tch_mode_set(GSM48_CMODE_SIGN);
+ 903              		.loc 1 329 0
+ 904 0378 0400A0E1 		mov	r0, r4
+ 905 037c FEFFFFEB 		bl	l1a_tch_mode_set
+ 330:layer1/l23_api.c **** 	audio_set_enabled(GSM48_CMODE_SIGN, 0);
+ 906              		.loc 1 330 0
+ 907 0380 0400A0E1 		mov	r0, r4
+ 908 0384 0410A0E1 		mov	r1, r4
+ 909 0388 FEFFFFEB 		bl	audio_set_enabled
+ 331:layer1/l23_api.c **** 	l1s.neigh_pm.n = 0;
+ 910              		.loc 1 331 0
+ 911 038c 1C4CC5E5 		strb	r4, [r5, #3100]
+ 912              	.LBE287:
+ 913              	.LBE286:
+ 637:layer1/l23_api.c **** 	case L1CTL_DM_REL_REQ:
+ 638:layer1/l23_api.c **** 		l1ctl_rx_dm_rel_req(msg);
+ 639:layer1/l23_api.c **** 		break;
+ 914              		.loc 1 639 0
+ 915 0390 470100EA 		b	.L26
+ 916              	.LVL93:
+ 917              	.L35:
+ 918              	.LBB288:
+ 919              	.LBB289:
+ 338:layer1/l23_api.c **** 	struct l1ctl_info_ul *ul = (struct l1ctl_info_ul *) l1h->data;
+ 920              		.loc 1 338 0
+ 921 0394 044084E2 		add	r4, r4, #4
+ 922              	.LVL94:
+ 339:layer1/l23_api.c **** 	struct l1ctl_par_req *par_req = (struct l1ctl_par_req *) ul->payload;
+ 923              		.loc 1 339 0
+ 924 0398 045084E2 		add	r5, r4, #4
+ 925              	.LVL95:
+ 341:layer1/l23_api.c **** 	printd("L1CTL_PARAM_REQ (ta=%d, tx_power=%d)\n", par_req->ta,
+ 926              		.loc 1 341 0
+ 927 039c 0120D5E5 		ldrb	r2, [r5, #1]	@ zero_extendqisi2
+ 928 03a0 50059FE5 		ldr	r0, .L92+44
+ 929 03a4 D410D4E1 		ldrsb	r1, [r4, #4]
+ 930 03a8 FEFFFFEB 		bl	printf
+ 931              	.LVL96:
+ 344:layer1/l23_api.c **** 	l1s.ta = par_req->ta;
+ 932              		.loc 1 344 0
+ 933 03ac 0420D4E5 		ldrb	r2, [r4, #4]	@ zero_extendqisi2
+ 934 03b0 24359FE5 		ldr	r3, .L92+16
+ 935 03b4 482AC3E5 		strb	r2, [r3, #2632]
+ 345:layer1/l23_api.c **** 	l1s.tx_power = par_req->tx_power;
+ 936              		.loc 1 345 0
+ 937 03b8 0120D5E5 		ldrb	r2, [r5, #1]	@ zero_extendqisi2
+ 938 03bc 492AC3E5 		strb	r2, [r3, #2633]
+ 939              	.LBE289:
+ 940              	.LBE288:
+ 640:layer1/l23_api.c **** 	case L1CTL_PARAM_REQ:
+ 641:layer1/l23_api.c **** 		l1ctl_rx_param_req(msg);
+ 642:layer1/l23_api.c **** 		break;
+ 941              		.loc 1 642 0
+ 942 03c0 3B0100EA 		b	.L26
+ 943              	.LVL97:
+ 944              	.L36:
+ 945              	.LBB290:
+ 946              	.LBB291:
+ 272:layer1/l23_api.c **** 	struct l1ctl_info_ul *ul = (struct l1ctl_info_ul *) l1h->data;
+ 947              		.loc 1 272 0
+ 948 03c4 044084E2 		add	r4, r4, #4
+ 949              	.LVL98:
+ 274:layer1/l23_api.c **** 			(struct l1ctl_dm_freq_req *) ul->payload;
+ 950              		.loc 1 274 0
+ 951 03c8 045084E2 		add	r5, r4, #4
+ 952              	.LVL99:
+ 276:layer1/l23_api.c **** 	printd("L1CTL_DM_FREQ_REQ (arfcn=%u, tsc=%u)\n",
+ 953              		.loc 1 276 0
+ 954 03cc 0430D5E5 		ldrb	r3, [r5, #4]	@ zero_extendqisi2
+ 955 03d0 0510D5E5 		ldrb	r1, [r5, #5]	@ zero_extendqisi2
+ 956 03d4 011483E1 		orr	r1, r3, r1, asl #8
+ 957              	.LVL100:
+ 958              	.LBB292:
+ 959              	.LBB293:
+ 960              		.loc 4 51 0
+ 961 03d8 2134A0E1 		mov	r3, r1, lsr #8
+ 962 03dc 011483E1 		orr	r1, r3, r1, asl #8
+ 963              	.LVL101:
+ 964              	.LBE293:
+ 965              	.LBE292:
+ 276:layer1/l23_api.c **** 	printd("L1CTL_DM_FREQ_REQ (arfcn=%u, tsc=%u)\n",
+ 966              		.loc 1 276 0
+ 967 03e0 0118A0E1 		mov	r1, r1, asl #16
+ 968 03e4 0220D5E5 		ldrb	r2, [r5, #2]	@ zero_extendqisi2
+ 969 03e8 0C059FE5 		ldr	r0, .L92+48
+ 970 03ec 2118A0E1 		mov	r1, r1, lsr #16
+ 971 03f0 FEFFFFEB 		bl	printf
+ 972              	.LVL102:
+ 280:layer1/l23_api.c **** 	l1s.dedicated.st_tsc  = freq_req->tsc;
+ 973              		.loc 1 280 0
+ 974 03f4 0220D5E5 		ldrb	r2, [r5, #2]	@ zero_extendqisi2
+ 975 03f8 DC349FE5 		ldr	r3, .L92+16
+ 976 03fc 942BC3E5 		strb	r2, [r3, #2964]
+ 281:layer1/l23_api.c **** 	l1s.dedicated.st_h    = freq_req->h;
+ 977              		.loc 1 281 0
+ 978 0400 0320D5E5 		ldrb	r2, [r5, #3]	@ zero_extendqisi2
+ 979 0404 962BC3E5 		strb	r2, [r3, #2966]
+ 283:layer1/l23_api.c **** 	if (freq_req->h) {
+ 980              		.loc 1 283 0
+ 981 0408 0320D5E5 		ldrb	r2, [r5, #3]	@ zero_extendqisi2
+ 982 040c 000052E3 		cmp	r2, #0
+ 983 0410 1500000A 		beq	.L56
+ 984              	.LBB294:
+ 285:layer1/l23_api.c **** 		l1s.dedicated.st_h1.hsn  = freq_req->h1.hsn;
+ 985              		.loc 1 285 0
+ 986 0414 0420D5E5 		ldrb	r2, [r5, #4]	@ zero_extendqisi2
+ 987 0418 982BC3E5 		strb	r2, [r3, #2968]
+ 286:layer1/l23_api.c **** 		l1s.dedicated.st_h1.maio = freq_req->h1.maio;
+ 988              		.loc 1 286 0
+ 989 041c 0520D5E5 		ldrb	r2, [r5, #5]	@ zero_extendqisi2
+ 990 0420 992BC3E5 		strb	r2, [r3, #2969]
+ 287:layer1/l23_api.c **** 		l1s.dedicated.st_h1.n    = freq_req->h1.n;
+ 991              		.loc 1 287 0
+ 992 0424 0620D5E5 		ldrb	r2, [r5, #6]	@ zero_extendqisi2
+ 993 0428 9A2BC3E5 		strb	r2, [r3, #2970]
+ 994              	.LVL103:
+ 995 042c CC249FE5 		ldr	r2, .L92+52
+ 288:layer1/l23_api.c **** 		for (i=0; i<freq_req->h1.n; i++)
+ 996              		.loc 1 288 0
+ 997 0430 0030A0E3 		mov	r3, #0
+ 998 0434 080000EA 		b	.L57
+ 999              	.LVL104:
+ 1000              	.L58:
+ 289:layer1/l23_api.c **** 			l1s.dedicated.st_h1.ma[i] = ntohs(freq_req->h1.ma[i]);
+ 1001              		.loc 1 289 0
+ 1002 0438 040083E2 		add	r0, r3, #4
+ 1003 043c 8010D5E7 		ldrb	r1, [r5, r0, asl #1]	@ zero_extendqisi2
+ 1004 0440 800085E0 		add	r0, r5, r0, asl #1
+ 1005 0444 0100D0E5 		ldrb	r0, [r0, #1]	@ zero_extendqisi2
+ 1006 0448 001481E1 		orr	r1, r1, r0, asl #8
+ 1007              	.LVL105:
+ 1008              	.LBB295:
+ 1009              	.LBB296:
+ 1010              		.loc 4 51 0
+ 1011 044c 2104A0E1 		mov	r0, r1, lsr #8
+ 1012 0450 011480E1 		orr	r1, r0, r1, asl #8
+ 1013              	.LVL106:
+ 1014              	.LBE296:
+ 1015              	.LBE295:
+ 289:layer1/l23_api.c **** 			l1s.dedicated.st_h1.ma[i] = ntohs(freq_req->h1.ma[i]);
+ 1016              		.loc 1 289 0
+ 1017 0454 B210E2E1 		strh	r1, [r2, #2]!	@ movhi
+ 288:layer1/l23_api.c **** 		for (i=0; i<freq_req->h1.n; i++)
+ 1018              		.loc 1 288 0
+ 1019 0458 013083E2 		add	r3, r3, #1
+ 1020              	.LVL107:
+ 1021              	.L57:
+ 1022 045c 0610D5E5 		ldrb	r1, [r5, #6]	@ zero_extendqisi2
+ 1023 0460 010053E1 		cmp	r3, r1
+ 1024 0464 F3FFFFBA 		blt	.L58
+ 1025 0468 060000EA 		b	.L59
+ 1026              	.LVL108:
+ 1027              	.L56:
+ 1028              	.LBE294:
+ 291:layer1/l23_api.c **** 		l1s.dedicated.st_h0.arfcn = ntohs(freq_req->h0.band_arfcn);
+ 1029              		.loc 1 291 0
+ 1030 046c 0510D5E5 		ldrb	r1, [r5, #5]	@ zero_extendqisi2
+ 1031 0470 0420D5E5 		ldrb	r2, [r5, #4]	@ zero_extendqisi2
+ 1032 0474 012482E1 		orr	r2, r2, r1, asl #8
+ 1033              	.LVL109:
+ 1034              	.LBB297:
+ 1035              	.LBB298:
+ 1036              		.loc 4 51 0
+ 1037 0478 2214A0E1 		mov	r1, r2, lsr #8
+ 1038 047c 022481E1 		orr	r2, r1, r2, asl #8
+ 1039              	.LVL110:
+ 1040              	.LBE298:
+ 1041              	.LBE297:
+ 291:layer1/l23_api.c **** 		l1s.dedicated.st_h0.arfcn = ntohs(freq_req->h0.band_arfcn);
+ 1042              		.loc 1 291 0
+ 1043 0480 7C149FE5 		ldr	r1, .L92+56
+ 1044 0484 B12083E1 		strh	r2, [r3, r1]	@ movhi
+ 1045              	.L59:
+ 294:layer1/l23_api.c **** 	l1a_freq_req(ntohs(freq_req->fn));
+ 1046              		.loc 1 294 0
+ 1047 0488 0430D4E5 		ldrb	r3, [r4, #4]	@ zero_extendqisi2
+ 1048 048c 0120D5E5 		ldrb	r2, [r5, #1]	@ zero_extendqisi2
+ 1049 0490 023483E1 		orr	r3, r3, r2, asl #8
+ 1050              	.LVL111:
+ 1051              	.LBB299:
+ 1052              	.LBB300:
+ 1053              		.loc 4 51 0
+ 1054 0494 2304A0E1 		mov	r0, r3, lsr #8
+ 1055 0498 033480E1 		orr	r3, r0, r3, asl #8
+ 1056              	.LVL112:
+ 1057              	.LBE300:
+ 1058              	.LBE299:
+ 294:layer1/l23_api.c **** 	l1a_freq_req(ntohs(freq_req->fn));
+ 1059              		.loc 1 294 0
+ 1060 049c 0308A0E1 		mov	r0, r3, asl #16
+ 1061 04a0 2008A0E1 		mov	r0, r0, lsr #16
+ 1062 04a4 FEFFFFEB 		bl	l1a_freq_req
+ 1063              	.LBE291:
+ 1064              	.LBE290:
+ 643:layer1/l23_api.c **** 	case L1CTL_DM_FREQ_REQ:
+ 644:layer1/l23_api.c **** 		l1ctl_rx_dm_freq_req(msg);
+ 645:layer1/l23_api.c **** 		break;
+ 1065              		.loc 1 645 0
+ 1066 04a8 010100EA 		b	.L26
+ 1067              	.LVL113:
+ 1068              	.L37:
+ 1069              	.LBB301:
+ 1070              	.LBB302:
+ 303:layer1/l23_api.c **** 	uint8_t key_len = msg->len - sizeof(*l1h) - sizeof(*ul) - sizeof(*cr);
+ 1071              		.loc 1 303 0
+ 1072 04ac 095041E2 		sub	r5, r1, #9
+ 301:layer1/l23_api.c **** 	struct l1ctl_info_ul *ul = (struct l1ctl_info_ul *) l1h->data;
+ 1073              		.loc 1 301 0
+ 1074 04b0 047084E2 		add	r7, r4, #4
+ 303:layer1/l23_api.c **** 	uint8_t key_len = msg->len - sizeof(*l1h) - sizeof(*ul) - sizeof(*cr);
+ 1075              		.loc 1 303 0
+ 1076 04b4 FF5005E2 		and	r5, r5, #255
+ 1077              	.LVL114:
+ 305:layer1/l23_api.c **** 	printd("L1CTL_CRYPTO_REQ (algo=A5/%u, len=%u)\n", cr->algo, key_len);
+ 1078              		.loc 1 305 0
+ 1079 04b8 48049FE5 		ldr	r0, .L92+60
+ 1080 04bc 0410D7E5 		ldrb	r1, [r7, #4]	@ zero_extendqisi2
+ 1081 04c0 0520A0E1 		mov	r2, r5
+ 1082 04c4 FEFFFFEB 		bl	printf
+ 307:layer1/l23_api.c **** 	if (cr->algo && key_len != 8) {
+ 1083              		.loc 1 307 0
+ 1084 04c8 0400D7E5 		ldrb	r0, [r7, #4]	@ zero_extendqisi2
+ 1085 04cc 080055E3 		cmp	r5, #8
+ 1086 04d0 00005013 		cmpne	r0, #0
+ 308:layer1/l23_api.c **** 		printd("L1CTL_CRYPTO_REQ -> Invalid key\n");
+ 1087              		.loc 1 308 0
+ 1088 04d4 30049F15 		ldrne	r0, .L92+64
+ 307:layer1/l23_api.c **** 	if (cr->algo && key_len != 8) {
+ 1089              		.loc 1 307 0
+ 1090 04d8 7D00001A 		bne	.L89
+ 312:layer1/l23_api.c **** 	dsp_load_ciph_param(cr->algo, cr->key);
+ 1091              		.loc 1 312 0
+ 1092 04dc 091084E2 		add	r1, r4, #9
+ 1093 04e0 FEFFFFEB 		bl	dsp_load_ciph_param
+ 1094 04e4 F20000EA 		b	.L26
+ 1095              	.LVL115:
+ 1096              	.L28:
+ 1097              	.LBE302:
+ 1098              	.LBE301:
+ 1099              	.LBB303:
+ 1100              	.LBB304:
+ 352:layer1/l23_api.c **** 	struct l1ctl_info_ul *ul = (struct l1ctl_info_ul *) l1h->data;
+ 1101              		.loc 1 352 0
+ 1102 04e8 044084E2 		add	r4, r4, #4
+ 1103              	.LVL116:
+ 353:layer1/l23_api.c **** 	struct l1ctl_rach_req *rach_req = (struct l1ctl_rach_req *) ul->payload;
+ 1104              		.loc 1 353 0
+ 1105 04ec 045084E2 		add	r5, r4, #4
+ 1106              	.LVL117:
+ 355:layer1/l23_api.c **** 	printd("L1CTL_RACH_REQ (ra=0x%02x, offset=%d combined=%d)\n",
+ 1107              		.loc 1 355 0
+ 1108 04f0 0230D5E5 		ldrb	r3, [r5, #2]	@ zero_extendqisi2
+ 1109 04f4 0320D5E5 		ldrb	r2, [r5, #3]	@ zero_extendqisi2
+ 1110 04f8 022483E1 		orr	r2, r3, r2, asl #8
+ 1111              	.LVL118:
+ 1112              	.LBB305:
+ 1113              	.LBB306:
+ 1114              		.loc 4 51 0
+ 1115 04fc 2234A0E1 		mov	r3, r2, lsr #8
+ 1116 0500 022483E1 		orr	r2, r3, r2, asl #8
+ 1117              	.LVL119:
+ 1118              	.LBE306:
+ 1119              	.LBE305:
+ 355:layer1/l23_api.c **** 	printd("L1CTL_RACH_REQ (ra=0x%02x, offset=%d combined=%d)\n",
+ 1120              		.loc 1 355 0
+ 1121 0504 0228A0E1 		mov	r2, r2, asl #16
+ 1122 0508 0410D4E5 		ldrb	r1, [r4, #4]	@ zero_extendqisi2
+ 1123 050c 0130D5E5 		ldrb	r3, [r5, #1]	@ zero_extendqisi2
+ 1124 0510 2228A0E1 		mov	r2, r2, lsr #16
+ 1125 0514 F4039FE5 		ldr	r0, .L92+68
+ 1126 0518 FEFFFFEB 		bl	printf
+ 1127              	.LVL120:
+ 358:layer1/l23_api.c **** 	l1a_rach_req(ntohs(rach_req->offset), rach_req->combined,
+ 1128              		.loc 1 358 0
+ 1129 051c 0320D5E5 		ldrb	r2, [r5, #3]	@ zero_extendqisi2
+ 1130 0520 0230D5E5 		ldrb	r3, [r5, #2]	@ zero_extendqisi2
+ 1131 0524 023483E1 		orr	r3, r3, r2, asl #8
+ 1132              	.LVL121:
+ 1133              	.LBB307:
+ 1134              	.LBB308:
+ 1135              		.loc 4 51 0
+ 1136 0528 2304A0E1 		mov	r0, r3, lsr #8
+ 1137 052c 033480E1 		orr	r3, r0, r3, asl #8
+ 1138              	.LVL122:
+ 1139              	.LBE308:
+ 1140              	.LBE307:
+ 358:layer1/l23_api.c **** 	l1a_rach_req(ntohs(rach_req->offset), rach_req->combined,
+ 1141              		.loc 1 358 0
+ 1142 0530 0308A0E1 		mov	r0, r3, asl #16
+ 1143 0534 2008A0E1 		mov	r0, r0, lsr #16
+ 1144 0538 0110D5E5 		ldrb	r1, [r5, #1]	@ zero_extendqisi2
+ 1145 053c 0420D4E5 		ldrb	r2, [r4, #4]	@ zero_extendqisi2
+ 1146 0540 FEFFFFEB 		bl	l1a_rach_req
+ 1147              	.LBE304:
+ 1148              	.LBE303:
+ 646:layer1/l23_api.c **** 	case L1CTL_CRYPTO_REQ:
+ 647:layer1/l23_api.c **** 		l1ctl_rx_crypto_req(msg);
+ 648:layer1/l23_api.c **** 		break;
+ 649:layer1/l23_api.c **** 	case L1CTL_RACH_REQ:
+ 650:layer1/l23_api.c **** 		l1ctl_rx_rach_req(msg);
+ 651:layer1/l23_api.c **** 		break;
+ 1149              		.loc 1 651 0
+ 1150 0544 DA0000EA 		b	.L26
+ 1151              	.LVL123:
+ 1152              	.L30:
+ 1153              	.LBB309:
+ 1154              	.LBB311:
+ 366:layer1/l23_api.c **** 	struct l1ctl_info_ul *ul = (struct l1ctl_info_ul *) l1h->data;
+ 1155              		.loc 1 366 0
+ 1156 0548 047084E2 		add	r7, r4, #4
+ 1157              	.LVL124:
+ 367:layer1/l23_api.c **** 	struct l1ctl_data_ind *data_ind = (struct l1ctl_data_ind *) ul->payload;
+ 1158              		.loc 1 367 0
+ 1159 054c 045087E2 		add	r5, r7, #4
+ 1160              	.LVL125:
+ 370:layer1/l23_api.c **** 	printd("L1CTL_DATA_REQ (link_id=0x%02x)\n", ul->link_id);
+ 1161              		.loc 1 370 0
+ 1162 0550 BC039FE5 		ldr	r0, .L92+72
+ 1163 0554 0110D7E5 		ldrb	r1, [r7, #1]	@ zero_extendqisi2
+ 1164 0558 FEFFFFEB 		bl	printf
+ 372:layer1/l23_api.c **** 	msg->l3h = data_ind->data;
+ 1165              		.loc 1 372 0
+ 1166 055c 185086E5 		str	r5, [r6, #24]
+ 373:layer1/l23_api.c **** 	if (ul->link_id & 0x40) {
+ 1167              		.loc 1 373 0
+ 1168 0560 0130D7E5 		ldrb	r3, [r7, #1]	@ zero_extendqisi2
+ 1169 0564 400013E3 		tst	r3, #64
+ 1170 0568 0C00000A 		beq	.L81
+ 1171              	.LBB314:
+ 375:layer1/l23_api.c **** 		if (gh->proto_discr == GSM48_PDISC_RR
+ 1172              		.loc 1 375 0
+ 1173 056c 0D20D4E5 		ldrb	r2, [r4, #13]	@ zero_extendqisi2
+ 1174 0570 060052E3 		cmp	r2, #6
+ 374:layer1/l23_api.c **** 		struct gsm48_hdr *gh = (struct gsm48_hdr *)(data_ind->data + 5);
+ 1175              		.loc 1 374 0
+ 1176 0574 0D3084E2 		add	r3, r4, #13
+ 1177              	.LVL126:
+ 375:layer1/l23_api.c **** 		if (gh->proto_discr == GSM48_PDISC_RR
+ 1178              		.loc 1 375 0
+ 1179 0578 0A00001A 		bne	.L83
+ 376:layer1/l23_api.c **** 		 && gh->msg_type == GSM48_MT_RR_MEAS_REP) {
+ 1180              		.loc 1 376 0
+ 1181 057c 0130D3E5 		ldrb	r3, [r3, #1]	@ zero_extendqisi2
+ 1182 0580 150053E3 		cmp	r3, #21
+ 1183 0584 0700001A 		bne	.L83
+ 377:layer1/l23_api.c **** 			printd("updating measurement report\n");
+ 1184              		.loc 1 377 0
+ 1185 0588 88039FE5 		ldr	r0, .L92+76
+ 1186 058c FEFFFFEB 		bl	puts
+ 378:layer1/l23_api.c **** 			l1a_meas_msgb_set(msg);
+ 1187              		.loc 1 378 0
+ 1188 0590 0600A0E1 		mov	r0, r6
+ 1189              	.LBE314:
+ 1190              	.LBE311:
+ 1191              	.LBE309:
+ 652:layer1/l23_api.c **** 	case L1CTL_DATA_REQ:
+ 653:layer1/l23_api.c **** 		l1ctl_rx_data_req(msg);
+ 654:layer1/l23_api.c **** 		/* we have to keep the msgb, not free it! */
+ 655:layer1/l23_api.c **** 		goto exit_nofree;
+ 656:layer1/l23_api.c **** 	case L1CTL_PM_REQ:
+ 657:layer1/l23_api.c **** 		l1ctl_rx_pm_req(msg);
+ 658:layer1/l23_api.c **** 		break;
+ 659:layer1/l23_api.c **** 	case L1CTL_RESET_REQ:
+ 660:layer1/l23_api.c **** 		l1ctl_rx_reset_req(msg);
+ 661:layer1/l23_api.c **** 		break;
+ 662:layer1/l23_api.c **** 	case L1CTL_CCCH_MODE_REQ:
+ 663:layer1/l23_api.c **** 		l1ctl_rx_ccch_mode_req(msg);
+ 664:layer1/l23_api.c **** 		break;
+ 665:layer1/l23_api.c **** 	case L1CTL_TCH_MODE_REQ:
+ 666:layer1/l23_api.c **** 		l1ctl_rx_tch_mode_req(msg);
+ 667:layer1/l23_api.c **** 		break;
+ 668:layer1/l23_api.c **** 	case L1CTL_NEIGH_PM_REQ:
+ 669:layer1/l23_api.c **** 		l1ctl_rx_neigh_pm_req(msg);
+ 670:layer1/l23_api.c **** 		break;
+ 671:layer1/l23_api.c **** 	case L1CTL_TRAFFIC_REQ:
+ 672:layer1/l23_api.c **** 		l1ctl_rx_traffic_req(msg);
+ 673:layer1/l23_api.c **** 		/* we have to keep the msgb, not free it! */
+ 674:layer1/l23_api.c **** 		goto exit_nofree;
+ 675:layer1/l23_api.c **** 	case L1CTL_SIM_REQ:
+ 676:layer1/l23_api.c **** 		l1ctl_sim_req(msg);
+ 677:layer1/l23_api.c **** 		break;
+ 678:layer1/l23_api.c **** 	}
+ 679:layer1/l23_api.c **** 
+ 680:layer1/l23_api.c **** exit_msgbfree:
+ 681:layer1/l23_api.c **** 	msgb_free(msg);
+ 682:layer1/l23_api.c **** exit_nofree:
+ 683:layer1/l23_api.c **** 	return;
+ 684:layer1/l23_api.c **** }
+ 1192              		.loc 1 684 0
+ 1193 0594 08D08DE2 		add	sp, sp, #8
+ 1194 0598 F041BDE8 		ldmfd	sp!, {r4, r5, r6, r7, r8, lr}
+ 1195              	.LBB317:
+ 1196              	.LBB310:
+ 1197              	.LBB313:
+ 378:layer1/l23_api.c **** 			l1a_meas_msgb_set(msg);
+ 1198              		.loc 1 378 0
+ 1199 059c FEFFFFEA 		b	l1a_meas_msgb_set
+ 1200              	.LVL127:
+ 1201              	.L81:
+ 1202              	.LBE313:
+ 383:layer1/l23_api.c **** 		tx_queue = &l1s.tx_queue[L1S_CHAN_MAIN];
+ 1203              		.loc 1 383 0
+ 1204 05a0 74439FE5 		ldr	r4, .L92+80
+ 1205              	.LVL128:
+ 1206 05a4 000000EA 		b	.L61
+ 1207              	.LVL129:
+ 1208              	.L83:
+ 1209              	.LBB312:
+ 381:layer1/l23_api.c **** 		tx_queue = &l1s.tx_queue[L1S_CHAN_SACCH];
+ 1210              		.loc 1 381 0
+ 1211 05a8 44439FE5 		ldr	r4, .L92+40
+ 1212              	.LVL130:
+ 1213              	.L61:
+ 1214              	.LBE312:
+ 385:layer1/l23_api.c **** 	printd("ul=%p, ul->payload=%p, data_ind=%p, data_ind->data=%p l3h=%p\n",
+ 1215              		.loc 1 385 0
+ 1216 05ac 6C039FE5 		ldr	r0, .L92+84
+ 1217 05b0 0710A0E1 		mov	r1, r7
+ 1218 05b4 042087E2 		add	r2, r7, #4
+ 1219 05b8 0530A0E1 		mov	r3, r5
+ 1220 05bc 00508DE5 		str	r5, [sp, #0]
+ 1221 05c0 04508DE5 		str	r5, [sp, #4]
+ 1222 05c4 FEFFFFEB 		bl	printf
+ 388:layer1/l23_api.c **** 	l1a_txq_msgb_enq(tx_queue, msg);
+ 1223              		.loc 1 388 0
+ 1224 05c8 0400A0E1 		mov	r0, r4
+ 1225 05cc 9F0000EA 		b	.L90
+ 1226              	.LVL131:
+ 1227              	.L31:
+ 1228              	.LBE310:
+ 1229              	.LBE317:
+ 1230              	.LBB318:
+ 1231              	.LBB319:
+ 397:layer1/l23_api.c **** 	switch (pm_req->type) {
+ 1232              		.loc 1 397 0
+ 1233 05d0 0420D4E5 		ldrb	r2, [r4, #4]	@ zero_extendqisi2
+ 1234 05d4 010052E3 		cmp	r2, #1
+ 395:layer1/l23_api.c **** 	struct l1ctl_pm_req *pm_req = (struct l1ctl_pm_req *) l1h->data;
+ 1235              		.loc 1 395 0
+ 1236 05d8 043084E2 		add	r3, r4, #4
+ 1237              	.LVL132:
+ 397:layer1/l23_api.c **** 	switch (pm_req->type) {
+ 1238              		.loc 1 397 0
+ 1239 05dc 1C00001A 		bne	.L62
+ 399:layer1/l23_api.c **** 		l1s.pm.mode = 1;
+ 1240              		.loc 1 399 0
+ 1241 05e0 F4029FE5 		ldr	r0, .L92+16
+ 1242 05e4 F42A80E5 		str	r2, [r0, #2804]
+ 401:layer1/l23_api.c **** 				ntohs(pm_req->range.band_arfcn_from);
+ 1243              		.loc 1 401 0
+ 1244 05e8 0510D3E5 		ldrb	r1, [r3, #5]	@ zero_extendqisi2
+ 1245 05ec 0420D3E5 		ldrb	r2, [r3, #4]	@ zero_extendqisi2
+ 1246 05f0 012482E1 		orr	r2, r2, r1, asl #8
+ 1247              	.LVL133:
+ 1248              	.LBB320:
+ 1249              	.LBB321:
+ 1250              		.loc 4 51 0
+ 1251 05f4 2214A0E1 		mov	r1, r2, lsr #8
+ 1252 05f8 021481E1 		orr	r1, r1, r2, asl #8
+ 1253 05fc 0118A0E1 		mov	r1, r1, asl #16
+ 1254              	.LBE321:
+ 1255              	.LBE320:
+ 400:layer1/l23_api.c **** 		l1s.pm.range.arfcn_start =
+ 1256              		.loc 1 400 0
+ 1257 0600 1C239FE5 		ldr	r2, .L92+88
+ 1258              	.LVL134:
+ 1259              	.LBB323:
+ 1260              	.LBB322:
+ 1261              		.loc 4 51 0
+ 1262 0604 2118A0E1 		mov	r1, r1, lsr #16
+ 1263              	.LBE322:
+ 1264              	.LBE323:
+ 400:layer1/l23_api.c **** 		l1s.pm.range.arfcn_start =
+ 1265              		.loc 1 400 0
+ 1266 0608 B21080E1 		strh	r1, [r0, r2]	@ movhi
+ 403:layer1/l23_api.c **** 				ntohs(pm_req->range.band_arfcn_from);
+ 1267              		.loc 1 403 0
+ 1268 060c 05C0D3E5 		ldrb	ip, [r3, #5]	@ zero_extendqisi2
+ 1269 0610 0420D3E5 		ldrb	r2, [r3, #4]	@ zero_extendqisi2
+ 1270 0614 0C2482E1 		orr	r2, r2, ip, asl #8
+ 1271              	.LVL135:
+ 1272              	.LBB324:
+ 1273              	.LBB325:
+ 1274              		.loc 4 51 0
+ 1275 0618 22C4A0E1 		mov	ip, r2, lsr #8
+ 1276 061c 02248CE1 		orr	r2, ip, r2, asl #8
+ 1277              	.LVL136:
+ 1278              	.LBE325:
+ 1279              	.LBE324:
+ 402:layer1/l23_api.c **** 		l1s.pm.range.arfcn_next =
+ 1280              		.loc 1 402 0
+ 1281 0620 00C39FE5 		ldr	ip, .L92+92
+ 1282 0624 BC2080E1 		strh	r2, [r0, ip]	@ movhi
+ 405:layer1/l23_api.c **** 				ntohs(pm_req->range.band_arfcn_to);
+ 1283              		.loc 1 405 0
+ 1284 0628 0620D3E5 		ldrb	r2, [r3, #6]	@ zero_extendqisi2
+ 1285 062c 0730D3E5 		ldrb	r3, [r3, #7]	@ zero_extendqisi2
+ 1286 0630 033482E1 		orr	r3, r2, r3, asl #8
+ 1287              	.LVL137:
+ 1288              	.LBB326:
+ 1289              	.LBB327:
+ 1290              		.loc 4 51 0
+ 1291 0634 2324A0E1 		mov	r2, r3, lsr #8
+ 1292 0638 032482E1 		orr	r2, r2, r3, asl #8
+ 1293 063c 0228A0E1 		mov	r2, r2, asl #16
+ 1294              	.LBE327:
+ 1295              	.LBE326:
+ 404:layer1/l23_api.c **** 		l1s.pm.range.arfcn_end =
+ 1296              		.loc 1 404 0
+ 1297 0640 E4329FE5 		ldr	r3, .L92+96
+ 1298              	.LVL138:
+ 1299              	.LBB329:
+ 1300              	.LBB328:
+ 1301              		.loc 4 51 0
+ 1302 0644 2228A0E1 		mov	r2, r2, lsr #16
+ 1303              	.LBE328:
+ 1304              	.LBE329:
+ 404:layer1/l23_api.c **** 		l1s.pm.range.arfcn_end =
+ 1305              		.loc 1 404 0
+ 1306 0648 B32080E1 		strh	r2, [r0, r3]	@ movhi
+ 406:layer1/l23_api.c **** 		printf("L1CTL_PM_REQ start=%u end=%u\n",
+ 1307              		.loc 1 406 0
+ 1308 064c DC029FE5 		ldr	r0, .L92+100
+ 1309 0650 FEFFFFEB 		bl	printf
+ 1310              	.L62:
+ 410:layer1/l23_api.c **** 	l1s_reset_hw(); /* must reset, otherwise measurement results are delayed */
+ 1311              		.loc 1 410 0
+ 1312 0654 FEFFFFEB 		bl	l1s_reset_hw
+ 411:layer1/l23_api.c **** 	l1s_pm_test(1, l1s.pm.range.arfcn_next);
+ 1313              		.loc 1 411 0
+ 1314 0658 C8329FE5 		ldr	r3, .L92+92
+ 1315 065c 78229FE5 		ldr	r2, .L92+16
+ 1316 0660 0100A0E3 		mov	r0, #1
+ 1317 0664 B31092E1 		ldrh	r1, [r2, r3]
+ 1318 0668 FEFFFFEB 		bl	l1s_pm_test
+ 1319              	.LBE319:
+ 1320              	.LBE318:
+ 658:layer1/l23_api.c **** 		break;
+ 1321              		.loc 1 658 0
+ 1322 066c 900000EA 		b	.L26
+ 1323              	.LVL139:
+ 1324              	.L32:
+ 1325              	.LBB330:
+ 1326              	.LBB331:
+ 433:layer1/l23_api.c **** 	switch (reset_req->type) {
+ 1327              		.loc 1 433 0
+ 1328 0670 0430D4E5 		ldrb	r3, [r4, #4]	@ zero_extendqisi2
+ 1329 0674 010053E3 		cmp	r3, #1
+ 1330 0678 0300000A 		beq	.L65
+ 1331 067c 020053E3 		cmp	r3, #2
+ 447:layer1/l23_api.c **** 		printf("unknown L1CTL_RESET_REQ type\n");
+ 1332              		.loc 1 447 0
+ 1333 0680 AC029F15 		ldrne	r0, .L92+104
+ 433:layer1/l23_api.c **** 	switch (reset_req->type) {
+ 1334              		.loc 1 433 0
+ 1335 0684 1200001A 		bne	.L89
+ 1336 0688 0A0000EA 		b	.L91
+ 1337              	.L65:
+ 435:layer1/l23_api.c **** 		printf("L1CTL_RESET_REQ: FULL!\n");
+ 1338              		.loc 1 435 0
+ 1339 068c A4029FE5 		ldr	r0, .L92+108
+ 1340 0690 FEFFFFEB 		bl	puts
+ 436:layer1/l23_api.c **** 		l1s_reset();
+ 1341              		.loc 1 436 0
+ 1342 0694 FEFFFFEB 		bl	l1s_reset
+ 437:layer1/l23_api.c **** 		l1s_reset_hw();
+ 1343              		.loc 1 437 0
+ 1344 0698 FEFFFFEB 		bl	l1s_reset_hw
+ 438:layer1/l23_api.c **** 		audio_set_enabled(GSM48_CMODE_SIGN, 0);
+ 1345              		.loc 1 438 0
+ 1346 069c 0000A0E3 		mov	r0, #0
+ 1347 06a0 0010A0E1 		mov	r1, r0
+ 1348 06a4 FEFFFFEB 		bl	audio_set_enabled
+ 439:layer1/l23_api.c **** 		l1ctl_tx_reset(L1CTL_RESET_CONF, reset_req->type);
+ 1349              		.loc 1 439 0
+ 1350 06a8 0E00A0E3 		mov	r0, #14
+ 1351 06ac 0410D4E5 		ldrb	r1, [r4, #4]	@ zero_extendqisi2
+ 1352 06b0 FEFFFFEB 		bl	l1ctl_tx_reset
+ 1353 06b4 7E0000EA 		b	.L26
+ 1354              	.L91:
+ 442:layer1/l23_api.c **** 		printf("L1CTL_RESET_REQ: SCHED!\n");
+ 1355              		.loc 1 442 0
+ 1356 06b8 7C029FE5 		ldr	r0, .L92+112
+ 1357 06bc FEFFFFEB 		bl	puts
+ 443:layer1/l23_api.c **** 		l1ctl_tx_reset(L1CTL_RESET_CONF, reset_req->type);
+ 1358              		.loc 1 443 0
+ 1359 06c0 0E00A0E3 		mov	r0, #14
+ 1360 06c4 0410D4E5 		ldrb	r1, [r4, #4]	@ zero_extendqisi2
+ 1361 06c8 FEFFFFEB 		bl	l1ctl_tx_reset
+ 444:layer1/l23_api.c **** 		sched_gsmtime_reset();
+ 1362              		.loc 1 444 0
+ 1363 06cc FEFFFFEB 		bl	sched_gsmtime_reset
+ 1364 06d0 770000EA 		b	.L26
+ 1365              	.LVL140:
+ 1366              	.L89:
+ 447:layer1/l23_api.c **** 		printf("unknown L1CTL_RESET_REQ type\n");
+ 1367              		.loc 1 447 0
+ 1368 06d4 FEFFFFEB 		bl	puts
+ 1369 06d8 750000EA 		b	.L26
+ 1370              	.LVL141:
+ 1371              	.L33:
+ 1372              	.LBE331:
+ 1373              	.LBE330:
+ 1374              	.LBB332:
+ 1375              	.LBB333:
+ 470:layer1/l23_api.c **** 	uint8_t ccch_mode = ccch_mode_req->ccch_mode;
+ 1376              		.loc 1 470 0
+ 1377 06dc 0440D4E5 		ldrb	r4, [r4, #4]	@ zero_extendqisi2
+ 1378              	.LVL142:
+ 473:layer1/l23_api.c **** 	l1s.serving_cell.ccch_mode = ccch_mode;
+ 1379              		.loc 1 473 0
+ 1380 06e0 F4319FE5 		ldr	r3, .L92+16
+ 476:layer1/l23_api.c **** 	mframe_disable(MF_TASK_CCCH_COMB);
+ 1381              		.loc 1 476 0
+ 1382 06e4 0300A0E3 		mov	r0, #3
+ 473:layer1/l23_api.c **** 	l1s.serving_cell.ccch_mode = ccch_mode;
+ 1383              		.loc 1 473 0
+ 1384 06e8 1B40C3E5 		strb	r4, [r3, #27]
+ 476:layer1/l23_api.c **** 	mframe_disable(MF_TASK_CCCH_COMB);
+ 1385              		.loc 1 476 0
+ 1386 06ec FEFFFFEB 		bl	mframe_disable
+ 1387              	.LVL143:
+ 477:layer1/l23_api.c **** 	mframe_disable(MF_TASK_CCCH);
+ 1388              		.loc 1 477 0
+ 1389 06f0 0200A0E3 		mov	r0, #2
+ 1390 06f4 FEFFFFEB 		bl	mframe_disable
+ 479:layer1/l23_api.c **** 	if (ccch_mode == CCCH_MODE_COMBINED)
+ 1391              		.loc 1 479 0
+ 1392 06f8 020054E3 		cmp	r4, #2
+ 480:layer1/l23_api.c **** 		mframe_enable(MF_TASK_CCCH_COMB);
+ 1393              		.loc 1 480 0
+ 1394 06fc 0300A003 		moveq	r0, #3
+ 479:layer1/l23_api.c **** 	if (ccch_mode == CCCH_MODE_COMBINED)
+ 1395              		.loc 1 479 0
+ 1396 0700 0200000A 		beq	.L86
+ 481:layer1/l23_api.c **** 	else if (ccch_mode == CCCH_MODE_NON_COMBINED)
+ 1397              		.loc 1 481 0
+ 1398 0704 010054E3 		cmp	r4, #1
+ 1399 0708 0100001A 		bne	.L68
+ 482:layer1/l23_api.c **** 		mframe_enable(MF_TASK_CCCH);
+ 1400              		.loc 1 482 0
+ 1401 070c 0200A0E3 		mov	r0, #2
+ 1402              	.L86:
+ 1403 0710 FEFFFFEB 		bl	mframe_enable
+ 1404              	.L68:
+ 1405              	.LVL144:
+ 1406              	.LBB334:
+ 1407              	.LBB335:
+ 455:layer1/l23_api.c **** 	struct msgb *msg = l1ctl_msgb_alloc(L1CTL_CCCH_MODE_CONF);
+ 1408              		.loc 1 455 0
+ 1409 0714 1100A0E3 		mov	r0, #17
+ 1410 0718 FEFFFFEB 		bl	l1ctl_msgb_alloc
+ 458:layer1/l23_api.c **** 				msgb_put(msg, sizeof(*mode_conf));
+ 1411              		.loc 1 458 0
+ 1412 071c 0410A0E3 		mov	r1, #4
+ 455:layer1/l23_api.c **** 	struct msgb *msg = l1ctl_msgb_alloc(L1CTL_CCCH_MODE_CONF);
+ 1413              		.loc 1 455 0
+ 1414 0720 0050A0E1 		mov	r5, r0
+ 1415              	.LVL145:
+ 458:layer1/l23_api.c **** 				msgb_put(msg, sizeof(*mode_conf));
+ 1416              		.loc 1 458 0
+ 1417 0724 FEFFFFEB 		bl	msgb_put
+ 1418              	.LVL146:
+ 459:layer1/l23_api.c **** 	mode_conf->ccch_mode = ccch_mode;
+ 1419              		.loc 1 459 0
+ 1420 0728 0040C0E5 		strb	r4, [r0, #0]
+ 461:layer1/l23_api.c **** 	l1_queue_for_l2(msg);
+ 1421              		.loc 1 461 0
+ 1422 072c 0500A0E1 		mov	r0, r5
+ 1423              	.LVL147:
+ 1424 0730 190000EA 		b	.L88
+ 1425              	.LVL148:
+ 1426              	.L39:
+ 1427              	.LBE335:
+ 1428              	.LBE334:
+ 1429              	.LBE333:
+ 1430              	.LBE332:
+ 1431              	.LBB336:
+ 1432              	.LBB337:
+ 509:layer1/l23_api.c **** 	printd("L1CTL_TCH_MODE_REQ (tch_mode=0x%02x audio_mode=0x%02x)\n",
+ 1433              		.loc 1 509 0
+ 1434 0734 0450D4E5 		ldrb	r5, [r4, #4]	@ zero_extendqisi2
+ 1435 0738 0540D4E5 		ldrb	r4, [r4, #5]	@ zero_extendqisi2
+ 1436              	.LVL149:
+ 1437 073c 0510A0E1 		mov	r1, r5
+ 1438 0740 0420A0E1 		mov	r2, r4
+ 1439 0744 F4019FE5 		ldr	r0, .L92+116
+ 1440 0748 FEFFFFEB 		bl	printf
+ 1441              	.LVL150:
+ 511:layer1/l23_api.c **** 	tch_mode = l1a_tch_mode_set(tch_mode);
+ 1442              		.loc 1 511 0
+ 1443 074c 0500A0E1 		mov	r0, r5
+ 1444 0750 FEFFFFEB 		bl	l1a_tch_mode_set
+ 1445 0754 0050A0E1 		mov	r5, r0
+ 1446              	.LVL151:
+ 512:layer1/l23_api.c **** 	audio_mode = l1a_audio_mode_set(audio_mode);
+ 1447              		.loc 1 512 0
+ 1448 0758 0400A0E1 		mov	r0, r4
+ 1449              	.LVL152:
+ 1450 075c FEFFFFEB 		bl	l1a_audio_mode_set
+ 1451 0760 0040A0E1 		mov	r4, r0
+ 1452              	.LVL153:
+ 514:layer1/l23_api.c **** 	audio_set_enabled(tch_mode, audio_mode);
+ 1453              		.loc 1 514 0
+ 1454 0764 0410A0E1 		mov	r1, r4
+ 1455 0768 0500A0E1 		mov	r0, r5
+ 1456              	.LVL154:
+ 1457 076c FEFFFFEB 		bl	audio_set_enabled
+ 1458              	.LVL155:
+ 516:layer1/l23_api.c **** 	l1s.tch_sync = 1; /* Needed for audio to work */
+ 1459              		.loc 1 516 0
+ 1460 0770 64319FE5 		ldr	r3, .L92+16
+ 1461 0774 0120A0E3 		mov	r2, #1
+ 1462 0778 4B2AC3E5 		strb	r2, [r3, #2635]
+ 1463              	.LVL156:
+ 1464              	.LBB338:
+ 1465              	.LBB339:
+ 490:layer1/l23_api.c **** 	struct msgb *msg = l1ctl_msgb_alloc(L1CTL_TCH_MODE_CONF);
+ 1466              		.loc 1 490 0
+ 1467 077c 1900A0E3 		mov	r0, #25
+ 1468 0780 FEFFFFEB 		bl	l1ctl_msgb_alloc
+ 493:layer1/l23_api.c **** 				msgb_put(msg, sizeof(*mode_conf));
+ 1469              		.loc 1 493 0
+ 1470 0784 0410A0E3 		mov	r1, #4
+ 490:layer1/l23_api.c **** 	struct msgb *msg = l1ctl_msgb_alloc(L1CTL_TCH_MODE_CONF);
+ 1471              		.loc 1 490 0
+ 1472 0788 0070A0E1 		mov	r7, r0
+ 1473              	.LVL157:
+ 493:layer1/l23_api.c **** 				msgb_put(msg, sizeof(*mode_conf));
+ 1474              		.loc 1 493 0
+ 1475 078c FEFFFFEB 		bl	msgb_put
+ 1476              	.LVL158:
+ 494:layer1/l23_api.c **** 	mode_conf->tch_mode = tch_mode;
+ 1477              		.loc 1 494 0
+ 1478 0790 0050C0E5 		strb	r5, [r0, #0]
+ 495:layer1/l23_api.c **** 	mode_conf->audio_mode = audio_mode;
+ 1479              		.loc 1 495 0
+ 1480 0794 0140C0E5 		strb	r4, [r0, #1]
+ 497:layer1/l23_api.c **** 	l1_queue_for_l2(msg);
+ 1481              		.loc 1 497 0
+ 1482 0798 0700A0E1 		mov	r0, r7
+ 1483              	.LVL159:
+ 1484              	.L88:
+ 1485 079c FEFFFFEB 		bl	l1_queue_for_l2
+ 1486              	.LBE339:
+ 1487              	.LBE338:
+ 1488              	.LBE337:
+ 1489              	.LBE336:
+ 667:layer1/l23_api.c **** 		break;
+ 1490              		.loc 1 667 0
+ 1491 07a0 430000EA 		b	.L26
+ 1492              	.LVL160:
+ 1493              	.L40:
+ 1494              	.LBB340:
+ 1495              	.LBB341:
+ 530:layer1/l23_api.c **** 	l1s.neigh_pm.n = 0; /* atomic */
+ 1496              		.loc 1 530 0
+ 1497 07a4 30319FE5 		ldr	r3, .L92+16
+ 1498 07a8 0020A0E3 		mov	r2, #0
+ 526:layer1/l23_api.c **** 		(struct l1ctl_neigh_pm_req *) l1h->data;
+ 1499              		.loc 1 526 0
+ 1500 07ac 04E084E2 		add	lr, r4, #4
+ 1501              	.LVL161:
+ 530:layer1/l23_api.c **** 	l1s.neigh_pm.n = 0; /* atomic */
+ 1502              		.loc 1 530 0
+ 1503 07b0 1C2CC3E5 		strb	r2, [r3, #3100]
+ 531:layer1/l23_api.c **** 	l1s.neigh_pm.second = 0;
+ 1504              		.loc 1 531 0
+ 1505 07b4 1D2CC3E5 		strb	r2, [r3, #3101]
+ 533:layer1/l23_api.c **** 	l1s.neigh_pm.pos = 0;
+ 1506              		.loc 1 533 0
+ 1507 07b8 1E2CC3E5 		strb	r2, [r3, #3102]
+ 534:layer1/l23_api.c **** 	l1s.neigh_pm.running = 0;
+ 1508              		.loc 1 534 0
+ 1509 07bc 1F2CC3E5 		strb	r2, [r3, #3103]
+ 1510              	.LVL162:
+ 1511 07c0 7CC19FE5 		ldr	ip, .L92+120
+ 599:layer1/l23_api.c **** void l1a_l23_handler(void)
+ 1512              		.loc 1 599 0
+ 1513 07c4 850084E2 		add	r0, r4, #133
+ 1514 07c8 0A0000EA 		b	.L69
+ 1515              	.LVL163:
+ 1516              	.L70:
+ 536:layer1/l23_api.c **** 		l1s.neigh_pm.band_arfcn[i] = ntohs(pm_req->band_arfcn[i]);
+ 1517              		.loc 1 536 0
+ 1518 07cc 82508EE0 		add	r5, lr, r2, asl #1
+ 1519 07d0 0210D5E5 		ldrb	r1, [r5, #2]	@ zero_extendqisi2
+ 1520 07d4 0350D5E5 		ldrb	r5, [r5, #3]	@ zero_extendqisi2
+ 1521 07d8 051481E1 		orr	r1, r1, r5, asl #8
+ 1522              	.LVL164:
+ 1523              	.LBB342:
+ 1524              	.LBB343:
+ 1525              		.loc 4 51 0
+ 1526 07dc 2154A0E1 		mov	r5, r1, lsr #8
+ 1527 07e0 011485E1 		orr	r1, r5, r1, asl #8
+ 1528              	.LVL165:
+ 1529              	.LBE343:
+ 1530              	.LBE342:
+ 536:layer1/l23_api.c **** 		l1s.neigh_pm.band_arfcn[i] = ntohs(pm_req->band_arfcn[i]);
+ 1531              		.loc 1 536 0
+ 1532 07e4 B210ECE1 		strh	r1, [ip, #2]!	@ movhi
+ 537:layer1/l23_api.c **** 		l1s.neigh_pm.tn[i] = pm_req->tn[i];
+ 1533              		.loc 1 537 0
+ 1534 07e8 0150F0E5 		ldrb	r5, [r0, #1]!	@ zero_extendqisi2
+ 599:layer1/l23_api.c **** void l1a_l23_handler(void)
+ 1535              		.loc 1 599 0
+ 1536 07ec 021083E0 		add	r1, r3, r2
+ 537:layer1/l23_api.c **** 		l1s.neigh_pm.tn[i] = pm_req->tn[i];
+ 1537              		.loc 1 537 0
+ 1538 07f0 A05CC1E5 		strb	r5, [r1, #3232]
+ 535:layer1/l23_api.c **** 	for (i = 0; i < pm_req->n; i++) {
+ 1539              		.loc 1 535 0
+ 1540 07f4 012082E2 		add	r2, r2, #1
+ 1541              	.LVL166:
+ 1542              	.L69:
+ 1543 07f8 0010DEE5 		ldrb	r1, [lr, #0]	@ zero_extendqisi2
+ 1544 07fc 010052E1 		cmp	r2, r1
+ 1545 0800 D4509FE5 		ldr	r5, .L92+16
+ 1546 0804 F0FFFFBA 		blt	.L70
+ 539:layer1/l23_api.c **** 	printf("L1CTL_NEIGH_PM_REQ new list with %u entries\n", pm_req->n);
+ 1547              		.loc 1 539 0
+ 1548 0808 38019FE5 		ldr	r0, .L92+124
+ 1549 080c FEFFFFEB 		bl	printf
+ 1550              	.LVL167:
+ 540:layer1/l23_api.c **** 	l1s.neigh_pm.n = pm_req->n; /* atomic */
+ 1551              		.loc 1 540 0
+ 1552 0810 0430D4E5 		ldrb	r3, [r4, #4]	@ zero_extendqisi2
+ 1553 0814 1C3CC5E5 		strb	r3, [r5, #3100]
+ 543:layer1/l23_api.c **** 	if (l1s.dedicated.type == GSM_DCHAN_NONE)
+ 1554              		.loc 1 543 0
+ 1555 0818 083B95E5 		ldr	r3, [r5, #2824]
+ 1556 081c 000053E3 		cmp	r3, #0
+ 1557 0820 2300001A 		bne	.L26
+ 544:layer1/l23_api.c **** 		mframe_enable(MF_TASK_NEIGH_PM51_C0T0);
+ 1558              		.loc 1 544 0
+ 1559 0824 1400A0E3 		mov	r0, #20
+ 1560 0828 FEFFFFEB 		bl	mframe_enable
+ 1561 082c 200000EA 		b	.L26
+ 1562              	.LVL168:
+ 1563              	.L41:
+ 1564              	.LBE341:
+ 1565              	.LBE340:
+ 1566              	.LBB344:
+ 1567              	.LBB345:
+ 552:layer1/l23_api.c **** 	struct l1ctl_traffic_req *tr = (struct l1ctl_traffic_req *) ul->payload;
+ 1568              		.loc 1 552 0
+ 1569 0830 084084E2 		add	r4, r4, #8
+ 1570              	.LVL169:
+ 557:layer1/l23_api.c **** 	msg->l2h = tr->data;
+ 1571              		.loc 1 557 0
+ 1572 0834 144086E5 		str	r4, [r6, #20]
+ 559:layer1/l23_api.c **** 	num = l1a_txq_msgb_count(&l1s.tx_queue[L1S_CHAN_TRAFFIC]);
+ 1573              		.loc 1 559 0
+ 1574 0838 0C019FE5 		ldr	r0, .L92+128
+ 1575 083c FEFFFFEB 		bl	l1a_txq_msgb_count
+ 1576              	.LVL170:
+ 560:layer1/l23_api.c **** 	if (num >= 4) {
+ 1577              		.loc 1 560 0
+ 1578 0840 030050E3 		cmp	r0, #3
+ 561:layer1/l23_api.c **** 		printd("dropping traffic frame\n");
+ 1579              		.loc 1 561 0
+ 1580 0844 04019FC5 		ldrgt	r0, .L92+132
+ 1581              	.LVL171:
+ 560:layer1/l23_api.c **** 	if (num >= 4) {
+ 1582              		.loc 1 560 0
+ 1583 0848 A1FFFFCA 		bgt	.L89
+ 566:layer1/l23_api.c **** 	l1a_txq_msgb_enq(&l1s.tx_queue[L1S_CHAN_TRAFFIC], msg);
+ 1584              		.loc 1 566 0
+ 1585 084c F8009FE5 		ldr	r0, .L92+128
+ 1586              	.LVL172:
+ 1587              	.L90:
+ 1588 0850 0610A0E1 		mov	r1, r6
+ 1589              	.LBE345:
+ 1590              	.LBE344:
+ 1591              		.loc 1 684 0
+ 1592 0854 08D08DE2 		add	sp, sp, #8
+ 1593 0858 F041BDE8 		ldmfd	sp!, {r4, r5, r6, r7, r8, lr}
+ 1594              	.LBB347:
+ 1595              	.LBB346:
+ 566:layer1/l23_api.c **** 	l1a_txq_msgb_enq(&l1s.tx_queue[L1S_CHAN_TRAFFIC], msg);
+ 1596              		.loc 1 566 0
+ 1597 085c FEFFFFEA 		b	l1a_txq_msgb_enq
+ 1598              	.LVL173:
+ 1599              	.L38:
+ 1600              	.LBE346:
+ 1601              	.LBE347:
+ 1602              	.LBB348:
+ 1603              	.LBB349:
+ 571:layer1/l23_api.c **** 	uint16_t len = msg->len - sizeof(struct l1ctl_hdr);
+ 1604              		.loc 1 571 0
+ 1605 0860 045041E2 		sub	r5, r1, #4
+ 1606              	.LBB351:
+ 577:layer1/l23_api.c **** 		printf("SIM Request (%u): ", len);
+ 1607              		.loc 1 577 0
+ 1608 0864 0558A0E1 		mov	r5, r5, asl #16
+ 1609 0868 2558A0E1 		mov	r5, r5, lsr #16
+ 1610 086c E0009FE5 		ldr	r0, .L92+136
+ 1611 0870 0510A0E1 		mov	r1, r5
+ 1612              	.LVL174:
+ 1613              	.LBE351:
+ 572:layer1/l23_api.c **** 	uint8_t *data = msg->data + sizeof(struct l1ctl_hdr);
+ 1614              		.loc 1 572 0
+ 1615 0874 048084E2 		add	r8, r4, #4
+ 1616              	.LVL175:
+ 1617              	.LBB350:
+ 577:layer1/l23_api.c **** 		printf("SIM Request (%u): ", len);
+ 1618              		.loc 1 577 0
+ 1619 0878 FEFFFFEB 		bl	printf
+ 1620              	.LVL176:
+ 599:layer1/l23_api.c **** void l1a_l23_handler(void)
+ 1621              		.loc 1 599 0
+ 1622 087c 034084E2 		add	r4, r4, #3
+ 1623              	.LVL177:
+ 1624              	.LBE350:
+ 1625              	.LBE349:
+ 1626              	.LBE348:
+ 1627              	.LBB354:
+ 1628              	.LBB316:
+ 1629              	.LBB315:
+ 578:layer1/l23_api.c **** 		for (i = 0; i < len; i++)
+ 1630              		.loc 1 578 0
+ 1631 0880 0070A0E3 		mov	r7, #0
+ 1632 0884 030000EA 		b	.L72
+ 1633              	.LVL178:
+ 1634              	.L73:
+ 1635              	.LBE315:
+ 1636              	.LBE316:
+ 1637              	.LBE354:
+ 1638              	.LBB355:
+ 1639              	.LBB353:
+ 1640              	.LBB352:
+ 579:layer1/l23_api.c **** 			printf("%02x ", data[i]);
+ 1641              		.loc 1 579 0
+ 1642 0888 C8009FE5 		ldr	r0, .L92+140
+ 1643 088c 0110F4E5 		ldrb	r1, [r4, #1]!	@ zero_extendqisi2
+ 1644 0890 FEFFFFEB 		bl	printf
+ 578:layer1/l23_api.c **** 		for (i = 0; i < len; i++)
+ 1645              		.loc 1 578 0
+ 1646 0894 017087E2 		add	r7, r7, #1
+ 1647              	.LVL179:
+ 1648              	.L72:
+ 1649 0898 050057E1 		cmp	r7, r5
+ 1650 089c F9FFFFBA 		blt	.L73
+ 580:layer1/l23_api.c **** 		puts("\n");
+ 1651              		.loc 1 580 0
+ 1652 08a0 B4009FE5 		ldr	r0, .L92+144
+ 1653 08a4 FEFFFFEB 		bl	puts
+ 1654              	.LBE352:
+ 584:layer1/l23_api.c ****    sim_apdu(len, data);
+ 1655              		.loc 1 584 0
+ 1656 08a8 0500A0E1 		mov	r0, r5
+ 1657 08ac 0810A0E1 		mov	r1, r8
+ 1658 08b0 FEFFFFEB 		bl	sim_apdu
+ 1659              	.LVL180:
+ 1660              	.L26:
+ 1661              	.LBE353:
+ 1662              	.LBE355:
+ 681:layer1/l23_api.c **** 	msgb_free(msg);
+ 1663              		.loc 1 681 0
+ 1664 08b4 0600A0E1 		mov	r0, r6
+ 1665              		.loc 1 684 0
+ 1666 08b8 08D08DE2 		add	sp, sp, #8
+ 1667 08bc F041BDE8 		ldmfd	sp!, {r4, r5, r6, r7, r8, lr}
+ 681:layer1/l23_api.c **** 	msgb_free(msg);
+ 1668              		.loc 1 681 0
+ 1669 08c0 FEFFFFEA 		b	msgb_free
+ 1670              	.L24:
+ 1671              	.L23:
+ 1672              		.loc 1 684 0
+ 1673 08c4 08D08DE2 		add	sp, sp, #8
+ 1674 08c8 F081BDE8 		ldmfd	sp!, {r4, r5, r6, r7, r8, pc}
+ 1675              	.L93:
+ 1676              		.align	2
+ 1677              	.L92:
+ 1678 08cc 00000000 		.word	.LANCHOR0
+ 1679 08d0 52000000 		.word	.LC3
+ 1680 08d4 71000000 		.word	.LC4
+ 1681 08d8 85000000 		.word	.LC5
+ 1682 08dc 00000000 		.word	l1s
+ 1683 08e0 AC000000 		.word	.LC6
+ 1684 08e4 C6000000 		.word	.LC7
+ 1685 08e8 120B0000 		.word	l1s+2834
+ 1686 08ec 00000000 		.word	.LANCHOR2
+ 1687 08f0 FB000000 		.word	.LC8
+ 1688 08f4 580A0000 		.word	l1s+2648
+ 1689 08f8 0C010000 		.word	.LC9
+ 1690 08fc 32010000 		.word	.LC10
+ 1691 0900 9A0B0000 		.word	l1s+2970
+ 1692 0904 980B0000 		.word	2968
+ 1693 0908 58010000 		.word	.LC11
+ 1694 090c 7F010000 		.word	.LC12
+ 1695 0910 9F010000 		.word	.LC13
+ 1696 0914 D2010000 		.word	.LC14
+ 1697 0918 F3010000 		.word	.LC15
+ 1698 091c 500A0000 		.word	l1s+2640
+ 1699 0920 0F020000 		.word	.LC16
+ 1700 0924 F80A0000 		.word	2808
+ 1701 0928 FA0A0000 		.word	2810
+ 1702 092c FC0A0000 		.word	2812
+ 1703 0930 4D020000 		.word	.LC17
+ 1704 0934 9A020000 		.word	.LC20
+ 1705 0938 6B020000 		.word	.LC18
+ 1706 093c 82020000 		.word	.LC19
+ 1707 0940 B7020000 		.word	.LC21
+ 1708 0944 1E0C0000 		.word	l1s+3102
+ 1709 0948 EF020000 		.word	.LC22
+ 1710 094c 600A0000 		.word	l1s+2656
+ 1711 0950 1C030000 		.word	.LC23
+ 1712 0954 33030000 		.word	.LC24
+ 1713 0958 46030000 		.word	.LC25
+ 1714 095c 4C030000 		.word	.LC26
+ 1715              		.cfi_endproc
+ 1716              	.LFE83:
+ 1718              		.section	.text.l1a_l23api_init,"ax",%progbits
+ 1719              		.align	2
+ 1720              		.global	l1a_l23api_init
+ 1722              	l1a_l23api_init:
+ 1723              	.LFB84:
+ 685:layer1/l23_api.c **** 
+ 686:layer1/l23_api.c **** void l1a_l23api_init(void)
+ 687:layer1/l23_api.c **** {
+ 1724              		.loc 1 687 0
+ 1725              		.cfi_startproc
+ 1726              		@ args = 0, pretend = 0, frame = 0
+ 1727              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1728              		@ link register save eliminated.
+ 688:layer1/l23_api.c **** 	sercomm_register_rx_cb(SC_DLCI_L1A_L23, l1a_l23_rx);
+ 1729              		.loc 1 688 0
+ 1730 0000 04109FE5 		ldr	r1, .L95
+ 1731 0004 0500A0E3 		mov	r0, #5
+ 689:layer1/l23_api.c **** }
+ 1732              		.loc 1 689 0
+ 688:layer1/l23_api.c **** 	sercomm_register_rx_cb(SC_DLCI_L1A_L23, l1a_l23_rx);
+ 1733              		.loc 1 688 0
+ 1734 0008 FEFFFFEA 		b	sercomm_register_rx_cb
+ 1735              	.L96:
+ 1736              		.align	2
+ 1737              	.L95:
+ 1738 000c 00000000 		.word	l1a_l23_rx
+ 1739              		.cfi_endproc
+ 1740              	.LFE84:
+ 1742              		.global	l1a_l23_tx_cb
+ 1743              		.section	.rodata
+ 1744              		.align	2
+ 1745              		.set	.LANCHOR2,. + 0
+ 1748              	CSWTCH.31:
+ 1749 0000 00002000 		.word	2097152
+ 1750 0004 00008000 		.word	8388608
+ 1751 0008 00004000 		.word	4194304
+ 1752              		.section	.rodata.str1.1,"aMS",%progbits,1
+ 1753              	.LC0:
+ 1754 0000 6D736762 		.ascii	"msgb(%p): Not enough tailroom msgb_push (%u < %u)\012"
+ 1754      28257029 
+ 1754      3A204E6F 
+ 1754      7420656E 
+ 1754      6F756768 
+ 1755 0032 00       		.ascii	"\000"
+ 1756              	.LC1:
+ 1757 0033 6C316374 		.ascii	"l1ctl\000"
+ 1757      6C00
+ 1758              	.LC2:
+ 1759 0039 4F4F5053 		.ascii	"OOPS. Out of buffers...\012\000"
+ 1759      2E204F75 
+ 1759      74206F66 
+ 1759      20627566 
+ 1759      66657273 
+ 1760              	.LC3:
+ 1761 0052 6C31615F 		.ascii	"l1a_l23_cb: Short message. %u\012\000"
+ 1761      6C32335F 
+ 1761      63623A20 
+ 1761      53686F72 
+ 1761      74206D65 
+ 1762              	.LC4:
+ 1763 0071 53686F72 		.ascii	"Short sync msg. %u\012\000"
+ 1763      74207379 
+ 1763      6E63206D 
+ 1763      73672E20 
+ 1763      25750A00 
+ 1764              	.LC5:
+ 1765 0085 4C314354 		.ascii	"L1CTL_FBSB_REQ (arfcn=%u, flags=0x%x)\012\000"
+ 1765      4C5F4642 
+ 1765      53425F52 
+ 1765      45512028 
+ 1765      61726663 
+ 1766              	.LC6:
+ 1767 00ac 53746172 		.ascii	"Starting FCCH Recognition\000"
+ 1767      74696E67 
+ 1767      20464343 
+ 1767      48205265 
+ 1767      636F676E 
+ 1768              	.LC7:
+ 1769 00c6 4C314354 		.ascii	"L1CTL_DM_EST_REQ (arfcn=%u, chan_nr=0x%02x, tsc=%u)"
+ 1769      4C5F444D 
+ 1769      5F455354 
+ 1769      5F524551 
+ 1769      20286172 
+ 1770 00f9 0A00     		.ascii	"\012\000"
+ 1771              	.LC8:
+ 1772 00fb 4C314354 		.ascii	"L1CTL_DM_REL_REQ\000"
+ 1772      4C5F444D 
+ 1772      5F52454C 
+ 1772      5F524551 
+ 1772      00
+ 1773              	.LC9:
+ 1774 010c 4C314354 		.ascii	"L1CTL_PARAM_REQ (ta=%d, tx_power=%d)\012\000"
+ 1774      4C5F5041 
+ 1774      52414D5F 
+ 1774      52455120 
+ 1774      2874613D 
+ 1775              	.LC10:
+ 1776 0132 4C314354 		.ascii	"L1CTL_DM_FREQ_REQ (arfcn=%u, tsc=%u)\012\000"
+ 1776      4C5F444D 
+ 1776      5F465245 
+ 1776      515F5245 
+ 1776      51202861 
+ 1777              	.LC11:
+ 1778 0158 4C314354 		.ascii	"L1CTL_CRYPTO_REQ (algo=A5/%u, len=%u)\012\000"
+ 1778      4C5F4352 
+ 1778      5950544F 
+ 1778      5F524551 
+ 1778      2028616C 
+ 1779              	.LC12:
+ 1780 017f 4C314354 		.ascii	"L1CTL_CRYPTO_REQ -> Invalid key\000"
+ 1780      4C5F4352 
+ 1780      5950544F 
+ 1780      5F524551 
+ 1780      202D3E20 
+ 1781              	.LC13:
+ 1782 019f 4C314354 		.ascii	"L1CTL_RACH_REQ (ra=0x%02x, offset=%d combined=%d)\012"
+ 1782      4C5F5241 
+ 1782      43485F52 
+ 1782      45512028 
+ 1782      72613D30 
+ 1783 01d1 00       		.ascii	"\000"
+ 1784              	.LC14:
+ 1785 01d2 4C314354 		.ascii	"L1CTL_DATA_REQ (link_id=0x%02x)\012\000"
+ 1785      4C5F4441 
+ 1785      54415F52 
+ 1785      45512028 
+ 1785      6C696E6B 
+ 1786              	.LC15:
+ 1787 01f3 75706461 		.ascii	"updating measurement report\000"
+ 1787      74696E67 
+ 1787      206D6561 
+ 1787      73757265 
+ 1787      6D656E74 
+ 1788              	.LC16:
+ 1789 020f 756C3D25 		.ascii	"ul=%p, ul->payload=%p, data_ind=%p, data_ind->data="
+ 1789      702C2075 
+ 1789      6C2D3E70 
+ 1789      61796C6F 
+ 1789      61643D25 
+ 1790 0242 2570206C 		.ascii	"%p l3h=%p\012\000"
+ 1790      33683D25 
+ 1790      700A00
+ 1791              	.LC17:
+ 1792 024d 4C314354 		.ascii	"L1CTL_PM_REQ start=%u end=%u\012\000"
+ 1792      4C5F504D 
+ 1792      5F524551 
+ 1792      20737461 
+ 1792      72743D25 
+ 1793              	.LC18:
+ 1794 026b 4C314354 		.ascii	"L1CTL_RESET_REQ: FULL!\000"
+ 1794      4C5F5245 
+ 1794      5345545F 
+ 1794      5245513A 
+ 1794      2046554C 
+ 1795              	.LC19:
+ 1796 0282 4C314354 		.ascii	"L1CTL_RESET_REQ: SCHED!\000"
+ 1796      4C5F5245 
+ 1796      5345545F 
+ 1796      5245513A 
+ 1796      20534348 
+ 1797              	.LC20:
+ 1798 029a 756E6B6E 		.ascii	"unknown L1CTL_RESET_REQ type\000"
+ 1798      6F776E20 
+ 1798      4C314354 
+ 1798      4C5F5245 
+ 1798      5345545F 
+ 1799              	.LC21:
+ 1800 02b7 4C314354 		.ascii	"L1CTL_TCH_MODE_REQ (tch_mode=0x%02x audio_mode=0x%0"
+ 1800      4C5F5443 
+ 1800      485F4D4F 
+ 1800      44455F52 
+ 1800      45512028 
+ 1801 02ea 3278290A 		.ascii	"2x)\012\000"
+ 1801      00
+ 1802              	.LC22:
+ 1803 02ef 4C314354 		.ascii	"L1CTL_NEIGH_PM_REQ new list with %u entries\012\000"
+ 1803      4C5F4E45 
+ 1803      4947485F 
+ 1803      504D5F52 
+ 1803      4551206E 
+ 1804              	.LC23:
+ 1805 031c 64726F70 		.ascii	"dropping traffic frame\000"
+ 1805      70696E67 
+ 1805      20747261 
+ 1805      66666963 
+ 1805      20667261 
+ 1806              	.LC24:
+ 1807 0333 53494D20 		.ascii	"SIM Request (%u): \000"
+ 1807      52657175 
+ 1807      65737420 
+ 1807      28257529 
+ 1807      3A2000
+ 1808              	.LC25:
+ 1809 0346 25303278 		.ascii	"%02x \000"
+ 1809      2000
+ 1810              	.LC26:
+ 1811 034c 0A00     		.ascii	"\012\000"
+ 1812              		.data
+ 1813              		.align	2
+ 1814              		.set	.LANCHOR0,. + 0
+ 1817              	l23_rx_queue:
+ 1818 0000 00000000 		.word	l23_rx_queue
+ 1819 0004 00000000 		.word	l23_rx_queue
+ 1820              		.bss
+ 1821              		.align	2
+ 1822              		.set	.LANCHOR1,. + 0
+ 1825              	l1a_l23_tx_cb:
+ 1826 0000 00000000 		.space	4
+ 1827              		.text
+ 1828              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 l23_api.c
+     /tmp/ccNSkY91.s:12     .text.audio_set_enabled:0000000000000000 $a
+     /tmp/ccNSkY91.s:14     .text.audio_set_enabled:0000000000000000 audio_set_enabled
+     /tmp/ccNSkY91.s:66     .text.msgb_put:0000000000000000 $a
+     /tmp/ccNSkY91.s:68     .text.msgb_put:0000000000000000 msgb_put
+     /tmp/ccNSkY91.s:133    .text.msgb_put:0000000000000054 $d
+     /tmp/ccNSkY91.s:138    .text.l1a_l23_rx:0000000000000000 $a
+     /tmp/ccNSkY91.s:141    .text.l1a_l23_rx:0000000000000000 l1a_l23_rx
+     /tmp/ccNSkY91.s:176    .text.l1a_l23_rx:0000000000000020 $d
+     /tmp/ccNSkY91.s:181    .text.l1_queue_for_l2:0000000000000000 $a
+     /tmp/ccNSkY91.s:184    .text.l1_queue_for_l2:0000000000000000 l1_queue_for_l2
+     /tmp/ccNSkY91.s:223    .text.l1_queue_for_l2:0000000000000030 $d
+     /tmp/ccNSkY91.s:228    .text.l1ctl_msgb_alloc:0000000000000000 $a
+     /tmp/ccNSkY91.s:231    .text.l1ctl_msgb_alloc:0000000000000000 l1ctl_msgb_alloc
+     /tmp/ccNSkY91.s:302    .text.l1ctl_msgb_alloc:0000000000000060 $d
+     /tmp/ccNSkY91.s:308    .text.l1_create_l2_msg:0000000000000000 $a
+     /tmp/ccNSkY91.s:311    .text.l1_create_l2_msg:0000000000000000 l1_create_l2_msg
+     /tmp/ccNSkY91.s:411    .text.l1ctl_tx_reset:0000000000000000 $a
+     /tmp/ccNSkY91.s:414    .text.l1ctl_tx_reset:0000000000000000 l1ctl_tx_reset
+     /tmp/ccNSkY91.s:455    .text.l1a_l23_handler:0000000000000000 $a
+     /tmp/ccNSkY91.s:458    .text.l1a_l23_handler:0000000000000000 l1a_l23_handler
+     /tmp/ccNSkY91.s:517    .text.l1a_l23_handler:0000000000000054 $d
+     /tmp/ccNSkY91.s:550    .text.l1a_l23_handler:00000000000000c4 $a
+     /tmp/ccNSkY91.s:1678   .text.l1a_l23_handler:00000000000008cc $d
+     /tmp/ccNSkY91.s:1719   .text.l1a_l23api_init:0000000000000000 $a
+     /tmp/ccNSkY91.s:1722   .text.l1a_l23api_init:0000000000000000 l1a_l23api_init
+     /tmp/ccNSkY91.s:1738   .text.l1a_l23api_init:000000000000000c $d
+     /tmp/ccNSkY91.s:1825   .bss:0000000000000000 l1a_l23_tx_cb
+     /tmp/ccNSkY91.s:1744   .rodata:0000000000000000 $d
+     /tmp/ccNSkY91.s:1748   .rodata:0000000000000000 CSWTCH.31
+     /tmp/ccNSkY91.s:1813   .data:0000000000000000 $d
+     /tmp/ccNSkY91.s:1817   .data:0000000000000000 l23_rx_queue
+     /tmp/ccNSkY91.s:1821   .bss:0000000000000000 $d
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+twl3025_unit_enable
+osmo_panic
+msgb_enqueue
+sercomm_sendmsg
+msgb_alloc
+puts
+msgb_dequeue
+printf
+l1s_reset
+l1s_fbsb_req
+mframe_disable
+l1a_tch_mode_set
+l1a_audio_mode_set
+l1a_mftask_set
+l1a_txq_msgb_flush
+l1a_meas_msgb_set
+dsp_load_ciph_param
+l1a_freq_req
+l1a_rach_req
+l1s_reset_hw
+l1s_pm_test
+sched_gsmtime_reset
+mframe_enable
+l1a_txq_msgb_count
+l1a_txq_msgb_enq
+sim_apdu
+msgb_free
+l1s
+sercomm_register_rx_cb

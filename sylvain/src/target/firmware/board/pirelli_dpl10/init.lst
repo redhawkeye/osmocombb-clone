@@ -1,0 +1,348 @@
+   1              		.file	"init.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text.board_init,"ax",%progbits
+  12              		.align	2
+  13              		.global	board_init
+  15              	board_init:
+  16              	.LFB41:
+  17              		.file 1 "board/pirelli_dpl10/init.c"
+   1:board/pirelli_dpl10/init.c **** /* Initialization for the Pirelli DP-L10 */
+   2:board/pirelli_dpl10/init.c **** 
+   3:board/pirelli_dpl10/init.c **** /* (C) 2010 by Harald Welte <laforge@gnumonks.org>
+   4:board/pirelli_dpl10/init.c ****  * (C) 2011 by Steve Markgraf <steve@steve-m.de>
+   5:board/pirelli_dpl10/init.c ****  *
+   6:board/pirelli_dpl10/init.c ****  * All Rights Reserved
+   7:board/pirelli_dpl10/init.c ****  *
+   8:board/pirelli_dpl10/init.c ****  * This program is free software; you can redistribute it and/or modify
+   9:board/pirelli_dpl10/init.c ****  * it under the terms of the GNU General Public License as published by
+  10:board/pirelli_dpl10/init.c ****  * the Free Software Foundation; either version 2 of the License, or
+  11:board/pirelli_dpl10/init.c ****  * (at your option) any later version.
+  12:board/pirelli_dpl10/init.c ****  *
+  13:board/pirelli_dpl10/init.c ****  * This program is distributed in the hope that it will be useful,
+  14:board/pirelli_dpl10/init.c ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  15:board/pirelli_dpl10/init.c ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  16:board/pirelli_dpl10/init.c ****  * GNU General Public License for more details.
+  17:board/pirelli_dpl10/init.c ****  *
+  18:board/pirelli_dpl10/init.c ****  * You should have received a copy of the GNU General Public License along
+  19:board/pirelli_dpl10/init.c ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  20:board/pirelli_dpl10/init.c ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  21:board/pirelli_dpl10/init.c ****  *
+  22:board/pirelli_dpl10/init.c ****  */
+  23:board/pirelli_dpl10/init.c **** 
+  24:board/pirelli_dpl10/init.c **** #include <stdint.h>
+  25:board/pirelli_dpl10/init.c **** #include <stdio.h>
+  26:board/pirelli_dpl10/init.c **** 
+  27:board/pirelli_dpl10/init.c **** #include <debug.h>
+  28:board/pirelli_dpl10/init.c **** #include <ctors.h>
+  29:board/pirelli_dpl10/init.c **** #include <memory.h>
+  30:board/pirelli_dpl10/init.c **** #include <board.h>
+  31:board/pirelli_dpl10/init.c **** #include <keypad.h>
+  32:board/pirelli_dpl10/init.c **** #include <console.h>
+  33:board/pirelli_dpl10/init.c **** #include <flash/cfi_flash.h>
+  34:board/pirelli_dpl10/init.c **** 
+  35:board/pirelli_dpl10/init.c **** #include <calypso/irq.h>
+  36:board/pirelli_dpl10/init.c **** #include <calypso/clock.h>
+  37:board/pirelli_dpl10/init.c **** #include <calypso/dma.h>
+  38:board/pirelli_dpl10/init.c **** #include <calypso/rtc.h>
+  39:board/pirelli_dpl10/init.c **** #include <calypso/timer.h>
+  40:board/pirelli_dpl10/init.c **** #include <uart.h>
+  41:board/pirelli_dpl10/init.c **** #include <calypso/backlight.h>
+  42:board/pirelli_dpl10/init.c **** 
+  43:board/pirelli_dpl10/init.c **** #include <comm/sercomm.h>
+  44:board/pirelli_dpl10/init.c **** #include <comm/timer.h>
+  45:board/pirelli_dpl10/init.c **** 
+  46:board/pirelli_dpl10/init.c **** #include <abb/twl3025.h>
+  47:board/pirelli_dpl10/init.c **** #include <rf/trf6151.h>
+  48:board/pirelli_dpl10/init.c **** #include <display.h>
+  49:board/pirelli_dpl10/init.c **** 
+  50:board/pirelli_dpl10/init.c **** #define ARMIO_LATCH_OUT 0xfffe4802
+  51:board/pirelli_dpl10/init.c **** #define ASIC_CONF_REG	0xfffef008
+  52:board/pirelli_dpl10/init.c **** 
+  53:board/pirelli_dpl10/init.c **** static void board_io_init(void)
+  54:board/pirelli_dpl10/init.c **** {
+  55:board/pirelli_dpl10/init.c **** 	uint16_t reg;
+  56:board/pirelli_dpl10/init.c **** 
+  57:board/pirelli_dpl10/init.c **** 	reg = readw(ASIC_CONF_REG);
+  58:board/pirelli_dpl10/init.c **** 	/* Set function pins to I2C Mode */
+  59:board/pirelli_dpl10/init.c **** 	reg |= ((1 << 12) | (1 << 7));		/* SCL / SDA */
+  60:board/pirelli_dpl10/init.c **** 	/* TWL3025: Set SPI+RIF RX clock to rising edge */
+  61:board/pirelli_dpl10/init.c **** 	reg |= (1 << 13) | (1 << 14);
+  62:board/pirelli_dpl10/init.c **** 	writew(reg, ASIC_CONF_REG);
+  63:board/pirelli_dpl10/init.c **** }
+  64:board/pirelli_dpl10/init.c **** 
+  65:board/pirelli_dpl10/init.c **** void board_init(void)
+  66:board/pirelli_dpl10/init.c **** {
+  18              		.loc 1 66 0
+  19              		.cfi_startproc
+  20              		@ args = 0, pretend = 0, frame = 0
+  21              		@ frame_needed = 0, uses_anonymous_args = 0
+  22 0000 37402DE9 		stmfd	sp!, {r0, r1, r2, r4, r5, lr}
+  23              	.LCFI0:
+  24              		.cfi_def_cfa_offset 24
+  67:board/pirelli_dpl10/init.c **** 	/* Configure the memory interface */
+  68:board/pirelli_dpl10/init.c **** 	calypso_mem_cfg(CALYPSO_nCS0, 3, CALYPSO_MEM_16bit, 1);
+  25              		.loc 1 68 0
+  26 0004 0120A0E3 		mov	r2, #1
+  27              		.cfi_offset 14, -4
+  28              		.cfi_offset 5, -8
+  29              		.cfi_offset 4, -12
+  30              		.cfi_offset 2, -16
+  31              		.cfi_offset 1, -20
+  32              		.cfi_offset 0, -24
+  33 0008 0230A0E1 		mov	r3, r2
+  34 000c 0000A0E3 		mov	r0, #0
+  35 0010 0310A0E3 		mov	r1, #3
+  36 0014 FEFFFFEB 		bl	calypso_mem_cfg
+  69:board/pirelli_dpl10/init.c **** 	calypso_mem_cfg(CALYPSO_nCS1, 3, CALYPSO_MEM_16bit, 1);
+  37              		.loc 1 69 0
+  38 0018 0120A0E3 		mov	r2, #1
+  39 001c 0230A0E1 		mov	r3, r2
+  40 0020 0200A0E3 		mov	r0, #2
+  41 0024 0310A0E3 		mov	r1, #3
+  42 0028 FEFFFFEB 		bl	calypso_mem_cfg
+  70:board/pirelli_dpl10/init.c **** 	calypso_mem_cfg(CALYPSO_nCS2, 5, CALYPSO_MEM_16bit, 1);
+  43              		.loc 1 70 0
+  44 002c 0120A0E3 		mov	r2, #1
+  45 0030 0230A0E1 		mov	r3, r2
+  46 0034 0400A0E3 		mov	r0, #4
+  47 0038 0510A0E3 		mov	r1, #5
+  48 003c FEFFFFEB 		bl	calypso_mem_cfg
+  71:board/pirelli_dpl10/init.c **** 	calypso_mem_cfg(CALYPSO_nCS3, 5, CALYPSO_MEM_16bit, 1);
+  49              		.loc 1 71 0
+  50 0040 0120A0E3 		mov	r2, #1
+  51 0044 0230A0E1 		mov	r3, r2
+  52 0048 0600A0E3 		mov	r0, #6
+  53 004c 0510A0E3 		mov	r1, #5
+  54 0050 FEFFFFEB 		bl	calypso_mem_cfg
+  72:board/pirelli_dpl10/init.c **** 	calypso_mem_cfg(CALYPSO_CS4, 0, CALYPSO_MEM_8bit, 1);
+  55              		.loc 1 72 0
+  56 0054 0010A0E3 		mov	r1, #0
+  57 0058 0120A0E1 		mov	r2, r1
+  58 005c 0A00A0E3 		mov	r0, #10
+  59 0060 0130A0E3 		mov	r3, #1
+  60 0064 FEFFFFEB 		bl	calypso_mem_cfg
+  73:board/pirelli_dpl10/init.c **** 	calypso_mem_cfg(CALYPSO_nCS6, 0, CALYPSO_MEM_32bit, 1);
+  61              		.loc 1 73 0
+  62 0068 0C00A0E3 		mov	r0, #12
+  63 006c 0010A0E3 		mov	r1, #0
+  64 0070 0220A0E3 		mov	r2, #2
+  65 0074 0130A0E3 		mov	r3, #1
+  66 0078 FEFFFFEB 		bl	calypso_mem_cfg
+  74:board/pirelli_dpl10/init.c **** 	calypso_mem_cfg(CALYPSO_nCS7, 0, CALYPSO_MEM_32bit, 0);
+  67              		.loc 1 74 0
+  68 007c 0010A0E3 		mov	r1, #0
+  69 0080 0130A0E1 		mov	r3, r1
+  70 0084 0800A0E3 		mov	r0, #8
+  71 0088 0220A0E3 		mov	r2, #2
+  72 008c FEFFFFEB 		bl	calypso_mem_cfg
+  75:board/pirelli_dpl10/init.c **** 
+  76:board/pirelli_dpl10/init.c **** 	/* Set VTCXO_DIV2 = 1, configure PLL for 104 MHz and give ARM half of that */
+  77:board/pirelli_dpl10/init.c **** 	calypso_clock_set(2, CALYPSO_PLL13_104_MHZ, ARM_MCLK_DIV_2);
+  73              		.loc 1 77 0
+  74 0090 0200A0E3 		mov	r0, #2
+  78:board/pirelli_dpl10/init.c **** 
+  79:board/pirelli_dpl10/init.c **** 	/* Configure the RHEA bridge with some sane default values */
+  80:board/pirelli_dpl10/init.c **** 	calypso_rhea_cfg(0, 0, 0xff, 0, 1, 0, 0);
+  75              		.loc 1 80 0
+  76 0094 0040A0E3 		mov	r4, #0
+  77:board/pirelli_dpl10/init.c **** 	calypso_clock_set(2, CALYPSO_PLL13_104_MHZ, ARM_MCLK_DIV_2);
+  77              		.loc 1 77 0
+  78 0098 0020A0E1 		mov	r2, r0
+  79 009c 021BA0E3 		mov	r1, #2048
+  80 00a0 FEFFFFEB 		bl	calypso_clock_set
+  81              		.loc 1 80 0
+  82 00a4 0150A0E3 		mov	r5, #1
+  83 00a8 0410A0E1 		mov	r1, r4
+  84 00ac 0400A0E1 		mov	r0, r4
+  85 00b0 0430A0E1 		mov	r3, r4
+  86 00b4 FF20A0E3 		mov	r2, #255
+  87 00b8 00508DE5 		str	r5, [sp, #0]
+  88 00bc 04408DE5 		str	r4, [sp, #4]
+  89 00c0 08408DE5 		str	r4, [sp, #8]
+  90 00c4 FEFFFFEB 		bl	calypso_rhea_cfg
+  91              	.LBB6:
+  92              	.LBB7:
+  57:board/pirelli_dpl10/init.c **** 	reg = readw(ASIC_CONF_REG);
+  93              		.loc 1 57 0
+  94 00c8 98309FE5 		ldr	r3, .L2
+  95 00cc B72F53E1 		ldrh	r2, [r3, #-247]
+  96              	.LVL0:
+  61:board/pirelli_dpl10/init.c **** 	reg |= (1 << 13) | (1 << 14);
+  97              		.loc 1 61 0
+  98 00d0 072A82E3 		orr	r2, r2, #28672
+  99              	.LVL1:
+ 100 00d4 802082E3 		orr	r2, r2, #128
+ 101              	.LVL2:
+  62:board/pirelli_dpl10/init.c **** 	writew(reg, ASIC_CONF_REG);
+ 102              		.loc 1 62 0
+ 103 00d8 B72F43E1 		strh	r2, [r3, #-247]	@ movhi
+ 104              	.LBE7:
+ 105              	.LBE6:
+  81:board/pirelli_dpl10/init.c **** 
+  82:board/pirelli_dpl10/init.c **** 	/* Initialize board-specific GPIO */
+  83:board/pirelli_dpl10/init.c **** 	board_io_init();
+  84:board/pirelli_dpl10/init.c **** 
+  85:board/pirelli_dpl10/init.c **** 	/* Enable bootrom mapping to route exception vectors to RAM */
+  86:board/pirelli_dpl10/init.c **** 	calypso_bootrom(1);
+ 106              		.loc 1 86 0
+ 107 00dc 0500A0E1 		mov	r0, r5
+ 108 00e0 FEFFFFEB 		bl	calypso_bootrom
+ 109              	.LVL3:
+  87:board/pirelli_dpl10/init.c **** 	calypso_exceptions_install();
+ 110              		.loc 1 87 0
+ 111 00e4 FEFFFFEB 		bl	calypso_exceptions_install
+  88:board/pirelli_dpl10/init.c **** 
+  89:board/pirelli_dpl10/init.c **** 	/* Initialize interrupt controller */
+  90:board/pirelli_dpl10/init.c **** 	irq_init();
+ 112              		.loc 1 90 0
+ 113 00e8 FEFFFFEB 		bl	irq_init
+  91:board/pirelli_dpl10/init.c **** 
+  92:board/pirelli_dpl10/init.c **** 	/* initialize MODEM UART to be used for sercomm*/
+  93:board/pirelli_dpl10/init.c **** 	uart_init(SERCOMM_UART_NR, 1);
+ 114              		.loc 1 93 0
+ 115 00ec 0500A0E1 		mov	r0, r5
+ 116 00f0 0510A0E1 		mov	r1, r5
+ 117 00f4 FEFFFFEB 		bl	uart_init
+  94:board/pirelli_dpl10/init.c **** 	uart_baudrate(SERCOMM_UART_NR, UART_460800);
+ 118              		.loc 1 94 0
+ 119 00f8 0500A0E1 		mov	r0, r5
+ 120 00fc 0410A0E3 		mov	r1, #4
+ 121 0100 FEFFFFEB 		bl	uart_baudrate
+  95:board/pirelli_dpl10/init.c **** 
+  96:board/pirelli_dpl10/init.c **** 	/* Initialize IRDA UART to be used for old-school console code.
+  97:board/pirelli_dpl10/init.c **** 	 * note: IRDA uart only accessible on C115 and C117 PCB */
+  98:board/pirelli_dpl10/init.c **** 	uart_init(CONS_UART_NR, 1);
+ 122              		.loc 1 98 0
+ 123 0104 0400A0E1 		mov	r0, r4
+ 124 0108 0510A0E1 		mov	r1, r5
+ 125 010c FEFFFFEB 		bl	uart_init
+  99:board/pirelli_dpl10/init.c **** 	uart_baudrate(CONS_UART_NR, UART_115200);
+ 126              		.loc 1 99 0
+ 127 0110 0210A0E3 		mov	r1, #2
+ 128 0114 0400A0E1 		mov	r0, r4
+ 129 0118 FEFFFFEB 		bl	uart_baudrate
+ 100:board/pirelli_dpl10/init.c **** 
+ 101:board/pirelli_dpl10/init.c **** 	/* Initialize hardware timers */
+ 102:board/pirelli_dpl10/init.c **** 	hwtimer_init();
+ 130              		.loc 1 102 0
+ 131 011c FEFFFFEB 		bl	hwtimer_init
+ 103:board/pirelli_dpl10/init.c **** 
+ 104:board/pirelli_dpl10/init.c **** 	/* Initialize DMA controller */
+ 105:board/pirelli_dpl10/init.c **** 	dma_init();
+ 132              		.loc 1 105 0
+ 133 0120 FEFFFFEB 		bl	dma_init
+ 106:board/pirelli_dpl10/init.c **** 
+ 107:board/pirelli_dpl10/init.c **** 	/* Initialize real time clock */
+ 108:board/pirelli_dpl10/init.c **** 	rtc_init();
+ 134              		.loc 1 108 0
+ 135 0124 FEFFFFEB 		bl	rtc_init
+ 109:board/pirelli_dpl10/init.c **** 
+ 110:board/pirelli_dpl10/init.c **** 	/* Initialize system timers (uses hwtimer 2) */
+ 111:board/pirelli_dpl10/init.c **** 	timer_init();
+ 136              		.loc 1 111 0
+ 137 0128 FEFFFFEB 		bl	timer_init
+ 112:board/pirelli_dpl10/init.c **** 
+ 113:board/pirelli_dpl10/init.c **** 	/* Initialize LCD driver (uses I2C) and backlight */
+ 114:board/pirelli_dpl10/init.c **** 	display = &st7558_display;
+ 138              		.loc 1 114 0
+ 139 012c 38309FE5 		ldr	r3, .L2+4
+ 140 0130 38209FE5 		ldr	r2, .L2+8
+ 141 0134 003082E5 		str	r3, [r2, #0]
+ 142              	.LBB8:
+ 143              	.LBB9:
+ 144              		.file 2 "include/display.h"
+   1:include/display.h **** #ifndef _DISPLAY_DRIVER_H
+   2:include/display.h **** #define _DISPLAY_DRIVER_H
+   3:include/display.h **** 
+   4:include/display.h **** enum display_attr {
+   5:include/display.h **** 	DISP_ATTR_INVERT	= 0x0001,
+   6:include/display.h **** };
+   7:include/display.h **** 
+   8:include/display.h **** struct display_driver {
+   9:include/display.h **** 	char *name;
+  10:include/display.h **** 	void (*init)(void);
+  11:include/display.h **** 	void (*set_attr)(unsigned long attr);
+  12:include/display.h **** 	void (*unset_attr)(unsigned long attr);
+  13:include/display.h **** 	void (*clrscr)(void);
+  14:include/display.h **** 	void (*goto_xy)(int xpos, int ypos);
+  15:include/display.h **** 	void (*set_color)(int fgcolor, int bgcolor);
+  16:include/display.h **** 	int (*putc)(unsigned char c);
+  17:include/display.h **** 	int (*puts)(const char *str);
+  18:include/display.h **** };
+  19:include/display.h **** 
+  20:include/display.h **** extern struct display_driver *display;
+  21:include/display.h **** 
+  22:include/display.h **** static inline void display_init(void)
+  23:include/display.h **** {
+  24:include/display.h **** 	display->init();
+ 145              		.loc 2 24 0
+ 146 0138 0FE0A0E1 		mov	lr, pc
+ 147 013c 04F093E5 		ldr	pc, [r3, #4]
+ 148              	.LBE9:
+ 149              	.LBE8:
+ 115:board/pirelli_dpl10/init.c **** 	display_init();
+ 116:board/pirelli_dpl10/init.c **** 	bl_mode_pwl(0);
+ 150              		.loc 1 116 0
+ 151 0140 0400A0E1 		mov	r0, r4
+ 152 0144 FEFFFFEB 		bl	bl_mode_pwl
+ 117:board/pirelli_dpl10/init.c **** 
+ 118:board/pirelli_dpl10/init.c **** 	/* Initialize keypad driver */
+ 119:board/pirelli_dpl10/init.c **** 	keypad_init(1);
+ 153              		.loc 1 119 0
+ 154 0148 0500A0E1 		mov	r0, r5
+ 155 014c FEFFFFEB 		bl	keypad_init
+ 120:board/pirelli_dpl10/init.c **** 
+ 121:board/pirelli_dpl10/init.c **** 	/* Initialize ABB driver (uses SPI) */
+ 122:board/pirelli_dpl10/init.c **** 	twl3025_init();
+ 156              		.loc 1 122 0
+ 157 0150 FEFFFFEB 		bl	twl3025_init
+ 123:board/pirelli_dpl10/init.c **** 
+ 124:board/pirelli_dpl10/init.c **** 	/* enable LEDB driver of Iota for keypad backlight */
+ 125:board/pirelli_dpl10/init.c **** 	twl3025_reg_write(AUXLED, 0x02);
+ 158              		.loc 1 125 0
+ 159 0154 9800A0E3 		mov	r0, #152
+ 160 0158 0210A0E3 		mov	r1, #2
+ 126:board/pirelli_dpl10/init.c **** }
+ 161              		.loc 1 126 0
+ 162 015c 0CD08DE2 		add	sp, sp, #12
+ 163 0160 3040BDE8 		ldmfd	sp!, {r4, r5, lr}
+ 125:board/pirelli_dpl10/init.c **** 	twl3025_reg_write(AUXLED, 0x02);
+ 164              		.loc 1 125 0
+ 165 0164 FEFFFFEA 		b	twl3025_reg_write
+ 166              	.L3:
+ 167              		.align	2
+ 168              	.L2:
+ 169 0168 FFF0FEFF 		.word	-69377
+ 170 016c 00000000 		.word	st7558_display
+ 171 0170 00000000 		.word	display
+ 172              		.cfi_endproc
+ 173              	.LFE41:
+ 175              		.text
+ 176              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 init.c
+     /tmp/ccTYGcdf.s:12     .text.board_init:0000000000000000 $a
+     /tmp/ccTYGcdf.s:15     .text.board_init:0000000000000000 board_init
+     /tmp/ccTYGcdf.s:169    .text.board_init:0000000000000168 $d
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+calypso_mem_cfg
+calypso_clock_set
+calypso_rhea_cfg
+calypso_bootrom
+calypso_exceptions_install
+irq_init
+uart_init
+uart_baudrate
+hwtimer_init
+dma_init
+rtc_init
+timer_init
+bl_mode_pwl
+keypad_init
+twl3025_init
+twl3025_reg_write
+st7558_display
+display

@@ -1,0 +1,2617 @@
+   1              		.file	"prim_fbsb.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text.l1ctl_fbsb_resp,"ax",%progbits
+  12              		.align	2
+  14              	l1ctl_fbsb_resp:
+  15              	.LFB60:
+  16              		.file 1 "layer1/prim_fbsb.c"
+   1:layer1/prim_fbsb.c **** /* Layer 1 - FCCH and SCH burst handling */
+   2:layer1/prim_fbsb.c **** 
+   3:layer1/prim_fbsb.c **** /* (C) 2010 by Harald Welte <laforge@gnumonks.org>
+   4:layer1/prim_fbsb.c ****  *
+   5:layer1/prim_fbsb.c ****  * All Rights Reserved
+   6:layer1/prim_fbsb.c ****  *
+   7:layer1/prim_fbsb.c ****  * This program is free software; you can redistribute it and/or modify
+   8:layer1/prim_fbsb.c ****  * it under the terms of the GNU General Public License as published by
+   9:layer1/prim_fbsb.c ****  * the Free Software Foundation; either version 2 of the License, or
+  10:layer1/prim_fbsb.c ****  * (at your option) any later version.
+  11:layer1/prim_fbsb.c ****  *
+  12:layer1/prim_fbsb.c ****  * This program is distributed in the hope that it will be useful,
+  13:layer1/prim_fbsb.c ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  14:layer1/prim_fbsb.c ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  15:layer1/prim_fbsb.c ****  * GNU General Public License for more details.
+  16:layer1/prim_fbsb.c ****  *
+  17:layer1/prim_fbsb.c ****  * You should have received a copy of the GNU General Public License along
+  18:layer1/prim_fbsb.c ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  19:layer1/prim_fbsb.c ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  20:layer1/prim_fbsb.c ****  *
+  21:layer1/prim_fbsb.c ****  */
+  22:layer1/prim_fbsb.c **** 
+  23:layer1/prim_fbsb.c **** #include <stdint.h>
+  24:layer1/prim_fbsb.c **** #include <stdio.h>
+  25:layer1/prim_fbsb.c **** #include <string.h>
+  26:layer1/prim_fbsb.c **** #include <stdlib.h>
+  27:layer1/prim_fbsb.c **** #include <errno.h>
+  28:layer1/prim_fbsb.c **** 
+  29:layer1/prim_fbsb.c **** #include <defines.h>
+  30:layer1/prim_fbsb.c **** #include <debug.h>
+  31:layer1/prim_fbsb.c **** #include <memory.h>
+  32:layer1/prim_fbsb.c **** #include <byteorder.h>
+  33:layer1/prim_fbsb.c **** #include <osmocom/gsm/gsm_utils.h>
+  34:layer1/prim_fbsb.c **** #include <osmocom/core/msgb.h>
+  35:layer1/prim_fbsb.c **** #include <calypso/dsp_api.h>
+  36:layer1/prim_fbsb.c **** #include <calypso/irq.h>
+  37:layer1/prim_fbsb.c **** #include <calypso/tpu.h>
+  38:layer1/prim_fbsb.c **** #include <calypso/tsp.h>
+  39:layer1/prim_fbsb.c **** #include <calypso/dsp.h>
+  40:layer1/prim_fbsb.c **** #include <calypso/timer.h>
+  41:layer1/prim_fbsb.c **** #include <comm/sercomm.h>
+  42:layer1/prim_fbsb.c **** 
+  43:layer1/prim_fbsb.c **** #include <layer1/sync.h>
+  44:layer1/prim_fbsb.c **** #include <layer1/afc.h>
+  45:layer1/prim_fbsb.c **** #include <layer1/toa.h>
+  46:layer1/prim_fbsb.c **** #include <layer1/tdma_sched.h>
+  47:layer1/prim_fbsb.c **** #include <layer1/mframe_sched.h>
+  48:layer1/prim_fbsb.c **** #include <layer1/tpu_window.h>
+  49:layer1/prim_fbsb.c **** #include <layer1/l23_api.h>
+  50:layer1/prim_fbsb.c **** 
+  51:layer1/prim_fbsb.c **** #include <l1ctl_proto.h>
+  52:layer1/prim_fbsb.c **** 
+  53:layer1/prim_fbsb.c **** #define FB0_RETRY_COUNT		3
+  54:layer1/prim_fbsb.c **** #define AFC_RETRY_COUNT		30
+  55:layer1/prim_fbsb.c **** 
+  56:layer1/prim_fbsb.c **** extern uint16_t rf_arfcn; // TODO
+  57:layer1/prim_fbsb.c **** 
+  58:layer1/prim_fbsb.c **** struct mon_state {
+  59:layer1/prim_fbsb.c **** 	uint32_t fnr_report;	/* frame number when DSP reported it */
+  60:layer1/prim_fbsb.c **** 	int attempt;		/* which attempt was this ? */
+  61:layer1/prim_fbsb.c **** 
+  62:layer1/prim_fbsb.c **** 	int16_t toa;
+  63:layer1/prim_fbsb.c **** 	uint16_t pm;
+  64:layer1/prim_fbsb.c **** 	uint16_t angle;
+  65:layer1/prim_fbsb.c **** 	uint16_t snr;
+  66:layer1/prim_fbsb.c **** 
+  67:layer1/prim_fbsb.c **** 	/* computed values */
+  68:layer1/prim_fbsb.c **** 	int16_t freq_diff;
+  69:layer1/prim_fbsb.c **** 
+  70:layer1/prim_fbsb.c **** 	/* Sync Burst (SB) */
+  71:layer1/prim_fbsb.c **** 	uint8_t bsic;
+  72:layer1/prim_fbsb.c **** 	struct gsm_time time;
+  73:layer1/prim_fbsb.c **** };
+  74:layer1/prim_fbsb.c **** 
+  75:layer1/prim_fbsb.c **** struct l1a_fb_state {
+  76:layer1/prim_fbsb.c **** 	struct mon_state mon;
+  77:layer1/prim_fbsb.c **** 	struct l1ctl_fbsb_req req;
+  78:layer1/prim_fbsb.c **** 	int16_t initial_freq_err;
+  79:layer1/prim_fbsb.c **** 	uint8_t fb_retries;
+  80:layer1/prim_fbsb.c **** 	uint8_t afc_retries;
+  81:layer1/prim_fbsb.c **** };
+  82:layer1/prim_fbsb.c **** 
+  83:layer1/prim_fbsb.c **** static struct l1a_fb_state fbs;
+  84:layer1/prim_fbsb.c **** static struct mon_state *last_fb = &fbs.mon;
+  85:layer1/prim_fbsb.c **** 
+  86:layer1/prim_fbsb.c **** static void dump_mon_state(struct mon_state *fb)
+  87:layer1/prim_fbsb.c **** {
+  88:layer1/prim_fbsb.c **** #if 0
+  89:layer1/prim_fbsb.c **** 	printf("(%u:%u): TOA=%5u, Power=%4ddBm, Angle=%5dHz, "
+  90:layer1/prim_fbsb.c **** 		"SNR=%04x(%d.%u) OFFSET=%u SYNCHRO=%u\n",
+  91:layer1/prim_fbsb.c **** 		fb->fnr_report, fb->attempt, fb->toa,
+  92:layer1/prim_fbsb.c **** 		agc_inp_dbm8_by_pm(fb->pm)/8, ANGLE_TO_FREQ(fb->angle),
+  93:layer1/prim_fbsb.c **** 		fb->snr, l1s_snr_int(fb->snr), l1s_snr_fract(fb->snr),
+  94:layer1/prim_fbsb.c **** 		tpu_get_offset(), tpu_get_synchro());
+  95:layer1/prim_fbsb.c **** #else
+  96:layer1/prim_fbsb.c **** 	printf("(%u:%u): TOA=%5u, Power=%4ddBm, Angle=%5dHz\n",
+  97:layer1/prim_fbsb.c **** 		fb->fnr_report, fb->attempt, fb->toa,
+  98:layer1/prim_fbsb.c **** 		agc_inp_dbm8_by_pm(fb->pm)/8, ANGLE_TO_FREQ(fb->angle));
+  99:layer1/prim_fbsb.c **** #endif
+ 100:layer1/prim_fbsb.c **** }
+ 101:layer1/prim_fbsb.c **** 
+ 102:layer1/prim_fbsb.c **** static int l1ctl_fbsb_resp(uint8_t res)
+ 103:layer1/prim_fbsb.c **** {
+  17              		.loc 1 103 0
+  18              		.cfi_startproc
+  19              		@ args = 0, pretend = 0, frame = 0
+  20              		@ frame_needed = 0, uses_anonymous_args = 0
+  21              	.LVL0:
+  22 0000 70402DE9 		stmfd	sp!, {r4, r5, r6, lr}
+  23              	.LCFI0:
+  24              		.cfi_def_cfa_offset 16
+ 104:layer1/prim_fbsb.c **** 	struct msgb *msg;
+ 105:layer1/prim_fbsb.c **** 	struct l1ctl_fbsb_conf *resp;
+ 106:layer1/prim_fbsb.c **** 
+ 107:layer1/prim_fbsb.c **** 	msg = l1_create_l2_msg(L1CTL_FBSB_CONF, fbs.mon.time.fn,
+  25              		.loc 1 107 0
+  26 0004 AC409FE5 		ldr	r4, .L5
+  27              		.cfi_offset 14, -4
+  28              		.cfi_offset 6, -8
+  29              		.cfi_offset 5, -12
+  30              		.cfi_offset 4, -16
+ 103:layer1/prim_fbsb.c **** {
+  31              		.loc 1 103 0
+  32 0008 0060A0E1 		mov	r6, r0
+ 108:layer1/prim_fbsb.c **** 				l1s_snr_int(fbs.mon.snr),
+  33              		.loc 1 108 0
+  34 000c BE00D4E1 		ldrh	r0, [r4, #14]
+  35              	.LVL1:
+ 107:layer1/prim_fbsb.c **** 	msg = l1_create_l2_msg(L1CTL_FBSB_CONF, fbs.mon.time.fn,
+  36              		.loc 1 107 0
+  37 0010 145094E5 		ldr	r5, [r4, #20]
+  38              		.loc 1 108 0
+  39 0014 FEFFFFEB 		bl	l1s_snr_int
+ 107:layer1/prim_fbsb.c **** 	msg = l1_create_l2_msg(L1CTL_FBSB_CONF, fbs.mon.time.fn,
+  40              		.loc 1 107 0
+  41 0018 0028A0E1 		mov	r2, r0, asl #16
+  42 001c B032D4E1 		ldrh	r3, [r4, #32]
+  43 0020 0200A0E3 		mov	r0, #2
+  44 0024 0510A0E1 		mov	r1, r5
+  45 0028 2228A0E1 		mov	r2, r2, lsr #16
+  46 002c FEFFFFEB 		bl	l1_create_l2_msg
+  47              	.LVL2:
+ 109:layer1/prim_fbsb.c **** 				fbs.req.band_arfcn);
+ 110:layer1/prim_fbsb.c **** 	if (!msg)
+  48              		.loc 1 110 0
+  49 0030 004050E2 		subs	r4, r0, #0
+  50 0034 1D00000A 		beq	.L4
+  51              	.LVL3:
+  52              	.LBB37:
+  53              	.LBB38:
+  54              	.LBB39:
+  55              	.LBB40:
+  56              		.file 2 "../../shared/libosmocore/include/osmocom/core/msgb.h"
+   1:../../shared/libosmocore/include/osmocom/core/msgb.h **** #ifndef _MSGB_H
+   2:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define _MSGB_H
+   3:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+   4:../../shared/libosmocore/include/osmocom/core/msgb.h **** /* (C) 2008 by Harald Welte <laforge@gnumonks.org>
+   5:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * All Rights Reserved
+   6:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+   7:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This program is free software; you can redistribute it and/or modify
+   8:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * it under the terms of the GNU General Public License as published by
+   9:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * the Free Software Foundation; either version 2 of the License, or
+  10:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * (at your option) any later version.
+  11:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+  12:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This program is distributed in the hope that it will be useful,
+  13:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  14:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  15:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * GNU General Public License for more details.
+  16:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+  17:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * You should have received a copy of the GNU General Public License along
+  18:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  19:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  20:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+  21:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+  22:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  23:../../shared/libosmocore/include/osmocom/core/msgb.h **** #include <stdint.h>
+  24:../../shared/libosmocore/include/osmocom/core/msgb.h **** #include <osmocom/core/linuxlist.h>
+  25:../../shared/libosmocore/include/osmocom/core/msgb.h **** #include <osmocom/core/utils.h>
+  26:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  27:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \defgroup msgb Message buffers
+  28:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  @{
+  29:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+  30:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  31:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \file msgb.h
+  32:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \brief Osmocom message buffers
+  33:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * The Osmocom message buffers are modelled after the 'struct skb'
+  34:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * inside the Linux kernel network stack.  As they exist in userspace,
+  35:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * they are much simplified.  However, terminology such as headroom,
+  36:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * tailroom, push/pull/put etc. remains the same.
+  37:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+  38:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  39:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define MSGB_DEBUG
+  40:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  41:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief Osmocom message buffer */
+  42:../../shared/libosmocore/include/osmocom/core/msgb.h **** struct msgb {
+  43:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	struct llist_head list; /*!< \brief linked list header */
+  44:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  45:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  46:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	/* Part of which TRX logical channel we were received / transmitted */
+  47:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	/* FIXME: move them into the control buffer */
+  48:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	union {
+  49:../../shared/libosmocore/include/osmocom/core/msgb.h **** 		void *dst; /*!< \brief reference of origin/destination */
+  50:../../shared/libosmocore/include/osmocom/core/msgb.h **** 		struct gsm_bts_trx *trx;
+  51:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	};
+  52:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	struct gsm_lchan *lchan; /*!< \brief logical channel */
+  53:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  54:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *l1h; /*!< \brief pointer to Layer1 header (if any) */
+  55:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *l2h; /*!< \brief pointer to A-bis layer 2 header: OML, RSL(RLL), NS */
+  56:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *l3h; /*!< \brief pointer to Layer 3 header. For OML: FOM; RSL: 04.08; GPRS: BSSGP *
+  57:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *l4h; /*!< \brief pointer to layer 4 header */
+  58:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  59:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned long cb[5]; /*!< \brief control buffer */
+  60:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  61:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint16_t data_len;   /*!< \brief length of underlying data array */
+  62:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint16_t len;	     /*!< \brief length of bytes used in msgb */
+  63:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  64:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *head;	/*!< \brief start of underlying memory buffer */
+  65:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *tail;	/*!< \brief end of message in buffer */
+  66:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *data;	/*!< \brief start of message in buffer */
+  67:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char _data[0]; /*!< \brief optional immediate data array */
+  68:../../shared/libosmocore/include/osmocom/core/msgb.h **** };
+  69:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  70:../../shared/libosmocore/include/osmocom/core/msgb.h **** extern struct msgb *msgb_alloc(uint16_t size, const char *name);
+  71:../../shared/libosmocore/include/osmocom/core/msgb.h **** extern void msgb_free(struct msgb *m);
+  72:../../shared/libosmocore/include/osmocom/core/msgb.h **** extern void msgb_enqueue(struct llist_head *queue, struct msgb *msg);
+  73:../../shared/libosmocore/include/osmocom/core/msgb.h **** extern struct msgb *msgb_dequeue(struct llist_head *queue);
+  74:../../shared/libosmocore/include/osmocom/core/msgb.h **** extern void msgb_reset(struct msgb *m);
+  75:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  76:../../shared/libosmocore/include/osmocom/core/msgb.h **** #ifdef MSGB_DEBUG
+  77:../../shared/libosmocore/include/osmocom/core/msgb.h **** #include <osmocom/core/panic.h>
+  78:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define MSGB_ABORT(msg, fmt, args ...) do {		\
+  79:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	osmo_panic("msgb(%p): " fmt, msg, ## args);	\
+  80:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	} while(0)
+  81:../../shared/libosmocore/include/osmocom/core/msgb.h **** #else
+  82:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define MSGB_ABORT(msg, fmt, args ...)
+  83:../../shared/libosmocore/include/osmocom/core/msgb.h **** #endif
+  84:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  85:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief obtain L1 header of msgb */
+  86:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define msgb_l1(m)	((void *)(m->l1h))
+  87:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief obtain L2 header of msgb */
+  88:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define msgb_l2(m)	((void *)(m->l2h))
+  89:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief obtain L3 header of msgb */
+  90:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define msgb_l3(m)	((void *)(m->l3h))
+  91:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief obtain SMS header of msgb */
+  92:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define msgb_sms(m)	((void *)(m->l4h))
+  93:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  94:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief determine length of L1 message
+  95:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+  96:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns size of L1 message in bytes
+  97:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+  98:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function computes the number of bytes between the tail of the
+  99:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * message and the layer 1 header.
+ 100:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 101:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline unsigned int msgb_l1len(const struct msgb *msgb)
+ 102:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 103:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->tail - (uint8_t *)msgb_l1(msgb);
+ 104:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 105:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 106:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief determine length of L2 message
+ 107:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 108:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns size of L2 message in bytes
+ 109:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 110:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function computes the number of bytes between the tail of the
+ 111:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * message and the layer 2 header.
+ 112:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 113:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline unsigned int msgb_l2len(const struct msgb *msgb)
+ 114:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 115:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->tail - (uint8_t *)msgb_l2(msgb);
+ 116:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 117:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 118:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief determine length of L3 message
+ 119:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 120:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns size of L3 message in bytes
+ 121:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 122:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function computes the number of bytes between the tail of the
+ 123:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * message and the layer 3 header.
+ 124:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 125:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline unsigned int msgb_l3len(const struct msgb *msgb)
+ 126:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 127:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->tail - (uint8_t *)msgb_l3(msgb);
+ 128:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 129:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 130:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief determine the length of the header
+ 131:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 132:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns number of bytes between start of buffer and start of msg
+ 133:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 134:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function computes the length difference between the underlying
+ 135:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * data buffer and the used section of the \a msgb.
+ 136:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 137:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline unsigned int msgb_headlen(const struct msgb *msgb)
+ 138:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 139:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->len - msgb->data_len;
+ 140:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 141:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 142:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief determine how much tail room is left in msgb
+ 143:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 144:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns number of bytes remaining at end of msgb
+ 145:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 146:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function computes the amount of octets left in the underlying
+ 147:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * data buffer after the end of the message.
+ 148:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 149:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline int msgb_tailroom(const struct msgb *msgb)
+ 150:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 151:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return (msgb->head + msgb->data_len) - msgb->tail;
+  57              		.loc 2 151 0
+  58 0038 B433D4E1 		ldrh	r3, [r4, #52]
+  59              	.LBE40:
+  60              	.LBE39:
+  61 003c 382084E2 		add	r2, r4, #56
+  62 0040 240092E8 		ldmia	r2, {r2, r5}	@ phole ldm
+  63              	.LVL4:
+  64              	.LBB42:
+  65              	.LBB41:
+  66 0044 032082E0 		add	r2, r2, r3
+  67 0048 022065E0 		rsb	r2, r5, r2
+  68              	.LBE41:
+  69              	.LBE42:
+ 152:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 153:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 154:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief determine the amount of headroom in msgb
+ 155:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 156:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns number of bytes left ahead of message start in msgb
+ 157:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 158:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function computes the amount of bytes left in the underlying
+ 159:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * data buffer before the start of the actual message.
+ 160:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 161:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline int msgb_headroom(const struct msgb *msgb)
+ 162:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 163:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return (msgb->data - msgb->head);
+ 164:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 165:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 166:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief append data to end of message buffer
+ 167:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 168:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] len number of bytes to append to message
+ 169:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns pointer to start of newly-appended data
+ 170:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 171:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function will move the \a tail pointer of the message buffer \a
+ 172:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * len bytes further, thus enlarging the message by \a len bytes.
+ 173:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 174:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * The return value is a pointer to start of the newly added section at
+ 175:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * the end of the message and can be used for actually filling/copying
+ 176:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * data into it.
+ 177:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 178:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline unsigned char *msgb_put(struct msgb *msgb, unsigned int len)
+ 179:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 180:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *tmp = msgb->tail;
+ 181:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	if (msgb_tailroom(msgb) < (int) len)
+  70              		.loc 2 181 0
+  71 004c 030052E3 		cmp	r2, #3
+  72              	.LVL5:
+ 182:../../shared/libosmocore/include/osmocom/core/msgb.h **** 		MSGB_ABORT(msgb, "Not enough tailroom msgb_push (%u < %u)\n",
+  73              		.loc 2 182 0
+  74 0050 64009FD5 		ldrle	r0, .L5+4
+  75              	.LVL6:
+  76 0054 0410A0D1 		movle	r1, r4
+  77 0058 0430A0D3 		movle	r3, #4
+  78 005c FEFFFFDB 		blle	osmo_panic
+  79              	.LVL7:
+  80              	.L3:
+ 183:../../shared/libosmocore/include/osmocom/core/msgb.h **** 			   msgb_tailroom(msgb), len);
+ 184:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->tail += len;
+  81              		.loc 2 184 0
+  82 0060 3C3094E5 		ldr	r3, [r4, #60]
+  83 0064 043083E2 		add	r3, r3, #4
+  84 0068 3C3084E5 		str	r3, [r4, #60]
+ 185:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len += len;
+  85              		.loc 2 185 0
+  86 006c B633D4E1 		ldrh	r3, [r4, #54]
+  87 0070 043083E2 		add	r3, r3, #4
+  88 0074 B633C4E1 		strh	r3, [r4, #54]	@ movhi
+  89              	.LVL8:
+  90              	.LBE38:
+  91              	.LBE37:
+ 111:layer1/prim_fbsb.c **** 		return -ENOMEM;
+ 112:layer1/prim_fbsb.c **** 
+ 113:layer1/prim_fbsb.c **** 	resp = (struct l1ctl_fbsb_conf *) msgb_put(msg, sizeof(*resp));
+ 114:layer1/prim_fbsb.c **** 	resp->initial_freq_err = htons(fbs.initial_freq_err);
+  92              		.loc 1 114 0
+  93 0078 38309FE5 		ldr	r3, .L5
+  94 007c BC22D3E1 		ldrh	r2, [r3, #44]
+  95              	.LVL9:
+  96              	.LBB43:
+  97              	.LBB44:
+  98              		.file 3 "include/swab.h"
+   1:include/swab.h **** #ifndef _LINUX_SWAB_H
+   2:include/swab.h **** #define _LINUX_SWAB_H
+   3:include/swab.h **** 
+   4:include/swab.h **** #include <stdint.h>
+   5:include/swab.h **** #include <defines.h>
+   6:include/swab.h **** #include <asm/swab.h>
+   7:include/swab.h **** 
+   8:include/swab.h **** /*
+   9:include/swab.h ****  * casts are necessary for constants, because we never know how for sure
+  10:include/swab.h ****  * how U/UL/ULL map to uint16_t, uint32_t, uint64_t. At least not in a portable way.
+  11:include/swab.h ****  */
+  12:include/swab.h **** #define ___constant_swab16(x) ((uint16_t)(				\
+  13:include/swab.h **** 	(((uint16_t)(x) & (uint16_t)0x00ffU) << 8) |			\
+  14:include/swab.h **** 	(((uint16_t)(x) & (uint16_t)0xff00U) >> 8)))
+  15:include/swab.h **** 
+  16:include/swab.h **** #define ___constant_swab32(x) ((uint32_t)(				\
+  17:include/swab.h **** 	(((uint32_t)(x) & (uint32_t)0x000000ffUL) << 24) |		\
+  18:include/swab.h **** 	(((uint32_t)(x) & (uint32_t)0x0000ff00UL) <<  8) |		\
+  19:include/swab.h **** 	(((uint32_t)(x) & (uint32_t)0x00ff0000UL) >>  8) |		\
+  20:include/swab.h **** 	(((uint32_t)(x) & (uint32_t)0xff000000UL) >> 24)))
+  21:include/swab.h **** 
+  22:include/swab.h **** #define ___constant_swab64(x) ((uint64_t)(				\
+  23:include/swab.h **** 	(((uint64_t)(x) & (uint64_t)0x00000000000000ffULL) << 56) |	\
+  24:include/swab.h **** 	(((uint64_t)(x) & (uint64_t)0x000000000000ff00ULL) << 40) |	\
+  25:include/swab.h **** 	(((uint64_t)(x) & (uint64_t)0x0000000000ff0000ULL) << 24) |	\
+  26:include/swab.h **** 	(((uint64_t)(x) & (uint64_t)0x00000000ff000000ULL) <<  8) |	\
+  27:include/swab.h **** 	(((uint64_t)(x) & (uint64_t)0x000000ff00000000ULL) >>  8) |	\
+  28:include/swab.h **** 	(((uint64_t)(x) & (uint64_t)0x0000ff0000000000ULL) >> 24) |	\
+  29:include/swab.h **** 	(((uint64_t)(x) & (uint64_t)0x00ff000000000000ULL) >> 40) |	\
+  30:include/swab.h **** 	(((uint64_t)(x) & (uint64_t)0xff00000000000000ULL) >> 56)))
+  31:include/swab.h **** 
+  32:include/swab.h **** #define ___constant_swahw32(x) ((uint32_t)(			\
+  33:include/swab.h **** 	(((uint32_t)(x) & (uint32_t)0x0000ffffUL) << 16) |		\
+  34:include/swab.h **** 	(((uint32_t)(x) & (uint32_t)0xffff0000UL) >> 16)))
+  35:include/swab.h **** 
+  36:include/swab.h **** #define ___constant_swahb32(x) ((uint32_t)(			\
+  37:include/swab.h **** 	(((uint32_t)(x) & (uint32_t)0x00ff00ffUL) << 8) |		\
+  38:include/swab.h **** 	(((uint32_t)(x) & (uint32_t)0xff00ff00UL) >> 8)))
+  39:include/swab.h **** 
+  40:include/swab.h **** /*
+  41:include/swab.h ****  * Implement the following as inlines, but define the interface using
+  42:include/swab.h ****  * macros to allow constant folding when possible:
+  43:include/swab.h ****  * ___swab16, ___swab32, ___swab64, ___swahw32, ___swahb32
+  44:include/swab.h ****  */
+  45:include/swab.h **** 
+  46:include/swab.h **** static inline __attribute_const__ uint16_t __fswab16(uint16_t val)
+  47:include/swab.h **** {
+  48:include/swab.h **** #ifdef __arch_swab16
+  49:include/swab.h **** 	return __arch_swab16(val);
+  50:include/swab.h **** #else
+  51:include/swab.h **** 	return ___constant_swab16(val);
+  99              		.loc 3 51 0
+ 100 0080 2214A0E1 		mov	r1, r2, lsr #8
+ 101 0084 022481E1 		orr	r2, r1, r2, asl #8
+ 102              	.LVL10:
+ 103              	.LBE44:
+ 104              	.LBE43:
+ 105              		.loc 1 114 0
+ 106 0088 0020C5E5 		strb	r2, [r5, #0]
+ 107 008c 2224A0E1 		mov	r2, r2, lsr #8
+ 108 0090 0120C5E5 		strb	r2, [r5, #1]
+ 115:layer1/prim_fbsb.c **** 	resp->result = res;
+ 109              		.loc 1 115 0
+ 110 0094 0260C5E5 		strb	r6, [r5, #2]
+ 116:layer1/prim_fbsb.c **** 	resp->bsic = fbs.mon.bsic;
+ 111              		.loc 1 116 0
+ 112 0098 1230D3E5 		ldrb	r3, [r3, #18]	@ zero_extendqisi2
+ 117:layer1/prim_fbsb.c **** 
+ 118:layer1/prim_fbsb.c **** 	/* no need to set BSIC, as it is never used here */
+ 119:layer1/prim_fbsb.c **** 	l1_queue_for_l2(msg);
+ 113              		.loc 1 119 0
+ 114 009c 0400A0E1 		mov	r0, r4
+ 116:layer1/prim_fbsb.c **** 	resp->bsic = fbs.mon.bsic;
+ 115              		.loc 1 116 0
+ 116 00a0 0330C5E5 		strb	r3, [r5, #3]
+ 117              		.loc 1 119 0
+ 118 00a4 FEFFFFEB 		bl	l1_queue_for_l2
+ 120:layer1/prim_fbsb.c **** 
+ 121:layer1/prim_fbsb.c **** 	return 0;
+ 119              		.loc 1 121 0
+ 120 00a8 0000A0E3 		mov	r0, #0
+ 121 00ac 7080BDE8 		ldmfd	sp!, {r4, r5, r6, pc}
+ 122              	.LVL11:
+ 123              	.L4:
+ 111:layer1/prim_fbsb.c **** 		return -ENOMEM;
+ 124              		.loc 1 111 0
+ 125 00b0 0B00E0E3 		mvn	r0, #11
+ 122:layer1/prim_fbsb.c **** }
+ 126              		.loc 1 122 0
+ 127 00b4 7080BDE8 		ldmfd	sp!, {r4, r5, r6, pc}
+ 128              	.L6:
+ 129              		.align	2
+ 130              	.L5:
+ 131 00b8 00000000 		.word	.LANCHOR0
+ 132 00bc 00000000 		.word	.LC0
+ 133              		.cfi_endproc
+ 134              	.LFE60:
+ 136              		.global	__udivsi3
+ 137              		.section	.text.l1s_sbdet_resp,"ax",%progbits
+ 138              		.align	2
+ 140              	l1s_sbdet_resp:
+ 141              	.LFB63:
+ 123:layer1/prim_fbsb.c **** 
+ 124:layer1/prim_fbsb.c **** /* SCH Burst Detection ********************************************************/
+ 125:layer1/prim_fbsb.c **** 
+ 126:layer1/prim_fbsb.c **** /* determine the GSM time and BSIC from a Sync Burst */
+ 127:layer1/prim_fbsb.c **** static uint8_t l1s_decode_sb(struct gsm_time *time, uint32_t sb)
+ 128:layer1/prim_fbsb.c **** {
+ 129:layer1/prim_fbsb.c **** 	uint8_t bsic = (sb >> 2) & 0x3f;
+ 130:layer1/prim_fbsb.c **** 	uint8_t t3p;
+ 131:layer1/prim_fbsb.c **** 
+ 132:layer1/prim_fbsb.c **** 	memset(time, 0, sizeof(*time));
+ 133:layer1/prim_fbsb.c **** 
+ 134:layer1/prim_fbsb.c **** 	/* TS 05.02 Chapter 3.3.2.2.1 SCH Frame Numbers */
+ 135:layer1/prim_fbsb.c **** 	time->t1 = ((sb >> 23) & 1) | ((sb >> 7) & 0x1fe) | ((sb << 9) & 0x600);
+ 136:layer1/prim_fbsb.c **** 	time->t2 = (sb >> 18) & 0x1f;
+ 137:layer1/prim_fbsb.c **** 	t3p = ((sb >> 24) & 1) | ((sb >> 15) & 6);
+ 138:layer1/prim_fbsb.c **** 	time->t3 = t3p*10 + 1;
+ 139:layer1/prim_fbsb.c **** 
+ 140:layer1/prim_fbsb.c **** 	/* TS 05.02 Chapter 4.3.3 TDMA frame number */
+ 141:layer1/prim_fbsb.c **** 	time->fn = gsm_gsmtime2fn(time);
+ 142:layer1/prim_fbsb.c **** 
+ 143:layer1/prim_fbsb.c **** 	time->tc = (time->fn / 51) % 8;
+ 144:layer1/prim_fbsb.c **** 
+ 145:layer1/prim_fbsb.c **** 	return bsic;
+ 146:layer1/prim_fbsb.c **** }
+ 147:layer1/prim_fbsb.c **** 
+ 148:layer1/prim_fbsb.c **** static void read_sb_result(struct mon_state *st, int attempt)
+ 149:layer1/prim_fbsb.c **** {
+ 150:layer1/prim_fbsb.c **** 	st->toa = dsp_api.db_r->a_serv_demod[D_TOA];
+ 151:layer1/prim_fbsb.c **** 	st->pm = dsp_api.db_r->a_serv_demod[D_PM]>>3;
+ 152:layer1/prim_fbsb.c **** 	st->angle = dsp_api.db_r->a_serv_demod[D_ANGLE];
+ 153:layer1/prim_fbsb.c **** 	st->snr = dsp_api.db_r->a_serv_demod[D_SNR];
+ 154:layer1/prim_fbsb.c **** 
+ 155:layer1/prim_fbsb.c **** 	st->freq_diff = ANGLE_TO_FREQ(st->angle);
+ 156:layer1/prim_fbsb.c **** 	st->fnr_report = l1s.current_time.fn;
+ 157:layer1/prim_fbsb.c **** 	st->attempt = attempt;
+ 158:layer1/prim_fbsb.c **** 
+ 159:layer1/prim_fbsb.c **** 	dump_mon_state(st);
+ 160:layer1/prim_fbsb.c **** 
+ 161:layer1/prim_fbsb.c **** 	if (st->snr > AFC_SNR_THRESHOLD)
+ 162:layer1/prim_fbsb.c **** 		afc_input(st->freq_diff, rf_arfcn, 1);
+ 163:layer1/prim_fbsb.c **** 	else
+ 164:layer1/prim_fbsb.c **** 		afc_input(st->freq_diff, rf_arfcn, 0);
+ 165:layer1/prim_fbsb.c **** 
+ 166:layer1/prim_fbsb.c **** 	dsp_api.r_page_used = 1;
+ 167:layer1/prim_fbsb.c **** }
+ 168:layer1/prim_fbsb.c **** 
+ 169:layer1/prim_fbsb.c **** /* Note: When we get the SB response, it is 2 TDMA frames after the SB
+ 170:layer1/prim_fbsb.c ****  * actually happened, as it is a "C W W R" task */
+ 171:layer1/prim_fbsb.c **** #define SB2_LATENCY	2
+ 172:layer1/prim_fbsb.c **** 
+ 173:layer1/prim_fbsb.c **** static int l1s_sbdet_resp(__unused uint8_t p1, uint8_t attempt,
+ 174:layer1/prim_fbsb.c **** 			  __unused uint16_t p3)
+ 175:layer1/prim_fbsb.c **** {
+ 142              		.loc 1 175 0
+ 143              		.cfi_startproc
+ 144              		@ args = 0, pretend = 0, frame = 0
+ 145              		@ frame_needed = 0, uses_anonymous_args = 0
+ 146              	.LVL12:
+ 147 0000 F3452DE9 		stmfd	sp!, {r0, r1, r4, r5, r6, r7, r8, sl, lr}
+ 148              	.LCFI1:
+ 149              		.cfi_def_cfa_offset 36
+ 176:layer1/prim_fbsb.c **** 	uint32_t sb;
+ 177:layer1/prim_fbsb.c **** 	int qbits, fn_offset;
+ 178:layer1/prim_fbsb.c **** 	struct l1_cell_info *cinfo = &l1s.serving_cell;
+ 179:layer1/prim_fbsb.c **** 	int fnr_delta, bits_delta;
+ 180:layer1/prim_fbsb.c **** 	struct l1ctl_sync_new_ccch_resp *l1;
+ 181:layer1/prim_fbsb.c **** 	struct msgb *msg;
+ 182:layer1/prim_fbsb.c **** 
+ 183:layer1/prim_fbsb.c **** 	putchart('s');
+ 184:layer1/prim_fbsb.c **** 
+ 185:layer1/prim_fbsb.c **** 	if (dsp_api.db_r->a_sch[0] & (1<<B_SCH_CRC)) {
+ 150              		.loc 1 185 0
+ 151 0004 E0429FE5 		ldr	r4, .L22
+ 152              		.cfi_offset 14, -4
+ 153              		.cfi_offset 10, -8
+ 154              		.cfi_offset 8, -12
+ 155              		.cfi_offset 7, -16
+ 156              		.cfi_offset 6, -20
+ 157              		.cfi_offset 5, -24
+ 158              		.cfi_offset 4, -28
+ 159              		.cfi_offset 1, -32
+ 160              		.cfi_offset 0, -36
+ 161 0008 043094E5 		ldr	r3, [r4, #4]
+ 162 000c BE61D3E1 		ldrh	r6, [r3, #30]
+ 163 0010 016C16E2 		ands	r6, r6, #256
+ 175:layer1/prim_fbsb.c **** {
+ 164              		.loc 1 175 0
+ 165 0014 FF5001E2 		and	r5, r1, #255
+ 166              		.loc 1 185 0
+ 167 0018 0700000A 		beq	.L8
+ 186:layer1/prim_fbsb.c **** 		/* mark READ page as being used */
+ 187:layer1/prim_fbsb.c **** 		dsp_api.r_page_used = 1;
+ 168              		.loc 1 187 0
+ 169 001c 0130A0E3 		mov	r3, #1
+ 188:layer1/prim_fbsb.c **** 
+ 189:layer1/prim_fbsb.c **** 		/* after 2nd attempt, we failed */
+ 190:layer1/prim_fbsb.c **** 		if (attempt == 2) {
+ 170              		.loc 1 190 0
+ 171 0020 020055E3 		cmp	r5, #2
+ 187:layer1/prim_fbsb.c **** 		dsp_api.r_page_used = 1;
+ 172              		.loc 1 187 0
+ 173 0024 183084E5 		str	r3, [r4, #24]
+ 174              		.loc 1 190 0
+ 175 0028 AD00001A 		bne	.L9
+ 191:layer1/prim_fbsb.c **** 			last_fb->attempt = 13;
+ 176              		.loc 1 191 0
+ 177 002c BC329FE5 		ldr	r3, .L22+4
+ 178 0030 0D20A0E3 		mov	r2, #13
+ 179              	.LVL13:
+ 180 0034 042083E5 		str	r2, [r3, #4]
+ 181 0038 A70000EA 		b	.L18
+ 182              	.LVL14:
+ 183              	.L8:
+ 192:layer1/prim_fbsb.c **** 			l1s_compl_sched(L1_COMPL_FB);
+ 193:layer1/prim_fbsb.c **** 		}
+ 194:layer1/prim_fbsb.c **** 
+ 195:layer1/prim_fbsb.c **** 		/* after 1st attempt, we simply wait for 2nd */
+ 196:layer1/prim_fbsb.c **** 		return 0;
+ 197:layer1/prim_fbsb.c **** 	}
+ 198:layer1/prim_fbsb.c **** 
+ 199:layer1/prim_fbsb.c **** 	printf("SB%d ", attempt);
+ 184              		.loc 1 199 0
+ 185 003c 0510A0E1 		mov	r1, r5
+ 186              	.LVL15:
+ 187 0040 AC029FE5 		ldr	r0, .L22+8
+ 188              	.LVL16:
+ 189 0044 FEFFFFEB 		bl	printf
+ 190              	.LVL17:
+ 191              	.LBB51:
+ 192              	.LBB52:
+ 150:layer1/prim_fbsb.c **** 	st->toa = dsp_api.db_r->a_serv_demod[D_TOA];
+ 193              		.loc 1 150 0
+ 194 0048 043094E5 		ldr	r3, [r4, #4]
+ 195 004c 9C429FE5 		ldr	r4, .L22+4
+ 196 0050 B0A1D3E1 		ldrh	sl, [r3, #16]
+ 152:layer1/prim_fbsb.c **** 	st->angle = dsp_api.db_r->a_serv_demod[D_ANGLE];
+ 197              		.loc 1 152 0
+ 198 0054 B421D3E1 		ldrh	r2, [r3, #20]
+ 151:layer1/prim_fbsb.c **** 	st->pm = dsp_api.db_r->a_serv_demod[D_PM]>>3;
+ 199              		.loc 1 151 0
+ 200 0058 B201D3E1 		ldrh	r0, [r3, #18]
+ 153:layer1/prim_fbsb.c **** 	st->snr = dsp_api.db_r->a_serv_demod[D_SNR];
+ 201              		.loc 1 153 0
+ 202 005c B631D3E1 		ldrh	r3, [r3, #22]
+ 155:layer1/prim_fbsb.c **** 	st->freq_diff = ANGLE_TO_FREQ(st->angle);
+ 203              		.loc 1 155 0
+ 204 0060 90829FE5 		ldr	r8, .L22+12
+ 153:layer1/prim_fbsb.c **** 	st->snr = dsp_api.db_r->a_serv_demod[D_SNR];
+ 205              		.loc 1 153 0
+ 206 0064 BE30C4E1 		strh	r3, [r4, #14]	@ movhi
+ 155:layer1/prim_fbsb.c **** 	st->freq_diff = ANGLE_TO_FREQ(st->angle);
+ 207              		.loc 1 155 0
+ 208 0068 0238A0E1 		mov	r3, r2, asl #16
+ 209 006c 4338A0E1 		mov	r3, r3, asr #16
+ 210 0070 980303E0 		mul	r3, r8, r3
+ 152:layer1/prim_fbsb.c **** 	st->angle = dsp_api.db_r->a_serv_demod[D_ANGLE];
+ 211              		.loc 1 152 0
+ 212 0074 BC20C4E1 		strh	r2, [r4, #12]	@ movhi
+ 155:layer1/prim_fbsb.c **** 	st->freq_diff = ANGLE_TO_FREQ(st->angle);
+ 213              		.loc 1 155 0
+ 214 0078 000053E3 		cmp	r3, #0
+ 215 007c FF2C83E2 		add	r2, r3, #65280
+ 216 0080 FF3082B2 		addlt	r3, r2, #255
+ 217 0084 4338A0E1 		mov	r3, r3, asr #16
+ 218 0088 B031C4E1 		strh	r3, [r4, #16]	@ movhi
+ 156:layer1/prim_fbsb.c **** 	st->fnr_report = l1s.current_time.fn;
+ 219              		.loc 1 156 0
+ 220 008c 68329FE5 		ldr	r3, .L22+16
+ 221 0090 007093E5 		ldr	r7, [r3, #0]
+ 151:layer1/prim_fbsb.c **** 	st->pm = dsp_api.db_r->a_serv_demod[D_PM]>>3;
+ 222              		.loc 1 151 0
+ 223 0094 A001A0E1 		mov	r0, r0, lsr #3
+ 156:layer1/prim_fbsb.c **** 	st->fnr_report = l1s.current_time.fn;
+ 224              		.loc 1 156 0
+ 225 0098 007084E5 		str	r7, [r4, #0]
+ 150:layer1/prim_fbsb.c **** 	st->toa = dsp_api.db_r->a_serv_demod[D_TOA];
+ 226              		.loc 1 150 0
+ 227 009c B8A0C4E1 		strh	sl, [r4, #8]	@ movhi
+ 151:layer1/prim_fbsb.c **** 	st->pm = dsp_api.db_r->a_serv_demod[D_PM]>>3;
+ 228              		.loc 1 151 0
+ 229 00a0 BA00C4E1 		strh	r0, [r4, #10]	@ movhi
+ 157:layer1/prim_fbsb.c **** 	st->attempt = attempt;
+ 230              		.loc 1 157 0
+ 231 00a4 045084E5 		str	r5, [r4, #4]
+ 232              	.LVL18:
+ 233              	.LBB53:
+ 234              	.LBB54:
+  98:layer1/prim_fbsb.c **** 		agc_inp_dbm8_by_pm(fb->pm)/8, ANGLE_TO_FREQ(fb->angle));
+ 235              		.loc 1 98 0
+ 236 00a8 FEFFFFEB 		bl	agc_inp_dbm8_by_pm
+  96:layer1/prim_fbsb.c **** 	printf("(%u:%u): TOA=%5u, Power=%4ddBm, Angle=%5dHz\n",
+ 237              		.loc 1 96 0
+ 238 00ac 072080E2 		add	r2, r0, #7
+ 239 00b0 000050E3 		cmp	r0, #0
+ 240 00b4 0200A0B1 		movlt	r0, r2
+ 241 00b8 C001A0E1 		mov	r0, r0, asr #3
+ 242 00bc 00008DE5 		str	r0, [sp, #0]
+  98:layer1/prim_fbsb.c **** 		agc_inp_dbm8_by_pm(fb->pm)/8, ANGLE_TO_FREQ(fb->angle));
+ 243              		.loc 1 98 0
+ 244 00c0 FC20D4E1 		ldrsh	r2, [r4, #12]
+ 245 00c4 920808E0 		mul	r8, r2, r8
+  96:layer1/prim_fbsb.c **** 	printf("(%u:%u): TOA=%5u, Power=%4ddBm, Angle=%5dHz\n",
+ 246              		.loc 1 96 0
+ 247 00c8 000058E3 		cmp	r8, #0
+ 248 00cc FF2C88E2 		add	r2, r8, #65280
+ 249 00d0 FF8082B2 		addlt	r8, r2, #255
+ 250 00d4 0A38A0E1 		mov	r3, sl, asl #16
+ 251 00d8 0710A0E1 		mov	r1, r7
+ 252 00dc 0520A0E1 		mov	r2, r5
+ 253 00e0 4338A0E1 		mov	r3, r3, asr #16
+ 254 00e4 4888A0E1 		mov	r8, r8, asr #16
+ 255 00e8 10029FE5 		ldr	r0, .L22+20
+ 256 00ec 04808DE5 		str	r8, [sp, #4]
+ 257 00f0 FEFFFFEB 		bl	printf
+ 258              	.LBE54:
+ 259              	.LBE53:
+ 161:layer1/prim_fbsb.c **** 	if (st->snr > AFC_SNR_THRESHOLD)
+ 260              		.loc 1 161 0
+ 261 00f4 BE30D4E1 		ldrh	r3, [r4, #14]
+ 262 00f8 0A0C53E3 		cmp	r3, #2560
+ 263 00fc 00329FE5 		ldr	r3, .L22+24
+ 164:layer1/prim_fbsb.c **** 		afc_input(st->freq_diff, rf_arfcn, 0);
+ 264              		.loc 1 164 0
+ 265 0100 0620A091 		movls	r2, r6
+ 162:layer1/prim_fbsb.c **** 		afc_input(st->freq_diff, rf_arfcn, 1);
+ 266              		.loc 1 162 0
+ 267 0104 B010D381 		ldrhih	r1, [r3, #0]
+ 164:layer1/prim_fbsb.c **** 		afc_input(st->freq_diff, rf_arfcn, 0);
+ 268              		.loc 1 164 0
+ 269 0108 B010D391 		ldrlsh	r1, [r3, #0]
+ 162:layer1/prim_fbsb.c **** 		afc_input(st->freq_diff, rf_arfcn, 1);
+ 270              		.loc 1 162 0
+ 271 010c 0120A083 		movhi	r2, #1
+ 272 0110 F001D4E1 		ldrsh	r0, [r4, #16]
+ 164:layer1/prim_fbsb.c **** 		afc_input(st->freq_diff, rf_arfcn, 0);
+ 273              		.loc 1 164 0
+ 274 0114 FEFFFFEB 		bl	afc_input
+ 166:layer1/prim_fbsb.c **** 	dsp_api.r_page_used = 1;
+ 275              		.loc 1 166 0
+ 276 0118 CC319FE5 		ldr	r3, .L22
+ 277 011c 0120A0E3 		mov	r2, #1
+ 278 0120 182083E5 		str	r2, [r3, #24]
+ 279              	.LBE52:
+ 280              	.LBE51:
+ 200:layer1/prim_fbsb.c **** 	read_sb_result(last_fb, attempt);
+ 201:layer1/prim_fbsb.c **** 
+ 202:layer1/prim_fbsb.c **** 	sb = dsp_api.db_r->a_sch[3] | dsp_api.db_r->a_sch[4] << 16;
+ 281              		.loc 1 202 0
+ 282 0124 043093E5 		ldr	r3, [r3, #4]
+ 283              	.LBB55:
+ 284              	.LBB57:
+ 203:layer1/prim_fbsb.c **** 	fbs.mon.bsic = l1s_decode_sb(&fbs.mon.time, sb);
+ 285              		.loc 1 203 0
+ 286 0128 C0419FE5 		ldr	r4, .L22+4
+ 287              	.LBE57:
+ 288              	.LBE55:
+ 202:layer1/prim_fbsb.c **** 	sb = dsp_api.db_r->a_sch[3] | dsp_api.db_r->a_sch[4] << 16;
+ 289              		.loc 1 202 0
+ 290 012c B662D3E1 		ldrh	r6, [r3, #38]
+ 291 0130 B432D3E1 		ldrh	r3, [r3, #36]
+ 292              	.LBB60:
+ 293              	.LBB58:
+ 132:layer1/prim_fbsb.c **** 	memset(time, 0, sizeof(*time));
+ 294              		.loc 1 132 0
+ 295 0134 0010A0E3 		mov	r1, #0
+ 296 0138 0B2082E2 		add	r2, r2, #11
+ 297 013c 140084E2 		add	r0, r4, #20
+ 298              	.LBE58:
+ 299              	.LBE60:
+ 202:layer1/prim_fbsb.c **** 	sb = dsp_api.db_r->a_sch[3] | dsp_api.db_r->a_sch[4] << 16;
+ 300              		.loc 1 202 0
+ 301 0140 066883E1 		orr	r6, r3, r6, asl #16
+ 302              	.LVL19:
+ 303              	.LBB61:
+ 304              	.LBB56:
+ 132:layer1/prim_fbsb.c **** 	memset(time, 0, sizeof(*time));
+ 305              		.loc 1 132 0
+ 306 0144 FEFFFFEB 		bl	memset
+ 135:layer1/prim_fbsb.c **** 	time->t1 = ((sb >> 23) & 1) | ((sb >> 7) & 0x1fe) | ((sb << 9) & 0x600);
+ 307              		.loc 1 135 0
+ 308 0148 B8319FE5 		ldr	r3, .L22+28
+ 309 014c A623A0E1 		mov	r2, r6, lsr #7
+ 310 0150 033002E0 		and	r3, r2, r3
+ 311 0154 0624A0E1 		mov	r2, r6, asl #8
+ 312 0158 A23F83E1 		orr	r3, r3, r2, lsr #31
+ 313 015c 8624A0E1 		mov	r2, r6, asl #9
+ 314 0160 062C02E2 		and	r2, r2, #1536
+ 315 0164 023083E1 		orr	r3, r3, r2
+ 316 0168 B831C4E1 		strh	r3, [r4, #24]	@ movhi
+ 136:layer1/prim_fbsb.c **** 	time->t2 = (sb >> 18) & 0x1f;
+ 317              		.loc 1 136 0
+ 318 016c 2639A0E1 		mov	r3, r6, lsr #18
+ 319 0170 1F3003E2 		and	r3, r3, #31
+ 320 0174 1A30C4E5 		strb	r3, [r4, #26]
+ 137:layer1/prim_fbsb.c **** 	t3p = ((sb >> 24) & 1) | ((sb >> 15) & 6);
+ 321              		.loc 1 137 0
+ 322 0178 A637A0E1 		mov	r3, r6, lsr #15
+ 323 017c 8623A0E1 		mov	r2, r6, asl #7
+ 324 0180 063003E2 		and	r3, r3, #6
+ 325 0184 A23F83E1 		orr	r3, r3, r2, lsr #31
+ 138:layer1/prim_fbsb.c **** 	time->t3 = t3p*10 + 1;
+ 326              		.loc 1 138 0
+ 327 0188 0A20A0E3 		mov	r2, #10
+ 328 018c 920303E0 		mul	r3, r2, r3
+ 329 0190 013083E2 		add	r3, r3, #1
+ 330 0194 1B30C4E5 		strb	r3, [r4, #27]
+ 141:layer1/prim_fbsb.c **** 	time->fn = gsm_gsmtime2fn(time);
+ 331              		.loc 1 141 0
+ 332 0198 140084E2 		add	r0, r4, #20
+ 333 019c FEFFFFEB 		bl	gsm_gsmtime2fn
+ 143:layer1/prim_fbsb.c **** 	time->tc = (time->fn / 51) % 8;
+ 334              		.loc 1 143 0
+ 335 01a0 3310A0E3 		mov	r1, #51
+ 141:layer1/prim_fbsb.c **** 	time->fn = gsm_gsmtime2fn(time);
+ 336              		.loc 1 141 0
+ 337 01a4 140084E5 		str	r0, [r4, #20]
+ 143:layer1/prim_fbsb.c **** 	time->tc = (time->fn / 51) % 8;
+ 338              		.loc 1 143 0
+ 339 01a8 FEFFFFEB 		bl	__udivsi3
+ 129:layer1/prim_fbsb.c **** 	uint8_t bsic = (sb >> 2) & 0x3f;
+ 340              		.loc 1 129 0
+ 341 01ac 2671A0E1 		mov	r7, r6, lsr #2
+ 342 01b0 3F7007E2 		and	r7, r7, #63
+ 343              	.LVL20:
+ 143:layer1/prim_fbsb.c **** 	time->tc = (time->fn / 51) % 8;
+ 344              		.loc 1 143 0
+ 345 01b4 070000E2 		and	r0, r0, #7
+ 346              	.LBE56:
+ 347              	.LBE61:
+ 204:layer1/prim_fbsb.c **** 	printf("=> SB 0x%08x: BSIC=%u ", sb, fbs.mon.bsic);
+ 348              		.loc 1 204 0
+ 349 01b8 0610A0E1 		mov	r1, r6
+ 350 01bc 0720A0E1 		mov	r2, r7
+ 351              	.LBB62:
+ 352              	.LBB59:
+ 143:layer1/prim_fbsb.c **** 	time->tc = (time->fn / 51) % 8;
+ 353              		.loc 1 143 0
+ 354 01c0 1C00C4E5 		strb	r0, [r4, #28]
+ 355              	.LBE59:
+ 356              	.LBE62:
+ 203:layer1/prim_fbsb.c **** 	fbs.mon.bsic = l1s_decode_sb(&fbs.mon.time, sb);
+ 357              		.loc 1 203 0
+ 358 01c4 1270C4E5 		strb	r7, [r4, #18]
+ 359              		.loc 1 204 0
+ 360 01c8 3C019FE5 		ldr	r0, .L22+32
+ 361 01cc FEFFFFEB 		bl	printf
+ 205:layer1/prim_fbsb.c **** 	l1s_time_dump(&fbs.mon.time);
+ 362              		.loc 1 205 0
+ 363 01d0 140084E2 		add	r0, r4, #20
+ 364 01d4 FEFFFFEB 		bl	l1s_time_dump
+ 206:layer1/prim_fbsb.c **** 
+ 207:layer1/prim_fbsb.c **** 	l1s.serving_cell.bsic = fbs.mon.bsic;
+ 365              		.loc 1 207 0
+ 366 01d8 1220D4E5 		ldrb	r2, [r4, #18]	@ zero_extendqisi2
+ 367 01dc 18319FE5 		ldr	r3, .L22+16
+ 368 01e0 1A20C3E5 		strb	r2, [r3, #26]
+ 208:layer1/prim_fbsb.c **** 
+ 209:layer1/prim_fbsb.c **** 	/* calculate synchronisation value (TODO: only complete for qbits) */
+ 210:layer1/prim_fbsb.c **** 	last_fb->toa -= 23;
+ 369              		.loc 1 210 0
+ 370 01e4 B830D4E1 		ldrh	r3, [r4, #8]
+ 371 01e8 173043E2 		sub	r3, r3, #23
+ 372 01ec 0338A0E1 		mov	r3, r3, asl #16
+ 373 01f0 2338A0E1 		mov	r3, r3, lsr #16
+ 374 01f4 B830C4E1 		strh	r3, [r4, #8]	@ movhi
+ 211:layer1/prim_fbsb.c **** 	qbits = last_fb->toa * 4;
+ 375              		.loc 1 211 0
+ 376 01f8 0338A0E1 		mov	r3, r3, asl #16
+ 377 01fc 4338A0E1 		mov	r3, r3, asr #16
+ 212:layer1/prim_fbsb.c **** 	fn_offset = l1s.current_time.fn; // TODO
+ 213:layer1/prim_fbsb.c **** 
+ 214:layer1/prim_fbsb.c **** 	if (qbits > QBITS_PER_TDMA) {
+ 378              		.loc 1 214 0
+ 379 0200 08219FE5 		ldr	r2, .L22+36
+ 211:layer1/prim_fbsb.c **** 	qbits = last_fb->toa * 4;
+ 380              		.loc 1 211 0
+ 381 0204 0311A0E1 		mov	r1, r3, asl #2
+ 382              	.LVL21:
+ 383              		.loc 1 214 0
+ 384 0208 020051E1 		cmp	r1, r2
+ 215:layer1/prim_fbsb.c **** 		qbits -= QBITS_PER_TDMA;
+ 385              		.loc 1 215 0
+ 386 020c 4E1D41C2 		subgt	r1, r1, #4992
+ 387              	.LVL22:
+ 388 0210 081041C2 		subgt	r1, r1, #8
+ 214:layer1/prim_fbsb.c **** 	if (qbits > QBITS_PER_TDMA) {
+ 389              		.loc 1 214 0
+ 390 0214 020000CA 		bgt	.L13
+ 216:layer1/prim_fbsb.c **** 		fn_offset -= 1;
+ 217:layer1/prim_fbsb.c **** 	} else if (qbits < 0)  {
+ 391              		.loc 1 217 0
+ 392 0218 000051E3 		cmp	r1, #0
+ 218:layer1/prim_fbsb.c **** 		qbits += QBITS_PER_TDMA;
+ 393              		.loc 1 218 0
+ 394 021c 4E1D81B2 		addlt	r1, r1, #4992
+ 395 0220 081081B2 		addlt	r1, r1, #8
+ 396              	.LVL23:
+ 397              	.L13:
+ 219:layer1/prim_fbsb.c **** 		fn_offset += 1;
+ 220:layer1/prim_fbsb.c **** 	}
+ 221:layer1/prim_fbsb.c **** 
+ 222:layer1/prim_fbsb.c **** 	fnr_delta = last_fb->fnr_report - attempt;
+ 398              		.loc 1 222 0
+ 399 0224 C4209FE5 		ldr	r2, .L22+4
+ 400 0228 00C092E5 		ldr	ip, [r2, #0]
+ 223:layer1/prim_fbsb.c **** 	bits_delta = fnr_delta * BITS_PER_TDMA;
+ 401              		.loc 1 223 0
+ 402 022c E0209FE5 		ldr	r2, .L22+40
+ 222:layer1/prim_fbsb.c **** 	fnr_delta = last_fb->fnr_report - attempt;
+ 403              		.loc 1 222 0
+ 404 0230 0CC065E0 		rsb	ip, r5, ip
+ 405              	.LVL24:
+ 406              		.loc 1 223 0
+ 407 0234 9C0202E0 		mul	r2, ip, r2
+ 408              	.LVL25:
+ 224:layer1/prim_fbsb.c **** 
+ 225:layer1/prim_fbsb.c **** 	cinfo->fn_offset = fnr_delta;
+ 409              		.loc 1 225 0
+ 410 0238 BC009FE5 		ldr	r0, .L22+16
+ 411 023c 1CC080E5 		str	ip, [r0, #28]
+ 226:layer1/prim_fbsb.c **** 	cinfo->time_alignment = qbits;
+ 227:layer1/prim_fbsb.c **** 	cinfo->arfcn = rf_arfcn;
+ 412              		.loc 1 227 0
+ 413 0240 BCC09FE5 		ldr	ip, .L22+24
+ 414              	.LVL26:
+ 415 0244 B0C0DCE1 		ldrh	ip, [ip, #0]
+ 228:layer1/prim_fbsb.c **** 
+ 229:layer1/prim_fbsb.c **** 	if (last_fb->toa > bits_delta)
+ 416              		.loc 1 229 0
+ 417 0248 020053E1 		cmp	r3, r2
+ 226:layer1/prim_fbsb.c **** 	cinfo->time_alignment = qbits;
+ 418              		.loc 1 226 0
+ 419 024c 201080E5 		str	r1, [r0, #32]
+ 227:layer1/prim_fbsb.c **** 	cinfo->arfcn = rf_arfcn;
+ 420              		.loc 1 227 0
+ 421 0250 B8C1C0E1 		strh	ip, [r0, #24]	@ movhi
+ 230:layer1/prim_fbsb.c **** 		printf("=> DSP reports SB in bit that is %d bits in the "
+ 422              		.loc 1 230 0
+ 423 0254 031062C0 		rsbgt	r1, r2, r3
+ 424              	.LVL27:
+ 425 0258 B8009FC5 		ldrgt	r0, .L22+44
+ 426              	.LVL28:
+ 231:layer1/prim_fbsb.c **** 			"future?!?\n", last_fb->toa - bits_delta);
+ 232:layer1/prim_fbsb.c **** 	else
+ 233:layer1/prim_fbsb.c **** 		printf(" qbits=%u\n", qbits);
+ 427              		.loc 1 233 0
+ 428 025c B8009FD5 		ldrle	r0, .L22+48
+ 429 0260 FEFFFFEB 		bl	printf
+ 430              	.LVL29:
+ 234:layer1/prim_fbsb.c **** 
+ 235:layer1/prim_fbsb.c **** 	synchronize_tdma(&l1s.serving_cell);
+ 431              		.loc 1 235 0
+ 432 0264 B4009FE5 		ldr	r0, .L22+52
+ 433 0268 FEFFFFEB 		bl	synchronize_tdma
+ 236:layer1/prim_fbsb.c **** 
+ 237:layer1/prim_fbsb.c **** 	/* if we have recived a SYNC burst, update our local GSM time */
+ 238:layer1/prim_fbsb.c **** 	gsm_fn2gsmtime(&l1s.current_time, fbs.mon.time.fn + SB2_LATENCY);
+ 434              		.loc 1 238 0
+ 435 026c 7C309FE5 		ldr	r3, .L22+4
+ 436 0270 84409FE5 		ldr	r4, .L22+16
+ 437 0274 141093E5 		ldr	r1, [r3, #20]
+ 438 0278 0400A0E1 		mov	r0, r4
+ 439 027c 021081E2 		add	r1, r1, #2
+ 440 0280 FEFFFFEB 		bl	gsm_fn2gsmtime
+ 239:layer1/prim_fbsb.c **** 	/* compute next time from new current time */
+ 240:layer1/prim_fbsb.c **** 	l1s.next_time = l1s.current_time;
+ 441              		.loc 1 240 0
+ 442 0284 070094E8 		ldmia	r4, {r0, r1, r2}
+ 443 0288 0C3084E2 		add	r3, r4, #12
+ 444 028c 070083E8 		stmia	r3, {r0, r1, r2}
+ 241:layer1/prim_fbsb.c **** 	l1s_time_inc(&l1s.next_time, 1);
+ 445              		.loc 1 241 0
+ 446 0290 0300A0E1 		mov	r0, r3
+ 447 0294 0110A0E3 		mov	r1, #1
+ 448 0298 FEFFFFEB 		bl	l1s_time_inc
+ 242:layer1/prim_fbsb.c **** 
+ 243:layer1/prim_fbsb.c **** 	/* If we call tdma_sched_reset(), which is only needed if there
+ 244:layer1/prim_fbsb.c **** 	 * are further l1s_sbdet_resp() scheduled, we will bring
+ 245:layer1/prim_fbsb.c **** 	 * dsp_api.db_r and dsp_api.db_w out of sync because we changed
+ 246:layer1/prim_fbsb.c **** 	 * dsp_api.db_w for l1s_sbdet_cmd() and canceled
+ 247:layer1/prim_fbsb.c **** 	 * l1s_sbdet_resp() which would change dsp_api.db_r. The DSP
+ 248:layer1/prim_fbsb.c **** 	 * however expects dsp_api.db_w and dsp_api.db_r to be in sync
+ 249:layer1/prim_fbsb.c **** 	 * (either "0 - 0" or "1 - 1"). So we have to bring dsp_api.db_w
+ 250:layer1/prim_fbsb.c **** 	 * and dsp_api.db_r into sync again, otherwise NB reading will
+ 251:layer1/prim_fbsb.c **** 	 * complain. We probably don't need the Abort command and could
+ 252:layer1/prim_fbsb.c **** 	 * just bring dsp_api.db_w and dsp_api.db_r into sync.  */
+ 253:layer1/prim_fbsb.c **** 	if (attempt != 2) {
+ 449              		.loc 1 253 0
+ 450 029c 020055E3 		cmp	r5, #2
+ 451 02a0 0100000A 		beq	.L16
+ 254:layer1/prim_fbsb.c **** 		tdma_sched_reset();
+ 452              		.loc 1 254 0
+ 453 02a4 FEFFFFEB 		bl	tdma_sched_reset
+ 255:layer1/prim_fbsb.c **** 		l1s_dsp_abort();
+ 454              		.loc 1 255 0
+ 455 02a8 FEFFFFEB 		bl	l1s_dsp_abort
+ 456              	.L16:
+ 256:layer1/prim_fbsb.c **** 	}
+ 257:layer1/prim_fbsb.c **** 
+ 258:layer1/prim_fbsb.c **** 	l1s_reset_hw();
+ 457              		.loc 1 258 0
+ 458 02ac FEFFFFEB 		bl	l1s_reset_hw
+ 259:layer1/prim_fbsb.c **** 	/* enable the MF Task for BCCH reading */
+ 260:layer1/prim_fbsb.c **** 	mframe_enable(MF_TASK_BCCH_NORM);
+ 459              		.loc 1 260 0
+ 460 02b0 0000A0E3 		mov	r0, #0
+ 461 02b4 FEFFFFEB 		bl	mframe_enable
+ 261:layer1/prim_fbsb.c **** 	if (l1s.serving_cell.ccch_mode == CCCH_MODE_COMBINED)
+ 462              		.loc 1 261 0
+ 463 02b8 3C309FE5 		ldr	r3, .L22+16
+ 464 02bc 1B30D3E5 		ldrb	r3, [r3, #27]	@ zero_extendqisi2
+ 465 02c0 020053E3 		cmp	r3, #2
+ 262:layer1/prim_fbsb.c **** 		mframe_enable(MF_TASK_CCCH_COMB);
+ 466              		.loc 1 262 0
+ 467 02c4 0300A003 		moveq	r0, #3
+ 261:layer1/prim_fbsb.c **** 	if (l1s.serving_cell.ccch_mode == CCCH_MODE_COMBINED)
+ 468              		.loc 1 261 0
+ 469 02c8 0200000A 		beq	.L21
+ 263:layer1/prim_fbsb.c **** 	else if (l1s.serving_cell.ccch_mode == CCCH_MODE_NON_COMBINED)
+ 470              		.loc 1 263 0
+ 471 02cc 010053E3 		cmp	r3, #1
+ 472 02d0 0100001A 		bne	.L18
+ 264:layer1/prim_fbsb.c **** 		mframe_enable(MF_TASK_CCCH);
+ 473              		.loc 1 264 0
+ 474 02d4 0200A0E3 		mov	r0, #2
+ 475              	.L21:
+ 476 02d8 FEFFFFEB 		bl	mframe_enable
+ 477              	.LVL30:
+ 478              	.L18:
+ 265:layer1/prim_fbsb.c **** 
+ 266:layer1/prim_fbsb.c **** 	l1s_compl_sched(L1_COMPL_FB);
+ 479              		.loc 1 266 0
+ 480 02dc 0000A0E3 		mov	r0, #0
+ 481 02e0 FEFFFFEB 		bl	l1s_compl_sched
+ 482              	.L9:
+ 267:layer1/prim_fbsb.c **** 
+ 268:layer1/prim_fbsb.c **** 	return 0;
+ 269:layer1/prim_fbsb.c **** }
+ 483              		.loc 1 269 0
+ 484 02e4 0000A0E3 		mov	r0, #0
+ 485 02e8 FC85BDE8 		ldmfd	sp!, {r2, r3, r4, r5, r6, r7, r8, sl, pc}
+ 486              	.L23:
+ 487              		.align	2
+ 488              	.L22:
+ 489 02ec 00000000 		.word	dsp_api
+ 490 02f0 00000000 		.word	.LANCHOR0
+ 491 02f4 33000000 		.word	.LC1
+ 492 02f8 C0500100 		.word	86208
+ 493 02fc 00000000 		.word	l1s
+ 494 0300 39000000 		.word	.LC2
+ 495 0304 00000000 		.word	rf_arfcn
+ 496 0308 FE010000 		.word	510
+ 497 030c 66000000 		.word	.LC3
+ 498 0310 88130000 		.word	5000
+ 499 0314 E2040000 		.word	1250
+ 500 0318 7D000000 		.word	.LC4
+ 501 031c B8000000 		.word	.LC5
+ 502 0320 18000000 		.word	l1s+24
+ 503              		.cfi_endproc
+ 504              	.LFE63:
+ 506              		.section	.text.l1s_sbdet_cmd,"ax",%progbits
+ 507              		.align	2
+ 509              	l1s_sbdet_cmd:
+ 510              	.LFB64:
+ 270:layer1/prim_fbsb.c **** 
+ 271:layer1/prim_fbsb.c **** static int l1s_sbdet_cmd(__unused uint8_t p1, __unused uint8_t p2,
+ 272:layer1/prim_fbsb.c **** 			 __unused uint16_t p3)
+ 273:layer1/prim_fbsb.c **** {
+ 511              		.loc 1 273 0
+ 512              		.cfi_startproc
+ 513              		@ args = 0, pretend = 0, frame = 0
+ 514              		@ frame_needed = 0, uses_anonymous_args = 0
+ 515              	.LVL31:
+ 274:layer1/prim_fbsb.c **** 	putchart('S');
+ 275:layer1/prim_fbsb.c **** 
+ 276:layer1/prim_fbsb.c **** 	fbs.mon.bsic = 0;
+ 516              		.loc 1 276 0
+ 517 0000 40309FE5 		ldr	r3, .L25
+ 273:layer1/prim_fbsb.c **** {
+ 518              		.loc 1 273 0
+ 519 0004 10402DE9 		stmfd	sp!, {r4, lr}
+ 520              	.LCFI2:
+ 521              		.cfi_def_cfa_offset 8
+ 522              		.loc 1 276 0
+ 523 0008 0040A0E3 		mov	r4, #0
+ 524              		.cfi_offset 14, -4
+ 525              		.cfi_offset 4, -8
+ 526 000c 1240C3E5 		strb	r4, [r3, #18]
+ 277:layer1/prim_fbsb.c **** 	fbs.mon.time.fn = 0;
+ 527              		.loc 1 277 0
+ 528 0010 144083E5 		str	r4, [r3, #20]
+ 278:layer1/prim_fbsb.c **** 
+ 279:layer1/prim_fbsb.c **** 	dsp_api.db_w->d_task_md = SB_DSP_TASK;
+ 529              		.loc 1 279 0
+ 530 0014 30309FE5 		ldr	r3, .L25+4
+ 531 0018 082093E5 		ldr	r2, [r3, #8]
+ 532              	.LVL32:
+ 280:layer1/prim_fbsb.c **** 	dsp_api.ndb->d_fb_mode = 0; /* wideband search */
+ 533              		.loc 1 280 0
+ 534 001c 003093E5 		ldr	r3, [r3, #0]
+ 279:layer1/prim_fbsb.c **** 	dsp_api.db_w->d_task_md = SB_DSP_TASK;
+ 535              		.loc 1 279 0
+ 536 0020 0610A0E3 		mov	r1, #6	@ movhi
+ 537              	.LVL33:
+ 538 0024 B810C2E1 		strh	r1, [r2, #8]	@ movhi
+ 539              		.loc 1 280 0
+ 540 0028 BA44C3E1 		strh	r4, [r3, #74]	@ movhi
+ 281:layer1/prim_fbsb.c **** 
+ 282:layer1/prim_fbsb.c **** 	/* Program TPU */
+ 283:layer1/prim_fbsb.c **** 	l1s_rx_win_ctrl(rf_arfcn, L1_RXWIN_SB, 0);
+ 541              		.loc 1 283 0
+ 542 002c 1C309FE5 		ldr	r3, .L25+8
+ 543 0030 0210A0E3 		mov	r1, #2
+ 544 0034 B000D3E1 		ldrh	r0, [r3, #0]
+ 545              	.LVL34:
+ 546 0038 0420A0E1 		mov	r2, r4
+ 547 003c FEFFFFEB 		bl	l1s_rx_win_ctrl
+ 284:layer1/prim_fbsb.c **** 
+ 285:layer1/prim_fbsb.c **** 	return 0;
+ 286:layer1/prim_fbsb.c **** }
+ 548              		.loc 1 286 0
+ 549 0040 0400A0E1 		mov	r0, r4
+ 550 0044 1080BDE8 		ldmfd	sp!, {r4, pc}
+ 551              	.L26:
+ 552              		.align	2
+ 553              	.L25:
+ 554 0048 00000000 		.word	.LANCHOR0
+ 555 004c 00000000 		.word	dsp_api
+ 556 0050 00000000 		.word	rf_arfcn
+ 557              		.cfi_endproc
+ 558              	.LFE64:
+ 560              		.section	.text.l1s_fbdet_cmd,"ax",%progbits
+ 561              		.align	2
+ 563              	l1s_fbdet_cmd:
+ 564              	.LFB68:
+ 287:layer1/prim_fbsb.c **** 
+ 288:layer1/prim_fbsb.c **** /* This is how it is done by the TSM30 */
+ 289:layer1/prim_fbsb.c **** static const struct tdma_sched_item sb_sched_set[] = {
+ 290:layer1/prim_fbsb.c **** 	SCHED_ITEM_DT(l1s_sbdet_cmd, 0, 0, 1),	SCHED_END_FRAME(),
+ 291:layer1/prim_fbsb.c **** 	SCHED_ITEM_DT(l1s_sbdet_cmd, 0, 0, 2),	SCHED_END_FRAME(),
+ 292:layer1/prim_fbsb.c **** 						SCHED_END_FRAME(),
+ 293:layer1/prim_fbsb.c **** 	SCHED_ITEM(l1s_sbdet_resp, -4, 0, 1),	SCHED_END_FRAME(),
+ 294:layer1/prim_fbsb.c **** 	SCHED_ITEM(l1s_sbdet_resp, -4, 0, 2),	SCHED_END_FRAME(),
+ 295:layer1/prim_fbsb.c **** 	SCHED_END_SET()
+ 296:layer1/prim_fbsb.c **** };
+ 297:layer1/prim_fbsb.c **** 
+ 298:layer1/prim_fbsb.c **** void l1s_sb_test(uint8_t base_fn)
+ 299:layer1/prim_fbsb.c **** {
+ 300:layer1/prim_fbsb.c **** 	tdma_schedule_set(base_fn, sb_sched_set, 0);
+ 301:layer1/prim_fbsb.c **** }
+ 302:layer1/prim_fbsb.c **** /* FCCH Burst *****************************************************************/
+ 303:layer1/prim_fbsb.c **** 
+ 304:layer1/prim_fbsb.c **** static int read_fb_result(struct mon_state *st, int attempt)
+ 305:layer1/prim_fbsb.c **** {
+ 306:layer1/prim_fbsb.c **** 	st->toa = dsp_api.ndb->a_sync_demod[D_TOA];
+ 307:layer1/prim_fbsb.c **** 	st->pm = dsp_api.ndb->a_sync_demod[D_PM]>>3;
+ 308:layer1/prim_fbsb.c **** 	st->angle = dsp_api.ndb->a_sync_demod[D_ANGLE];
+ 309:layer1/prim_fbsb.c **** 	st->snr = dsp_api.ndb->a_sync_demod[D_SNR];
+ 310:layer1/prim_fbsb.c **** 
+ 311:layer1/prim_fbsb.c **** 	//last_fb->angle = clip_int16(last_fb->angle, AFC_MAX_ANGLE);
+ 312:layer1/prim_fbsb.c **** 	st->freq_diff = ANGLE_TO_FREQ(last_fb->angle);
+ 313:layer1/prim_fbsb.c **** 	st->fnr_report = l1s.current_time.fn;
+ 314:layer1/prim_fbsb.c **** 	st->attempt = attempt;
+ 315:layer1/prim_fbsb.c **** 
+ 316:layer1/prim_fbsb.c **** 	dump_mon_state(st);
+ 317:layer1/prim_fbsb.c **** 
+ 318:layer1/prim_fbsb.c **** 	dsp_api.ndb->d_fb_det = 0;
+ 319:layer1/prim_fbsb.c **** 	dsp_api.ndb->a_sync_demod[D_TOA] = 0; /* TSM30 does it (really needed ?) */
+ 320:layer1/prim_fbsb.c **** 
+ 321:layer1/prim_fbsb.c **** 	/* Update AFC with current frequency offset */
+ 322:layer1/prim_fbsb.c **** 	afc_correct(st->freq_diff, rf_arfcn);
+ 323:layer1/prim_fbsb.c **** 
+ 324:layer1/prim_fbsb.c **** 	//tpu_dsp_frameirq_enable();
+ 325:layer1/prim_fbsb.c **** 	return 1;
+ 326:layer1/prim_fbsb.c **** }
+ 327:layer1/prim_fbsb.c **** 
+ 328:layer1/prim_fbsb.c **** static void fbinfo2cellinfo(struct l1_cell_info *cinfo,
+ 329:layer1/prim_fbsb.c **** 			    const struct mon_state *mon)
+ 330:layer1/prim_fbsb.c **** {
+ 331:layer1/prim_fbsb.c **** 	int ntdma, qbits, fn_offset, fnr_delta, bits_delta;
+ 332:layer1/prim_fbsb.c **** 
+ 333:layer1/prim_fbsb.c **** 	/* FIXME: where did this magic 23 come from? */
+ 334:layer1/prim_fbsb.c **** 	last_fb->toa -= 23;
+ 335:layer1/prim_fbsb.c **** 
+ 336:layer1/prim_fbsb.c **** 	if (last_fb->toa < 0) {
+ 337:layer1/prim_fbsb.c **** 		qbits = (last_fb->toa + BITS_PER_TDMA) * 4;
+ 338:layer1/prim_fbsb.c **** 		ntdma = -1;
+ 339:layer1/prim_fbsb.c **** 	} else {
+ 340:layer1/prim_fbsb.c **** 		ntdma = (last_fb->toa) / BITS_PER_TDMA;
+ 341:layer1/prim_fbsb.c **** 		qbits = (last_fb->toa - ntdma * BITS_PER_TDMA) * 4;
+ 342:layer1/prim_fbsb.c **** 	}
+ 343:layer1/prim_fbsb.c **** 
+ 344:layer1/prim_fbsb.c **** 	fn_offset = l1s.current_time.fn - last_fb->attempt + ntdma;
+ 345:layer1/prim_fbsb.c **** 	fnr_delta = last_fb->fnr_report - last_fb->attempt;
+ 346:layer1/prim_fbsb.c **** 	bits_delta = fnr_delta * BITS_PER_TDMA;
+ 347:layer1/prim_fbsb.c **** 
+ 348:layer1/prim_fbsb.c **** 	cinfo->fn_offset = fnr_delta;
+ 349:layer1/prim_fbsb.c **** 	cinfo->time_alignment = qbits;
+ 350:layer1/prim_fbsb.c **** 	cinfo->arfcn = rf_arfcn;
+ 351:layer1/prim_fbsb.c **** 
+ 352:layer1/prim_fbsb.c **** 	if (last_fb->toa > bits_delta)
+ 353:layer1/prim_fbsb.c **** 		printf("=> DSP reports FB in bit that is %d bits in "
+ 354:layer1/prim_fbsb.c **** 			"the future?!?\n", last_fb->toa - bits_delta);
+ 355:layer1/prim_fbsb.c **** 	else {
+ 356:layer1/prim_fbsb.c **** 		int fb_fnr = (last_fb->fnr_report - last_fb->attempt)
+ 357:layer1/prim_fbsb.c **** 				+ last_fb->toa/BITS_PER_TDMA;
+ 358:layer1/prim_fbsb.c **** 		printf("=>FB @ FNR %u fn_offset=%d qbits=%u\n",
+ 359:layer1/prim_fbsb.c **** 			fb_fnr, fn_offset, qbits);
+ 360:layer1/prim_fbsb.c **** 	}
+ 361:layer1/prim_fbsb.c **** }
+ 362:layer1/prim_fbsb.c **** 
+ 363:layer1/prim_fbsb.c **** /* scheduler callback to issue a FB detection task to the DSP */
+ 364:layer1/prim_fbsb.c **** static int l1s_fbdet_cmd(__unused uint8_t p1, __unused uint8_t p2,
+ 365:layer1/prim_fbsb.c **** 			 uint16_t fb_mode)
+ 366:layer1/prim_fbsb.c **** {
+ 565              		.loc 1 366 0
+ 566              		.cfi_startproc
+ 567              		@ args = 0, pretend = 0, frame = 0
+ 568              		@ frame_needed = 0, uses_anonymous_args = 0
+ 569              	.LVL35:
+ 570 0000 0228A0E1 		mov	r2, r2, asl #16
+ 571              	.LVL36:
+ 367:layer1/prim_fbsb.c **** 	if (fb_mode == 0) {
+ 368:layer1/prim_fbsb.c **** 		putchart('F');
+ 369:layer1/prim_fbsb.c **** 	} else {
+ 370:layer1/prim_fbsb.c **** 		putchart('V');
+ 371:layer1/prim_fbsb.c **** 	}
+ 372:layer1/prim_fbsb.c **** 
+ 373:layer1/prim_fbsb.c **** 	l1s.fb.mode = fb_mode;
+ 572              		.loc 1 373 0
+ 573 0004 48309FE5 		ldr	r3, .L28
+ 366:layer1/prim_fbsb.c **** {
+ 574              		.loc 1 366 0
+ 575 0008 10402DE9 		stmfd	sp!, {r4, lr}
+ 576              	.LCFI3:
+ 577              		.cfi_def_cfa_offset 8
+ 366:layer1/prim_fbsb.c **** {
+ 578              		.loc 1 366 0
+ 579 000c 2248A0E1 		mov	r4, r2, lsr #16
+ 580              		.cfi_offset 14, -4
+ 581              		.cfi_offset 4, -8
+ 582              		.loc 1 373 0
+ 583 0010 F04AC3E5 		strb	r4, [r3, #2800]
+ 374:layer1/prim_fbsb.c **** 
+ 375:layer1/prim_fbsb.c **** 	/* Tell the RF frontend to set the gain appropriately */
+ 376:layer1/prim_fbsb.c **** 	rffe_compute_gain(-85, CAL_DSP_TGT_BB_LVL);
+ 584              		.loc 1 376 0
+ 585 0014 5010A0E3 		mov	r1, #80
+ 586              	.LVL37:
+ 587 0018 5400E0E3 		mvn	r0, #84
+ 588              	.LVL38:
+ 589 001c FEFFFFEB 		bl	rffe_compute_gain
+ 377:layer1/prim_fbsb.c **** 
+ 378:layer1/prim_fbsb.c **** 	/* Program DSP */
+ 379:layer1/prim_fbsb.c **** 	dsp_api.db_w->d_task_md = FB_DSP_TASK;	/* maybe with I/Q swap? */
+ 590              		.loc 1 379 0
+ 591 0020 30309FE5 		ldr	r3, .L28+4
+ 592 0024 082093E5 		ldr	r2, [r3, #8]
+ 380:layer1/prim_fbsb.c **** 	dsp_api.ndb->d_fb_mode = fb_mode;
+ 593              		.loc 1 380 0
+ 594 0028 003093E5 		ldr	r3, [r3, #0]
+ 379:layer1/prim_fbsb.c **** 	dsp_api.db_w->d_task_md = FB_DSP_TASK;	/* maybe with I/Q swap? */
+ 595              		.loc 1 379 0
+ 596 002c 0510A0E3 		mov	r1, #5	@ movhi
+ 597 0030 B810C2E1 		strh	r1, [r2, #8]	@ movhi
+ 598              		.loc 1 380 0
+ 599 0034 BA44C3E1 		strh	r4, [r3, #74]	@ movhi
+ 381:layer1/prim_fbsb.c **** 
+ 382:layer1/prim_fbsb.c **** 	/* Program TPU */
+ 383:layer1/prim_fbsb.c **** 	l1s_rx_win_ctrl(fbs.req.band_arfcn, L1_RXWIN_FB, 0);
+ 600              		.loc 1 383 0
+ 601 0038 1C309FE5 		ldr	r3, .L28+8
+ 602 003c 0110A0E3 		mov	r1, #1
+ 603 0040 B002D3E1 		ldrh	r0, [r3, #32]
+ 604 0044 0020A0E3 		mov	r2, #0
+ 605 0048 FEFFFFEB 		bl	l1s_rx_win_ctrl
+ 384:layer1/prim_fbsb.c **** 
+ 385:layer1/prim_fbsb.c **** 	return 0;
+ 386:layer1/prim_fbsb.c **** }
+ 606              		.loc 1 386 0
+ 607 004c 0000A0E3 		mov	r0, #0
+ 608 0050 1080BDE8 		ldmfd	sp!, {r4, pc}
+ 609              	.L29:
+ 610              		.align	2
+ 611              	.L28:
+ 612 0054 00000000 		.word	l1s
+ 613 0058 00000000 		.word	dsp_api
+ 614 005c 00000000 		.word	.LANCHOR0
+ 615              		.cfi_endproc
+ 616              	.LFE68:
+ 618              		.global	__divsi3
+ 619              		.section	.text.fbinfo2cellinfo.clone.0.clone.1,"ax",%progbits
+ 620              		.align	2
+ 622              	fbinfo2cellinfo.clone.0.clone.1:
+ 623              	.LFB74:
+ 328:layer1/prim_fbsb.c **** static void fbinfo2cellinfo(struct l1_cell_info *cinfo,
+ 624              		.loc 1 328 0
+ 625              		.cfi_startproc
+ 626              		@ args = 0, pretend = 0, frame = 0
+ 627              		@ frame_needed = 0, uses_anonymous_args = 0
+ 628              	.LVL39:
+ 334:layer1/prim_fbsb.c **** 	last_fb->toa -= 23;
+ 629              		.loc 1 334 0
+ 630 0000 C8309FE5 		ldr	r3, .L34
+ 328:layer1/prim_fbsb.c **** static void fbinfo2cellinfo(struct l1_cell_info *cinfo,
+ 631              		.loc 1 328 0
+ 632 0004 F0452DE9 		stmfd	sp!, {r4, r5, r6, r7, r8, sl, lr}
+ 633              	.LCFI4:
+ 634              		.cfi_def_cfa_offset 28
+ 334:layer1/prim_fbsb.c **** 	last_fb->toa -= 23;
+ 635              		.loc 1 334 0
+ 636 0008 B870D3E1 		ldrh	r7, [r3, #8]
+ 637              		.cfi_offset 14, -4
+ 638              		.cfi_offset 10, -8
+ 639              		.cfi_offset 8, -12
+ 640              		.cfi_offset 7, -16
+ 641              		.cfi_offset 6, -20
+ 642              		.cfi_offset 5, -24
+ 643              		.cfi_offset 4, -28
+ 644 000c 177047E2 		sub	r7, r7, #23
+ 645 0010 0778A0E1 		mov	r7, r7, asl #16
+ 646 0014 2778A0E1 		mov	r7, r7, lsr #16
+ 336:layer1/prim_fbsb.c **** 	if (last_fb->toa < 0) {
+ 647              		.loc 1 336 0
+ 648 0018 0748A0E1 		mov	r4, r7, asl #16
+ 649 001c 4448B0E1 		movs	r4, r4, asr #16
+ 334:layer1/prim_fbsb.c **** 	last_fb->toa -= 23;
+ 650              		.loc 1 334 0
+ 651 0020 B870C3E1 		strh	r7, [r3, #8]	@ movhi
+ 336:layer1/prim_fbsb.c **** 	if (last_fb->toa < 0) {
+ 652              		.loc 1 336 0
+ 337:layer1/prim_fbsb.c **** 		qbits = (last_fb->toa + BITS_PER_TDMA) * 4;
+ 653              		.loc 1 337 0
+ 654 0024 4E4E8442 		addmi	r4, r4, #1248
+ 655 0028 02408442 		addmi	r4, r4, #2
+ 656 002c 0441A041 		movmi	r4, r4, asl #2
+ 657              	.LVL40:
+ 338:layer1/prim_fbsb.c **** 		ntdma = -1;
+ 658              		.loc 1 338 0
+ 659 0030 0050E043 		mvnmi	r5, #0
+ 660 0034 0700004A 		bmi	.L32
+ 661              	.LVL41:
+ 662              	.L31:
+ 340:layer1/prim_fbsb.c **** 		ntdma = (last_fb->toa) / BITS_PER_TDMA;
+ 663              		.loc 1 340 0
+ 664 0038 0400A0E1 		mov	r0, r4
+ 665 003c 90109FE5 		ldr	r1, .L34+4
+ 666 0040 FEFFFFEB 		bl	__divsi3
+ 341:layer1/prim_fbsb.c **** 		qbits = (last_fb->toa - ntdma * BITS_PER_TDMA) * 4;
+ 667              		.loc 1 341 0
+ 668 0044 8C309FE5 		ldr	r3, .L34+8
+ 340:layer1/prim_fbsb.c **** 		ntdma = (last_fb->toa) / BITS_PER_TDMA;
+ 669              		.loc 1 340 0
+ 670 0048 0008A0E1 		mov	r0, r0, asl #16
+ 671 004c 4058A0E1 		mov	r5, r0, asr #16
+ 672              	.LVL42:
+ 341:layer1/prim_fbsb.c **** 		qbits = (last_fb->toa - ntdma * BITS_PER_TDMA) * 4;
+ 673              		.loc 1 341 0
+ 674 0050 934524E0 		mla	r4, r3, r5, r4
+ 675 0054 0441A0E1 		mov	r4, r4, asl #2
+ 676              	.LVL43:
+ 677              	.L32:
+ 344:layer1/prim_fbsb.c **** 	fn_offset = l1s.current_time.fn - last_fb->attempt + ntdma;
+ 678              		.loc 1 344 0
+ 679 0058 70309FE5 		ldr	r3, .L34
+ 680 005c 400193E8 		ldmia	r3, {r6, r8}	@ phole ldm
+ 346:layer1/prim_fbsb.c **** 	bits_delta = fnr_delta * BITS_PER_TDMA;
+ 681              		.loc 1 346 0
+ 682 0060 6C109FE5 		ldr	r1, .L34+4
+ 345:layer1/prim_fbsb.c **** 	fnr_delta = last_fb->fnr_report - last_fb->attempt;
+ 683              		.loc 1 345 0
+ 684 0064 066068E0 		rsb	r6, r8, r6
+ 346:layer1/prim_fbsb.c **** 	bits_delta = fnr_delta * BITS_PER_TDMA;
+ 685              		.loc 1 346 0
+ 686 0068 910603E0 		mul	r3, r1, r6
+ 350:layer1/prim_fbsb.c **** 	cinfo->arfcn = rf_arfcn;
+ 687              		.loc 1 350 0
+ 688 006c 68009FE5 		ldr	r0, .L34+12
+ 352:layer1/prim_fbsb.c **** 	if (last_fb->toa > bits_delta)
+ 689              		.loc 1 352 0
+ 690 0070 0778A0E1 		mov	r7, r7, asl #16
+ 344:layer1/prim_fbsb.c **** 	fn_offset = l1s.current_time.fn - last_fb->attempt + ntdma;
+ 691              		.loc 1 344 0
+ 692 0074 64209FE5 		ldr	r2, .L34+16
+ 350:layer1/prim_fbsb.c **** 	cinfo->arfcn = rf_arfcn;
+ 693              		.loc 1 350 0
+ 694 0078 B000D0E1 		ldrh	r0, [r0, #0]
+ 352:layer1/prim_fbsb.c **** 	if (last_fb->toa > bits_delta)
+ 695              		.loc 1 352 0
+ 696 007c 4778A0E1 		mov	r7, r7, asr #16
+ 697 0080 030057E1 		cmp	r7, r3
+ 344:layer1/prim_fbsb.c **** 	fn_offset = l1s.current_time.fn - last_fb->attempt + ntdma;
+ 698              		.loc 1 344 0
+ 699 0084 00A092E5 		ldr	sl, [r2, #0]
+ 700              	.LVL44:
+ 348:layer1/prim_fbsb.c **** 	cinfo->fn_offset = fnr_delta;
+ 701              		.loc 1 348 0
+ 702 0088 1C6082E5 		str	r6, [r2, #28]
+ 349:layer1/prim_fbsb.c **** 	cinfo->time_alignment = qbits;
+ 703              		.loc 1 349 0
+ 704 008c 204082E5 		str	r4, [r2, #32]
+ 350:layer1/prim_fbsb.c **** 	cinfo->arfcn = rf_arfcn;
+ 705              		.loc 1 350 0
+ 706 0090 B801C2E1 		strh	r0, [r2, #24]	@ movhi
+ 352:layer1/prim_fbsb.c **** 	if (last_fb->toa > bits_delta)
+ 707              		.loc 1 352 0
+ 708 0094 030000DA 		ble	.L33
+ 353:layer1/prim_fbsb.c **** 		printf("=> DSP reports FB in bit that is %d bits in "
+ 709              		.loc 1 353 0
+ 710 0098 44009FE5 		ldr	r0, .L34+20
+ 711 009c 071063E0 		rsb	r1, r3, r7
+ 361:layer1/prim_fbsb.c **** }
+ 712              		.loc 1 361 0
+ 713 00a0 F045BDE8 		ldmfd	sp!, {r4, r5, r6, r7, r8, sl, lr}
+ 353:layer1/prim_fbsb.c **** 		printf("=> DSP reports FB in bit that is %d bits in "
+ 714              		.loc 1 353 0
+ 715 00a4 FEFFFFEA 		b	printf
+ 716              	.LVL45:
+ 717              	.L33:
+ 718              	.LBB63:
+ 357:layer1/prim_fbsb.c **** 				+ last_fb->toa/BITS_PER_TDMA;
+ 719              		.loc 1 357 0
+ 720 00a8 0700A0E1 		mov	r0, r7
+ 721 00ac FEFFFFEB 		bl	__divsi3
+ 722              	.LVL46:
+ 723              	.LBE63:
+ 344:layer1/prim_fbsb.c **** 	fn_offset = l1s.current_time.fn - last_fb->attempt + ntdma;
+ 724              		.loc 1 344 0
+ 725 00b0 0A8068E0 		rsb	r8, r8, sl
+ 726              	.LVL47:
+ 727              	.LBB64:
+ 357:layer1/prim_fbsb.c **** 				+ last_fb->toa/BITS_PER_TDMA;
+ 728              		.loc 1 357 0
+ 729 00b4 0018A0E1 		mov	r1, r0, asl #16
+ 358:layer1/prim_fbsb.c **** 		printf("=>FB @ FNR %u fn_offset=%d qbits=%u\n",
+ 730              		.loc 1 358 0
+ 731 00b8 28009FE5 		ldr	r0, .L34+24
+ 732 00bc 411886E0 		add	r1, r6, r1, asr #16
+ 733 00c0 052088E0 		add	r2, r8, r5
+ 734 00c4 0430A0E1 		mov	r3, r4
+ 735              	.LBE64:
+ 361:layer1/prim_fbsb.c **** }
+ 736              		.loc 1 361 0
+ 737 00c8 F045BDE8 		ldmfd	sp!, {r4, r5, r6, r7, r8, sl, lr}
+ 738              	.LBB65:
+ 358:layer1/prim_fbsb.c **** 		printf("=>FB @ FNR %u fn_offset=%d qbits=%u\n",
+ 739              		.loc 1 358 0
+ 740 00cc FEFFFFEA 		b	printf
+ 741              	.L35:
+ 742              		.align	2
+ 743              	.L34:
+ 744 00d0 00000000 		.word	.LANCHOR0
+ 745 00d4 E2040000 		.word	1250
+ 746 00d8 1EFBFFFF 		.word	-1250
+ 747 00dc 00000000 		.word	rf_arfcn
+ 748 00e0 00000000 		.word	l1s
+ 749 00e4 C3000000 		.word	.LC6
+ 750 00e8 FE000000 		.word	.LC7
+ 751              	.LBE65:
+ 752              		.cfi_endproc
+ 753              	.LFE74:
+ 755              		.section	.text.l1s_fbdet_resp,"ax",%progbits
+ 756              		.align	2
+ 758              	l1s_fbdet_resp:
+ 759              	.LFB69:
+ 387:layer1/prim_fbsb.c **** 
+ 388:layer1/prim_fbsb.c **** #if 0
+ 389:layer1/prim_fbsb.c **** #define FB0_SNR_THRESH	2000
+ 390:layer1/prim_fbsb.c **** #define FB1_SNR_THRESH	3000
+ 391:layer1/prim_fbsb.c **** #else
+ 392:layer1/prim_fbsb.c **** #define FB0_SNR_THRESH	0
+ 393:layer1/prim_fbsb.c **** #define FB1_SNR_THRESH	0
+ 394:layer1/prim_fbsb.c **** #endif
+ 395:layer1/prim_fbsb.c **** 
+ 396:layer1/prim_fbsb.c **** static const struct tdma_sched_item fb_sched_set[];
+ 397:layer1/prim_fbsb.c **** 
+ 398:layer1/prim_fbsb.c **** /* scheduler callback to check for a FB detection response */
+ 399:layer1/prim_fbsb.c **** static int l1s_fbdet_resp(__unused uint8_t p1, uint8_t attempt,
+ 400:layer1/prim_fbsb.c **** 			  uint16_t fb_mode)
+ 401:layer1/prim_fbsb.c **** {
+ 760              		.loc 1 401 0
+ 761              		.cfi_startproc
+ 762              		@ args = 0, pretend = 0, frame = 0
+ 763              		@ frame_needed = 0, uses_anonymous_args = 0
+ 764              	.LVL48:
+ 765 0000 F3472DE9 		stmfd	sp!, {r0, r1, r4, r5, r6, r7, r8, r9, sl, lr}
+ 766              	.LCFI5:
+ 767              		.cfi_def_cfa_offset 40
+ 402:layer1/prim_fbsb.c **** 	putchart('f');
+ 403:layer1/prim_fbsb.c **** 
+ 404:layer1/prim_fbsb.c **** 	if (!dsp_api.ndb->d_fb_det) {
+ 768              		.loc 1 404 0
+ 769 0004 E0529FE5 		ldr	r5, .L50
+ 770              		.cfi_offset 14, -4
+ 771              		.cfi_offset 10, -8
+ 772              		.cfi_offset 9, -12
+ 773              		.cfi_offset 8, -16
+ 774              		.cfi_offset 7, -20
+ 775              		.cfi_offset 6, -24
+ 776              		.cfi_offset 5, -28
+ 777              		.cfi_offset 4, -32
+ 778              		.cfi_offset 1, -36
+ 779              		.cfi_offset 0, -40
+ 780 0008 003095E5 		ldr	r3, [r5, #0]
+ 781 000c B884D3E1 		ldrh	r8, [r3, #72]
+ 401:layer1/prim_fbsb.c **** {
+ 782              		.loc 1 401 0
+ 783 0010 0228A0E1 		mov	r2, r2, asl #16
+ 784              	.LVL49:
+ 785              		.loc 1 404 0
+ 786 0014 000058E3 		cmp	r8, #0
+ 401:layer1/prim_fbsb.c **** {
+ 787              		.loc 1 401 0
+ 788 0018 FF7001E2 		and	r7, r1, #255
+ 789 001c 2268A0E1 		mov	r6, r2, lsr #16
+ 790              		.loc 1 404 0
+ 791 0020 1100001A 		bne	.L37
+ 405:layer1/prim_fbsb.c **** 		/* we did not detect a FB */
+ 406:layer1/prim_fbsb.c **** 
+ 407:layer1/prim_fbsb.c **** 		/* attempt < 12, do nothing */
+ 408:layer1/prim_fbsb.c **** 		if (attempt < 12)
+ 792              		.loc 1 408 0
+ 793 0024 0B0057E3 		cmp	r7, #11
+ 794 0028 AD00009A 		bls	.L38
+ 409:layer1/prim_fbsb.c **** 			return 0;
+ 410:layer1/prim_fbsb.c **** 
+ 411:layer1/prim_fbsb.c **** 		/* attempt >= 12, we simply don't find one */
+ 412:layer1/prim_fbsb.c **** 
+ 413:layer1/prim_fbsb.c **** 		/* If we don't reset here, we get DSP DMA errors */
+ 414:layer1/prim_fbsb.c **** 		tdma_sched_reset();
+ 415:layer1/prim_fbsb.c **** 
+ 416:layer1/prim_fbsb.c **** 		if (fbs.fb_retries < FB0_RETRY_COUNT) {
+ 795              		.loc 1 416 0
+ 796 002c BC429FE5 		ldr	r4, .L50+4
+ 414:layer1/prim_fbsb.c **** 		tdma_sched_reset();
+ 797              		.loc 1 414 0
+ 798 0030 FEFFFFEB 		bl	tdma_sched_reset
+ 799              	.LVL50:
+ 800              		.loc 1 416 0
+ 801 0034 2E30D4E5 		ldrb	r3, [r4, #46]	@ zero_extendqisi2
+ 802 0038 020053E3 		cmp	r3, #2
+ 417:layer1/prim_fbsb.c **** 			/* retry once more */
+ 418:layer1/prim_fbsb.c **** 			tdma_schedule_set(1, fb_sched_set, 0);
+ 419:layer1/prim_fbsb.c **** 			fbs.fb_retries++;
+ 420:layer1/prim_fbsb.c **** 		} else {
+ 421:layer1/prim_fbsb.c **** 			last_fb->attempt = 13;
+ 803              		.loc 1 421 0
+ 804 003c 0D30A083 		movhi	r3, #13
+ 805 0040 04308485 		strhi	r3, [r4, #4]
+ 422:layer1/prim_fbsb.c **** 			l1s_compl_sched(L1_COMPL_FB);
+ 806              		.loc 1 422 0
+ 807 0044 0800A081 		movhi	r0, r8
+ 416:layer1/prim_fbsb.c **** 		if (fbs.fb_retries < FB0_RETRY_COUNT) {
+ 808              		.loc 1 416 0
+ 809 0048 A400008A 		bhi	.L45
+ 418:layer1/prim_fbsb.c **** 			tdma_schedule_set(1, fb_sched_set, 0);
+ 810              		.loc 1 418 0
+ 811 004c 0100A0E3 		mov	r0, #1
+ 812 0050 9C129FE5 		ldr	r1, .L50+8
+ 813 0054 0820A0E1 		mov	r2, r8
+ 814 0058 FEFFFFEB 		bl	tdma_schedule_set
+ 419:layer1/prim_fbsb.c **** 			fbs.fb_retries++;
+ 815              		.loc 1 419 0
+ 816 005c 2E30D4E5 		ldrb	r3, [r4, #46]	@ zero_extendqisi2
+ 817 0060 013083E2 		add	r3, r3, #1
+ 818 0064 2E30C4E5 		strb	r3, [r4, #46]
+ 819 0068 9D0000EA 		b	.L38
+ 820              	.LVL51:
+ 821              	.L37:
+ 423:layer1/prim_fbsb.c **** 		}
+ 424:layer1/prim_fbsb.c **** 
+ 425:layer1/prim_fbsb.c **** 		return 0;
+ 426:layer1/prim_fbsb.c **** 	}
+ 427:layer1/prim_fbsb.c **** 
+ 428:layer1/prim_fbsb.c **** 	/* We found a frequency burst, reset everything */
+ 429:layer1/prim_fbsb.c **** 	l1s_reset_hw();
+ 822              		.loc 1 429 0
+ 823 006c FEFFFFEB 		bl	l1s_reset_hw
+ 824              	.LVL52:
+ 430:layer1/prim_fbsb.c **** 
+ 431:layer1/prim_fbsb.c **** 	printf("FB%u ", dsp_api.ndb->d_fb_mode);
+ 825              		.loc 1 431 0
+ 826 0070 003095E5 		ldr	r3, [r5, #0]
+ 827 0074 7C029FE5 		ldr	r0, .L50+12
+ 828 0078 BA14D3E1 		ldrh	r1, [r3, #74]
+ 829 007c FEFFFFEB 		bl	printf
+ 830              	.LVL53:
+ 831              	.LBB66:
+ 832              	.LBB67:
+ 306:layer1/prim_fbsb.c **** 	st->toa = dsp_api.ndb->a_sync_demod[D_TOA];
+ 833              		.loc 1 306 0
+ 834 0080 003095E5 		ldr	r3, [r5, #0]
+ 835 0084 64429FE5 		ldr	r4, .L50+4
+ 308:layer1/prim_fbsb.c **** 	st->angle = dsp_api.ndb->a_sync_demod[D_ANGLE];
+ 836              		.loc 1 308 0
+ 837 0088 B025D3E1 		ldrh	r2, [r3, #80]
+ 306:layer1/prim_fbsb.c **** 	st->toa = dsp_api.ndb->a_sync_demod[D_TOA];
+ 838              		.loc 1 306 0
+ 839 008c BC94D3E1 		ldrh	r9, [r3, #76]
+ 307:layer1/prim_fbsb.c **** 	st->pm = dsp_api.ndb->a_sync_demod[D_PM]>>3;
+ 840              		.loc 1 307 0
+ 841 0090 BE04D3E1 		ldrh	r0, [r3, #78]
+ 309:layer1/prim_fbsb.c **** 	st->snr = dsp_api.ndb->a_sync_demod[D_SNR];
+ 842              		.loc 1 309 0
+ 843 0094 B235D3E1 		ldrh	r3, [r3, #82]
+ 312:layer1/prim_fbsb.c **** 	st->freq_diff = ANGLE_TO_FREQ(last_fb->angle);
+ 844              		.loc 1 312 0
+ 845 0098 5CA29FE5 		ldr	sl, .L50+16
+ 309:layer1/prim_fbsb.c **** 	st->snr = dsp_api.ndb->a_sync_demod[D_SNR];
+ 846              		.loc 1 309 0
+ 847 009c BE30C4E1 		strh	r3, [r4, #14]	@ movhi
+ 312:layer1/prim_fbsb.c **** 	st->freq_diff = ANGLE_TO_FREQ(last_fb->angle);
+ 848              		.loc 1 312 0
+ 849 00a0 0238A0E1 		mov	r3, r2, asl #16
+ 850 00a4 4338A0E1 		mov	r3, r3, asr #16
+ 851 00a8 9A0303E0 		mul	r3, sl, r3
+ 308:layer1/prim_fbsb.c **** 	st->angle = dsp_api.ndb->a_sync_demod[D_ANGLE];
+ 852              		.loc 1 308 0
+ 853 00ac BC20C4E1 		strh	r2, [r4, #12]	@ movhi
+ 312:layer1/prim_fbsb.c **** 	st->freq_diff = ANGLE_TO_FREQ(last_fb->angle);
+ 854              		.loc 1 312 0
+ 855 00b0 000053E3 		cmp	r3, #0
+ 856 00b4 FF2C83E2 		add	r2, r3, #65280
+ 857 00b8 FF3082B2 		addlt	r3, r2, #255
+ 858 00bc 4338A0E1 		mov	r3, r3, asr #16
+ 859 00c0 B031C4E1 		strh	r3, [r4, #16]	@ movhi
+ 313:layer1/prim_fbsb.c **** 	st->fnr_report = l1s.current_time.fn;
+ 860              		.loc 1 313 0
+ 861 00c4 34329FE5 		ldr	r3, .L50+20
+ 862 00c8 008093E5 		ldr	r8, [r3, #0]
+ 307:layer1/prim_fbsb.c **** 	st->pm = dsp_api.ndb->a_sync_demod[D_PM]>>3;
+ 863              		.loc 1 307 0
+ 864 00cc A001A0E1 		mov	r0, r0, lsr #3
+ 306:layer1/prim_fbsb.c **** 	st->toa = dsp_api.ndb->a_sync_demod[D_TOA];
+ 865              		.loc 1 306 0
+ 866 00d0 B890C4E1 		strh	r9, [r4, #8]	@ movhi
+ 307:layer1/prim_fbsb.c **** 	st->pm = dsp_api.ndb->a_sync_demod[D_PM]>>3;
+ 867              		.loc 1 307 0
+ 868 00d4 BA00C4E1 		strh	r0, [r4, #10]	@ movhi
+ 313:layer1/prim_fbsb.c **** 	st->fnr_report = l1s.current_time.fn;
+ 869              		.loc 1 313 0
+ 870 00d8 008084E5 		str	r8, [r4, #0]
+ 314:layer1/prim_fbsb.c **** 	st->attempt = attempt;
+ 871              		.loc 1 314 0
+ 872 00dc 047084E5 		str	r7, [r4, #4]
+ 873              	.LVL54:
+ 874              	.LBB68:
+ 875              	.LBB69:
+  98:layer1/prim_fbsb.c **** 		agc_inp_dbm8_by_pm(fb->pm)/8, ANGLE_TO_FREQ(fb->angle));
+ 876              		.loc 1 98 0
+ 877 00e0 FEFFFFEB 		bl	agc_inp_dbm8_by_pm
+  96:layer1/prim_fbsb.c **** 	printf("(%u:%u): TOA=%5u, Power=%4ddBm, Angle=%5dHz\n",
+ 878              		.loc 1 96 0
+ 879 00e4 072080E2 		add	r2, r0, #7
+ 880 00e8 000050E3 		cmp	r0, #0
+ 881 00ec 0200A0B1 		movlt	r0, r2
+ 882 00f0 C001A0E1 		mov	r0, r0, asr #3
+ 883 00f4 00008DE5 		str	r0, [sp, #0]
+  98:layer1/prim_fbsb.c **** 		agc_inp_dbm8_by_pm(fb->pm)/8, ANGLE_TO_FREQ(fb->angle));
+ 884              		.loc 1 98 0
+ 885 00f8 FC20D4E1 		ldrsh	r2, [r4, #12]
+ 886 00fc 920A0AE0 		mul	sl, r2, sl
+  96:layer1/prim_fbsb.c **** 	printf("(%u:%u): TOA=%5u, Power=%4ddBm, Angle=%5dHz\n",
+ 887              		.loc 1 96 0
+ 888 0100 00005AE3 		cmp	sl, #0
+ 889 0104 FF2C8AE2 		add	r2, sl, #65280
+ 890 0108 FFA082B2 		addlt	sl, r2, #255
+ 891 010c 0938A0E1 		mov	r3, r9, asl #16
+ 892 0110 0810A0E1 		mov	r1, r8
+ 893 0114 0720A0E1 		mov	r2, r7
+ 894 0118 4338A0E1 		mov	r3, r3, asr #16
+ 895 011c 4AA8A0E1 		mov	sl, sl, asr #16
+ 896 0120 DC019FE5 		ldr	r0, .L50+24
+ 897 0124 04A08DE5 		str	sl, [sp, #4]
+ 898 0128 FEFFFFEB 		bl	printf
+ 899              	.LBE69:
+ 900              	.LBE68:
+ 318:layer1/prim_fbsb.c **** 	dsp_api.ndb->d_fb_det = 0;
+ 901              		.loc 1 318 0
+ 902 012c 003095E5 		ldr	r3, [r5, #0]
+ 903 0130 0020A0E3 		mov	r2, #0	@ movhi
+ 904 0134 B824C3E1 		strh	r2, [r3, #72]	@ movhi
+ 319:layer1/prim_fbsb.c **** 	dsp_api.ndb->a_sync_demod[D_TOA] = 0; /* TSM30 does it (really needed ?) */
+ 905              		.loc 1 319 0
+ 906 0138 BC24C3E1 		strh	r2, [r3, #76]	@ movhi
+ 322:layer1/prim_fbsb.c **** 	afc_correct(st->freq_diff, rf_arfcn);
+ 907              		.loc 1 322 0
+ 908 013c C4319FE5 		ldr	r3, .L50+28
+ 909 0140 F001D4E1 		ldrsh	r0, [r4, #16]
+ 910 0144 B010D3E1 		ldrh	r1, [r3, #0]
+ 911 0148 FEFFFFEB 		bl	afc_correct
+ 912              	.LBE67:
+ 913              	.LBE66:
+ 432:layer1/prim_fbsb.c **** 	read_fb_result(last_fb, attempt);
+ 433:layer1/prim_fbsb.c **** 
+ 434:layer1/prim_fbsb.c **** 	/* if this is the first success, save freq err */
+ 435:layer1/prim_fbsb.c **** 	if (!fbs.initial_freq_err)
+ 914              		.loc 1 435 0
+ 915 014c FC32D4E1 		ldrsh	r3, [r4, #44]
+ 916 0150 000053E3 		cmp	r3, #0
+ 436:layer1/prim_fbsb.c **** 		fbs.initial_freq_err = last_fb->freq_diff;
+ 917              		.loc 1 436 0
+ 918 0154 B031D401 		ldreqh	r3, [r4, #16]
+ 919 0158 BC32C401 		streqh	r3, [r4, #44]	@ movhi
+ 437:layer1/prim_fbsb.c **** 
+ 438:layer1/prim_fbsb.c **** 	/* If we don't reset here, we get DSP DMA errors */
+ 439:layer1/prim_fbsb.c **** 	tdma_sched_reset();
+ 920              		.loc 1 439 0
+ 921 015c FEFFFFEB 		bl	tdma_sched_reset
+ 440:layer1/prim_fbsb.c **** 
+ 441:layer1/prim_fbsb.c **** 	/* Immediately schedule further TDMA tasklets, if requested. Doing
+ 442:layer1/prim_fbsb.c **** 	 * this directly from L1S means we can do this quickly without any
+ 443:layer1/prim_fbsb.c **** 	 * additional delays */
+ 444:layer1/prim_fbsb.c **** 	if (fb_mode == 0) {
+ 922              		.loc 1 444 0
+ 923 0160 000056E3 		cmp	r6, #0
+ 924 0164 2100001A 		bne	.L41
+ 445:layer1/prim_fbsb.c **** 		if (fbs.req.flags & L1CTL_FBSB_F_FB1) {
+ 925              		.loc 1 445 0
+ 926 0168 80419FE5 		ldr	r4, .L50+4
+ 927 016c 2930D4E5 		ldrb	r3, [r4, #41]	@ zero_extendqisi2
+ 928 0170 020013E3 		tst	r3, #2
+ 929 0174 1B00000A 		beq	.L42
+ 446:layer1/prim_fbsb.c **** 			/* If we don't reset here, we get DSP DMA errors */
+ 447:layer1/prim_fbsb.c **** 			tdma_sched_reset();
+ 930              		.loc 1 447 0
+ 931 0178 FEFFFFEB 		bl	tdma_sched_reset
+ 448:layer1/prim_fbsb.c **** 			/* FIXME: don't only use the last but an average */
+ 449:layer1/prim_fbsb.c **** 			if (abs(last_fb->freq_diff) < fbs.req.freq_err_thresh1 &&
+ 932              		.loc 1 449 0
+ 933 017c F021D4E1 		ldrsh	r2, [r4, #16]
+ 934 0180 B432D4E1 		ldrh	r3, [r4, #36]
+ 935 0184 000052E3 		cmp	r2, #0
+ 936 0188 002062B2 		rsblt	r2, r2, #0
+ 937 018c 030052E1 		cmp	r2, r3
+ 938 0190 050000AA 		bge	.L43
+ 939              		.loc 1 449 0 is_stmt 0 discriminator 1
+ 940 0194 BE30D4E1 		ldrh	r3, [r4, #14]
+ 941 0198 000053E3 		cmp	r3, #0
+ 450:layer1/prim_fbsb.c **** 			    last_fb->snr > FB0_SNR_THRESH) {
+ 451:layer1/prim_fbsb.c **** 				/* continue with FB1 task in DSP */
+ 452:layer1/prim_fbsb.c **** 				tdma_schedule_set(1, fb_sched_set, 1);
+ 942              		.loc 1 452 0 is_stmt 1
+ 943 019c 0100A013 		movne	r0, #1
+ 944 01a0 4C119F15 		ldrne	r1, .L50+8
+ 945 01a4 0020A011 		movne	r2, r0
+ 946 01a8 4A00001A 		bne	.L49
+ 947              	.L43:
+ 453:layer1/prim_fbsb.c **** 			} else {
+ 454:layer1/prim_fbsb.c **** 				if (fbs.afc_retries < AFC_RETRY_COUNT) {
+ 948              		.loc 1 454 0
+ 949 01ac 3C419FE5 		ldr	r4, .L50+4
+ 950 01b0 2F30D4E5 		ldrb	r3, [r4, #47]	@ zero_extendqisi2
+ 951 01b4 1D0053E3 		cmp	r3, #29
+ 455:layer1/prim_fbsb.c **** 					tdma_schedule_set(1, fb_sched_set, 0);
+ 456:layer1/prim_fbsb.c **** 					fbs.afc_retries++;
+ 457:layer1/prim_fbsb.c **** 				} else {
+ 458:layer1/prim_fbsb.c **** 					/* Abort */
+ 459:layer1/prim_fbsb.c **** 					last_fb->attempt = 13;
+ 952              		.loc 1 459 0
+ 953 01b8 0D30A083 		movhi	r3, #13
+ 954 01bc 04308485 		strhi	r3, [r4, #4]
+ 460:layer1/prim_fbsb.c **** 					l1s_compl_sched(L1_COMPL_FB);
+ 955              		.loc 1 460 0
+ 956 01c0 0000A083 		movhi	r0, #0
+ 454:layer1/prim_fbsb.c **** 				if (fbs.afc_retries < AFC_RETRY_COUNT) {
+ 957              		.loc 1 454 0
+ 958 01c4 4500008A 		bhi	.L45
+ 455:layer1/prim_fbsb.c **** 					tdma_schedule_set(1, fb_sched_set, 0);
+ 959              		.loc 1 455 0
+ 960 01c8 0100A0E3 		mov	r0, #1
+ 961 01cc 20119FE5 		ldr	r1, .L50+8
+ 962 01d0 0020A0E3 		mov	r2, #0
+ 963 01d4 FEFFFFEB 		bl	tdma_schedule_set
+ 456:layer1/prim_fbsb.c **** 					fbs.afc_retries++;
+ 964              		.loc 1 456 0
+ 965 01d8 2F30D4E5 		ldrb	r3, [r4, #47]	@ zero_extendqisi2
+ 966 01dc 013083E2 		add	r3, r3, #1
+ 967 01e0 2F30C4E5 		strb	r3, [r4, #47]
+ 968 01e4 3E0000EA 		b	.L38
+ 969              	.L42:
+ 461:layer1/prim_fbsb.c **** 				}
+ 462:layer1/prim_fbsb.c **** 			}
+ 463:layer1/prim_fbsb.c **** 		} else
+ 464:layer1/prim_fbsb.c **** 			l1s_compl_sched(L1_COMPL_FB);
+ 970              		.loc 1 464 0
+ 971 01e8 0600A0E1 		mov	r0, r6
+ 972 01ec 3B0000EA 		b	.L45
+ 973              	.L41:
+ 465:layer1/prim_fbsb.c **** 	} else if (fb_mode == 1) {
+ 974              		.loc 1 465 0
+ 975 01f0 010056E3 		cmp	r6, #1
+ 976 01f4 3A00001A 		bne	.L38
+ 466:layer1/prim_fbsb.c **** 		if (fbs.req.flags & L1CTL_FBSB_F_SB) {
+ 977              		.loc 1 466 0
+ 978 01f8 F0309FE5 		ldr	r3, .L50+4
+ 979 01fc 2900D3E5 		ldrb	r0, [r3, #41]	@ zero_extendqisi2
+ 980 0200 040010E2 		ands	r0, r0, #4
+ 981 0204 3500000A 		beq	.L45
+ 982              	.LBB70:
+ 467:layer1/prim_fbsb.c **** 
+ 468:layer1/prim_fbsb.c **** 	int ntdma, qbits;
+ 469:layer1/prim_fbsb.c **** 	/* FIXME: where did this magic 23 come from? */
+ 470:layer1/prim_fbsb.c **** 	last_fb->toa -= 23;
+ 983              		.loc 1 470 0
+ 984 0208 B800D3E1 		ldrh	r0, [r3, #8]
+ 985 020c 170040E2 		sub	r0, r0, #23
+ 986 0210 0008A0E1 		mov	r0, r0, asl #16
+ 987 0214 2008A0E1 		mov	r0, r0, lsr #16
+ 988 0218 B800C3E1 		strh	r0, [r3, #8]	@ movhi
+ 471:layer1/prim_fbsb.c **** 
+ 472:layer1/prim_fbsb.c **** 	if (last_fb->toa < 0) {
+ 989              		.loc 1 472 0
+ 990 021c 0008A0E1 		mov	r0, r0, asl #16
+ 991 0220 4008B0E1 		movs	r0, r0, asr #16
+ 473:layer1/prim_fbsb.c **** 		qbits = (last_fb->toa + BITS_PER_TDMA) * 4;
+ 474:layer1/prim_fbsb.c **** 		ntdma = -1;
+ 992              		.loc 1 474 0
+ 993 0224 0000E043 		mvnmi	r0, #0
+ 472:layer1/prim_fbsb.c **** 	if (last_fb->toa < 0) {
+ 994              		.loc 1 472 0
+ 995 0228 0300004A 		bmi	.L46
+ 475:layer1/prim_fbsb.c **** 	} else {
+ 476:layer1/prim_fbsb.c **** 		ntdma = (last_fb->toa) / BITS_PER_TDMA;
+ 996              		.loc 1 476 0
+ 997 022c D8109FE5 		ldr	r1, .L50+32
+ 998 0230 FEFFFFEB 		bl	__divsi3
+ 999 0234 0008A0E1 		mov	r0, r0, asl #16
+ 1000 0238 4008A0E1 		mov	r0, r0, asr #16
+ 1001              	.LVL55:
+ 1002              	.L46:
+ 477:layer1/prim_fbsb.c **** 		qbits = (last_fb->toa - ntdma * BITS_PER_TDMA) * 4;
+ 478:layer1/prim_fbsb.c **** 	}
+ 479:layer1/prim_fbsb.c **** 
+ 480:layer1/prim_fbsb.c **** 
+ 481:layer1/prim_fbsb.c **** 			int fn_offset = l1s.current_time.fn - last_fb->attempt + ntdma;
+ 1003              		.loc 1 481 0
+ 1004 023c AC509FE5 		ldr	r5, .L50+4
+ 1005 0240 B8609FE5 		ldr	r6, .L50+20
+ 1006 0244 043095E5 		ldr	r3, [r5, #4]
+ 1007 0248 002096E5 		ldr	r2, [r6, #0]
+ 1008 024c 027063E0 		rsb	r7, r3, r2
+ 1009              	.LVL56:
+ 1010 0250 007087E0 		add	r7, r7, r0
+ 1011              	.LVL57:
+ 482:layer1/prim_fbsb.c **** 			int delay = fn_offset + 11 - l1s.current_time.fn - 1;
+ 1012              		.loc 1 482 0
+ 1013 0254 0A4062E2 		rsb	r4, r2, #10
+ 1014 0258 074084E0 		add	r4, r4, r7
+ 1015              	.LVL58:
+ 483:layer1/prim_fbsb.c **** 			printf("  fn_offset=%d (fn=%u + attempt=%u + ntdma = %d)\n",
+ 1016              		.loc 1 483 0
+ 1017 025c 00008DE5 		str	r0, [sp, #0]
+ 1018 0260 0710A0E1 		mov	r1, r7
+ 1019 0264 A4009FE5 		ldr	r0, .L50+36
+ 1020              	.LVL59:
+ 1021 0268 FEFFFFEB 		bl	printf
+ 1022              	.LVL60:
+ 484:layer1/prim_fbsb.c **** 				fn_offset, l1s.current_time.fn, last_fb->attempt, ntdma);
+ 485:layer1/prim_fbsb.c **** 			printf("  delay=%d (fn_offset=%d + 11 - fn=%u - 1\n", delay,
+ 1023              		.loc 1 485 0
+ 1024 026c 0720A0E1 		mov	r2, r7
+ 1025 0270 003096E5 		ldr	r3, [r6, #0]
+ 1026 0274 0410A0E1 		mov	r1, r4
+ 1027 0278 94009FE5 		ldr	r0, .L50+40
+ 1028 027c FEFFFFEB 		bl	printf
+ 486:layer1/prim_fbsb.c **** 				fn_offset, l1s.current_time.fn);
+ 487:layer1/prim_fbsb.c **** 			printf("  scheduling next FB/SB detection task with delay %u\n", delay);
+ 1029              		.loc 1 487 0
+ 1030 0280 90009FE5 		ldr	r0, .L50+44
+ 1031 0284 0410A0E1 		mov	r1, r4
+ 1032 0288 FEFFFFEB 		bl	printf
+ 488:layer1/prim_fbsb.c **** 			if (abs(last_fb->freq_diff) < fbs.req.freq_err_thresh2 &&
+ 1033              		.loc 1 488 0
+ 1034 028c F021D5E1 		ldrsh	r2, [r5, #16]
+ 1035 0290 B632D5E1 		ldrh	r3, [r5, #38]
+ 1036 0294 000052E3 		cmp	r2, #0
+ 1037 0298 002062B2 		rsblt	r2, r2, #0
+ 1038 029c 030052E1 		cmp	r2, r3
+ 1039 02a0 090000AA 		bge	.L47
+ 1040              		.loc 1 488 0 is_stmt 0 discriminator 1
+ 1041 02a4 BE30D5E1 		ldrh	r3, [r5, #14]
+ 1042 02a8 000053E3 		cmp	r3, #0
+ 1043 02ac 0600000A 		beq	.L47
+ 489:layer1/prim_fbsb.c **** 			    last_fb->snr > FB1_SNR_THRESH) {
+ 490:layer1/prim_fbsb.c **** 				/* synchronize before reading SB */
+ 491:layer1/prim_fbsb.c **** 				fbinfo2cellinfo(&l1s.serving_cell, last_fb);
+ 1044              		.loc 1 491 0 is_stmt 1
+ 1045 02b0 FEFFFFEB 		bl	fbinfo2cellinfo.clone.0.clone.1
+ 492:layer1/prim_fbsb.c **** 				synchronize_tdma(&l1s.serving_cell);
+ 1046              		.loc 1 492 0
+ 1047 02b4 180086E2 		add	r0, r6, #24
+ 1048 02b8 FEFFFFEB 		bl	synchronize_tdma
+ 493:layer1/prim_fbsb.c **** 				tdma_schedule_set(delay, sb_sched_set, 0);
+ 1049              		.loc 1 493 0
+ 1050 02bc FF0004E2 		and	r0, r4, #255
+ 1051 02c0 54109FE5 		ldr	r1, .L50+48
+ 1052 02c4 0020A0E3 		mov	r2, #0
+ 1053 02c8 020000EA 		b	.L49
+ 1054              	.L47:
+ 494:layer1/prim_fbsb.c **** 			} else
+ 495:layer1/prim_fbsb.c **** 				tdma_schedule_set(delay, fb_sched_set, 1);
+ 1055              		.loc 1 495 0
+ 1056 02cc 20109FE5 		ldr	r1, .L50+8
+ 1057 02d0 FF0004E2 		and	r0, r4, #255
+ 1058 02d4 0120A0E3 		mov	r2, #1
+ 1059              	.LVL61:
+ 1060              	.L49:
+ 1061 02d8 FEFFFFEB 		bl	tdma_schedule_set
+ 1062 02dc 000000EA 		b	.L38
+ 1063              	.LVL62:
+ 1064              	.L45:
+ 1065              	.LBE70:
+ 496:layer1/prim_fbsb.c **** 		} else
+ 497:layer1/prim_fbsb.c **** 			l1s_compl_sched(L1_COMPL_FB);
+ 1066              		.loc 1 497 0
+ 1067 02e0 FEFFFFEB 		bl	l1s_compl_sched
+ 1068              	.L38:
+ 498:layer1/prim_fbsb.c **** 	}
+ 499:layer1/prim_fbsb.c **** 
+ 500:layer1/prim_fbsb.c **** 	return 0;
+ 501:layer1/prim_fbsb.c **** }
+ 1069              		.loc 1 501 0
+ 1070 02e4 0000A0E3 		mov	r0, #0
+ 1071 02e8 FC87BDE8 		ldmfd	sp!, {r2, r3, r4, r5, r6, r7, r8, r9, sl, pc}
+ 1072              	.L51:
+ 1073              		.align	2
+ 1074              	.L50:
+ 1075 02ec 00000000 		.word	dsp_api
+ 1076 02f0 00000000 		.word	.LANCHOR0
+ 1077 02f4 00000000 		.word	.LANCHOR1
+ 1078 02f8 23010000 		.word	.LC8
+ 1079 02fc C0500100 		.word	86208
+ 1080 0300 00000000 		.word	l1s
+ 1081 0304 39000000 		.word	.LC2
+ 1082 0308 00000000 		.word	rf_arfcn
+ 1083 030c E2040000 		.word	1250
+ 1084 0310 29010000 		.word	.LC9
+ 1085 0314 5B010000 		.word	.LC10
+ 1086 0318 86010000 		.word	.LC11
+ 1087 031c 50010000 		.word	.LANCHOR1+336
+ 1088              		.cfi_endproc
+ 1089              	.LFE69:
+ 1091              		.section	.text.l1a_fb_compl,"ax",%progbits
+ 1092              		.align	2
+ 1094              	l1a_fb_compl:
+ 1095              	.LFB70:
+ 502:layer1/prim_fbsb.c **** 
+ 503:layer1/prim_fbsb.c **** /* FB detection */
+ 504:layer1/prim_fbsb.c **** static const struct tdma_sched_item fb_sched_set[] = {
+ 505:layer1/prim_fbsb.c **** 	SCHED_ITEM_DT(l1s_fbdet_cmd, 0, 0, 0),	SCHED_END_FRAME(),
+ 506:layer1/prim_fbsb.c **** 						SCHED_END_FRAME(),
+ 507:layer1/prim_fbsb.c **** 	SCHED_ITEM(l1s_fbdet_resp, -4, 0, 1),	SCHED_END_FRAME(),
+ 508:layer1/prim_fbsb.c **** 	SCHED_ITEM(l1s_fbdet_resp, -4, 0, 2),	SCHED_END_FRAME(),
+ 509:layer1/prim_fbsb.c **** 	SCHED_ITEM(l1s_fbdet_resp, -4, 0, 3),	SCHED_END_FRAME(),
+ 510:layer1/prim_fbsb.c **** 	SCHED_ITEM(l1s_fbdet_resp, -4, 0, 4),	SCHED_END_FRAME(),
+ 511:layer1/prim_fbsb.c **** 	SCHED_ITEM(l1s_fbdet_resp, -4, 0, 5),	SCHED_END_FRAME(),
+ 512:layer1/prim_fbsb.c **** 	SCHED_ITEM(l1s_fbdet_resp, -4, 0, 6),	SCHED_END_FRAME(),
+ 513:layer1/prim_fbsb.c **** 	SCHED_ITEM(l1s_fbdet_resp, -4, 0, 7),	SCHED_END_FRAME(),
+ 514:layer1/prim_fbsb.c **** 	SCHED_ITEM(l1s_fbdet_resp, -4, 0, 8),	SCHED_END_FRAME(),
+ 515:layer1/prim_fbsb.c **** 	SCHED_ITEM(l1s_fbdet_resp, -4, 0, 9),	SCHED_END_FRAME(),
+ 516:layer1/prim_fbsb.c **** 	SCHED_ITEM(l1s_fbdet_resp, -4, 0, 10),	SCHED_END_FRAME(),
+ 517:layer1/prim_fbsb.c **** 	SCHED_ITEM(l1s_fbdet_resp, -4, 0, 11),	SCHED_END_FRAME(),
+ 518:layer1/prim_fbsb.c **** 	SCHED_ITEM(l1s_fbdet_resp, -4, 0, 12),	SCHED_END_FRAME(),
+ 519:layer1/prim_fbsb.c **** 	SCHED_END_SET()
+ 520:layer1/prim_fbsb.c **** };
+ 521:layer1/prim_fbsb.c **** 
+ 522:layer1/prim_fbsb.c **** /* Asynchronous completion handler for FB detection */
+ 523:layer1/prim_fbsb.c **** static void l1a_fb_compl(__unused enum l1_compl c)
+ 524:layer1/prim_fbsb.c **** {
+ 1096              		.loc 1 524 0
+ 1097              		.cfi_startproc
+ 1098              		@ args = 0, pretend = 0, frame = 0
+ 1099              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1100              	.LVL63:
+ 525:layer1/prim_fbsb.c **** 	struct l1_cell_info *cinfo = &l1s.serving_cell;
+ 526:layer1/prim_fbsb.c **** 
+ 527:layer1/prim_fbsb.c **** 	if (last_fb->attempt >= 13) {
+ 1101              		.loc 1 527 0
+ 1102 0000 20309FE5 		ldr	r3, .L55
+ 1103 0004 043093E5 		ldr	r3, [r3, #4]
+ 1104 0008 0C0053E3 		cmp	r3, #12
+ 524:layer1/prim_fbsb.c **** {
+ 1105              		.loc 1 524 0
+ 1106 000c 04E02DE5 		str	lr, [sp, #-4]!
+ 1107              	.LCFI6:
+ 1108              		.cfi_def_cfa_offset 4
+ 528:layer1/prim_fbsb.c **** 		/* FB detection failed, signal this via L1CTL */
+ 529:layer1/prim_fbsb.c **** 		return l1ctl_fbsb_resp(255);
+ 1109              		.loc 1 529 0
+ 1110 0010 FF00A0C3 		movgt	r0, #255
+ 1111              	.LVL64:
+ 527:layer1/prim_fbsb.c **** 	if (last_fb->attempt >= 13) {
+ 1112              		.loc 1 527 0
+ 1113 0014 010000CA 		bgt	.L54
+ 1114              		.cfi_offset 14, -4
+ 530:layer1/prim_fbsb.c **** 	}
+ 531:layer1/prim_fbsb.c **** 
+ 532:layer1/prim_fbsb.c **** 	/* FIME: use l1s.neigh_cell[fbs.cinfo_idx] */
+ 533:layer1/prim_fbsb.c **** 	fbinfo2cellinfo(&l1s.serving_cell, last_fb);
+ 1115              		.loc 1 533 0
+ 1116 0018 FEFFFFEB 		bl	fbinfo2cellinfo.clone.0.clone.1
+ 534:layer1/prim_fbsb.c **** 
+ 535:layer1/prim_fbsb.c **** 	/* send FBSB_CONF success message via L1CTL */
+ 536:layer1/prim_fbsb.c **** 	l1ctl_fbsb_resp(0);
+ 1117              		.loc 1 536 0
+ 1118 001c 0000A0E3 		mov	r0, #0
+ 1119              	.L54:
+ 537:layer1/prim_fbsb.c **** }
+ 1120              		.loc 1 537 0
+ 1121 0020 04E09DE4 		ldr	lr, [sp], #4
+ 536:layer1/prim_fbsb.c **** 	l1ctl_fbsb_resp(0);
+ 1122              		.loc 1 536 0
+ 1123 0024 FEFFFFEA 		b	l1ctl_fbsb_resp
+ 1124              	.L56:
+ 1125              		.align	2
+ 1126              	.L55:
+ 1127 0028 00000000 		.word	.LANCHOR0
+ 1128              		.cfi_endproc
+ 1129              	.LFE70:
+ 1131              		.section	.text.l1s_sb_test,"ax",%progbits
+ 1132              		.align	2
+ 1133              		.global	l1s_sb_test
+ 1135              	l1s_sb_test:
+ 1136              	.LFB65:
+ 299:layer1/prim_fbsb.c **** {
+ 1137              		.loc 1 299 0
+ 1138              		.cfi_startproc
+ 1139              		@ args = 0, pretend = 0, frame = 0
+ 1140              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1141              		@ link register save eliminated.
+ 1142              	.LVL65:
+ 300:layer1/prim_fbsb.c **** 	tdma_schedule_set(base_fn, sb_sched_set, 0);
+ 1143              		.loc 1 300 0
+ 1144 0000 08109FE5 		ldr	r1, .L58
+ 299:layer1/prim_fbsb.c **** {
+ 1145              		.loc 1 299 0
+ 1146 0004 FF0000E2 		and	r0, r0, #255
+ 1147              	.LVL66:
+ 300:layer1/prim_fbsb.c **** 	tdma_schedule_set(base_fn, sb_sched_set, 0);
+ 1148              		.loc 1 300 0
+ 1149 0008 0020A0E3 		mov	r2, #0
+ 301:layer1/prim_fbsb.c **** }
+ 1150              		.loc 1 301 0
+ 300:layer1/prim_fbsb.c **** 	tdma_schedule_set(base_fn, sb_sched_set, 0);
+ 1151              		.loc 1 300 0
+ 1152 000c FEFFFFEA 		b	tdma_schedule_set
+ 1153              	.L59:
+ 1154              		.align	2
+ 1155              	.L58:
+ 1156 0010 50010000 		.word	.LANCHOR1+336
+ 1157              		.cfi_endproc
+ 1158              	.LFE65:
+ 1160              		.section	.text.l1s_fbsb_req,"ax",%progbits
+ 1161              		.align	2
+ 1162              		.global	l1s_fbsb_req
+ 1164              	l1s_fbsb_req:
+ 1165              	.LFB71:
+ 538:layer1/prim_fbsb.c **** 
+ 539:layer1/prim_fbsb.c **** void l1s_fbsb_req(uint8_t base_fn, struct l1ctl_fbsb_req *req)
+ 540:layer1/prim_fbsb.c **** {
+ 1166              		.loc 1 540 0
+ 1167              		.cfi_startproc
+ 1168              		@ args = 0, pretend = 0, frame = 0
+ 1169              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1170              	.LVL67:
+ 1171 0000 70402DE9 		stmfd	sp!, {r4, r5, r6, lr}
+ 1172              	.LCFI7:
+ 1173              		.cfi_def_cfa_offset 16
+ 541:layer1/prim_fbsb.c **** 	/* copy + endian convert request data */
+ 542:layer1/prim_fbsb.c **** 	fbs.req.band_arfcn = ntohs(req->band_arfcn);
+ 1174              		.loc 1 542 0
+ 1175 0004 0120D1E5 		ldrb	r2, [r1, #1]	@ zero_extendqisi2
+ 1176 0008 0030D1E5 		ldrb	r3, [r1, #0]	@ zero_extendqisi2
+ 1177 000c 023483E1 		orr	r3, r3, r2, asl #8
+ 1178              	.LVL68:
+ 1179 0010 C8509FE5 		ldr	r5, .L65
+ 1180              		.cfi_offset 14, -4
+ 1181              		.cfi_offset 6, -8
+ 1182              		.cfi_offset 5, -12
+ 1183              		.cfi_offset 4, -16
+ 1184              	.LBB71:
+ 1185              	.LBB72:
+ 1186              		.loc 3 51 0
+ 1187 0014 2324A0E1 		mov	r2, r3, lsr #8
+ 1188 0018 033482E1 		orr	r3, r2, r3, asl #8
+ 1189              	.LVL69:
+ 1190              	.LBE72:
+ 1191              	.LBE71:
+ 1192              		.loc 1 542 0
+ 1193 001c B032C5E1 		strh	r3, [r5, #32]	@ movhi
+ 543:layer1/prim_fbsb.c **** 	fbs.req.timeout = ntohs(req->timeout);
+ 1194              		.loc 1 543 0
+ 1195 0020 0320D1E5 		ldrb	r2, [r1, #3]	@ zero_extendqisi2
+ 1196 0024 0230D1E5 		ldrb	r3, [r1, #2]	@ zero_extendqisi2
+ 1197 0028 023483E1 		orr	r3, r3, r2, asl #8
+ 1198              	.LVL70:
+ 1199              	.LBB73:
+ 1200              	.LBB74:
+ 1201              		.loc 3 51 0
+ 1202 002c 2324A0E1 		mov	r2, r3, lsr #8
+ 1203 0030 033482E1 		orr	r3, r2, r3, asl #8
+ 1204              	.LVL71:
+ 1205              	.LBE74:
+ 1206              	.LBE73:
+ 1207              		.loc 1 543 0
+ 1208 0034 B232C5E1 		strh	r3, [r5, #34]	@ movhi
+ 544:layer1/prim_fbsb.c **** 	fbs.req.freq_err_thresh1 = ntohs(req->freq_err_thresh1);
+ 1209              		.loc 1 544 0
+ 1210 0038 0520D1E5 		ldrb	r2, [r1, #5]	@ zero_extendqisi2
+ 1211 003c 0430D1E5 		ldrb	r3, [r1, #4]	@ zero_extendqisi2
+ 1212 0040 023483E1 		orr	r3, r3, r2, asl #8
+ 1213              	.LVL72:
+ 1214              	.LBB75:
+ 1215              	.LBB76:
+ 1216              		.loc 3 51 0
+ 1217 0044 2324A0E1 		mov	r2, r3, lsr #8
+ 1218 0048 033482E1 		orr	r3, r2, r3, asl #8
+ 1219              	.LVL73:
+ 1220              	.LBE76:
+ 1221              	.LBE75:
+ 1222              		.loc 1 544 0
+ 1223 004c B432C5E1 		strh	r3, [r5, #36]	@ movhi
+ 545:layer1/prim_fbsb.c **** 	fbs.req.freq_err_thresh2 = ntohs(req->freq_err_thresh2);
+ 1224              		.loc 1 545 0
+ 1225 0050 0720D1E5 		ldrb	r2, [r1, #7]	@ zero_extendqisi2
+ 1226 0054 0630D1E5 		ldrb	r3, [r1, #6]	@ zero_extendqisi2
+ 1227 0058 023483E1 		orr	r3, r3, r2, asl #8
+ 1228              	.LVL74:
+ 1229              	.LBB77:
+ 1230              	.LBB78:
+ 1231              		.loc 3 51 0
+ 1232 005c 2324A0E1 		mov	r2, r3, lsr #8
+ 1233 0060 033482E1 		orr	r3, r2, r3, asl #8
+ 1234              	.LVL75:
+ 1235              	.LBE78:
+ 1236              	.LBE77:
+ 1237              		.loc 1 545 0
+ 1238 0064 B632C5E1 		strh	r3, [r5, #38]	@ movhi
+ 546:layer1/prim_fbsb.c **** 	fbs.req.num_freqerr_avg = req->num_freqerr_avg;
+ 1239              		.loc 1 546 0
+ 1240 0068 0830D1E5 		ldrb	r3, [r1, #8]	@ zero_extendqisi2
+ 1241 006c 2830C5E5 		strb	r3, [r5, #40]
+ 547:layer1/prim_fbsb.c **** 	fbs.req.flags = req->flags;
+ 1242              		.loc 1 547 0
+ 1243 0070 0930D1E5 		ldrb	r3, [r1, #9]	@ zero_extendqisi2
+ 1244 0074 2930C5E5 		strb	r3, [r5, #41]
+ 548:layer1/prim_fbsb.c **** 	fbs.req.sync_info_idx = req->sync_info_idx;
+ 1245              		.loc 1 548 0
+ 1246 0078 0A30D1E5 		ldrb	r3, [r1, #10]	@ zero_extendqisi2
+ 549:layer1/prim_fbsb.c **** 
+ 550:layer1/prim_fbsb.c **** 	/* clear initial frequency error */
+ 551:layer1/prim_fbsb.c **** 	fbs.initial_freq_err = 0;
+ 1247              		.loc 1 551 0
+ 1248 007c 0040A0E3 		mov	r4, #0
+ 540:layer1/prim_fbsb.c **** {
+ 1249              		.loc 1 540 0
+ 1250 0080 FF6000E2 		and	r6, r0, #255
+ 548:layer1/prim_fbsb.c **** 	fbs.req.sync_info_idx = req->sync_info_idx;
+ 1251              		.loc 1 548 0
+ 1252 0084 2A30C5E5 		strb	r3, [r5, #42]
+ 1253              		.loc 1 551 0
+ 1254 0088 BC42C5E1 		strh	r4, [r5, #44]	@ movhi
+ 552:layer1/prim_fbsb.c **** 	fbs.fb_retries = 0;
+ 1255              		.loc 1 552 0
+ 1256 008c 2E40C5E5 		strb	r4, [r5, #46]
+ 553:layer1/prim_fbsb.c **** 	fbs.afc_retries = 0;
+ 1257              		.loc 1 553 0
+ 1258 0090 2F40C5E5 		strb	r4, [r5, #47]
+ 554:layer1/prim_fbsb.c **** 
+ 555:layer1/prim_fbsb.c **** 	/* Make sure we start at a 'center' AFCDAC output value */
+ 556:layer1/prim_fbsb.c **** 	afc_reset();
+ 1259              		.loc 1 556 0
+ 1260 0094 FEFFFFEB 		bl	afc_reset
+ 1261              	.LVL76:
+ 557:layer1/prim_fbsb.c **** 
+ 558:layer1/prim_fbsb.c **** 	/* Reset the TOA loop counters */
+ 559:layer1/prim_fbsb.c **** 	toa_reset();
+ 1262              		.loc 1 559 0
+ 1263 0098 FEFFFFEB 		bl	toa_reset
+ 560:layer1/prim_fbsb.c **** 
+ 561:layer1/prim_fbsb.c **** 	if (fbs.req.flags & L1CTL_FBSB_F_FB0)
+ 1264              		.loc 1 561 0
+ 1265 009c 2910D5E5 		ldrb	r1, [r5, #41]	@ zero_extendqisi2
+ 1266 00a0 012011E2 		ands	r2, r1, #1
+ 562:layer1/prim_fbsb.c **** 		tdma_schedule_set(base_fn, fb_sched_set, 0);
+ 1267              		.loc 1 562 0
+ 1268 00a4 0600A011 		movne	r0, r6
+ 1269 00a8 34109F15 		ldrne	r1, .L65+4
+ 1270 00ac 0420A011 		movne	r2, r4
+ 1271 00b0 0800001A 		bne	.L64
+ 1272              	.L61:
+ 563:layer1/prim_fbsb.c **** 	else if (fbs.req.flags & L1CTL_FBSB_F_FB1)
+ 1273              		.loc 1 563 0
+ 1274 00b4 023011E2 		ands	r3, r1, #2
+ 564:layer1/prim_fbsb.c **** 		tdma_schedule_set(base_fn, fb_sched_set, 0);
+ 1275              		.loc 1 564 0
+ 1276 00b8 0600A011 		movne	r0, r6
+ 1277 00bc 20109F15 		ldrne	r1, .L65+4
+ 563:layer1/prim_fbsb.c **** 	else if (fbs.req.flags & L1CTL_FBSB_F_FB1)
+ 1278              		.loc 1 563 0
+ 1279 00c0 0400001A 		bne	.L64
+ 565:layer1/prim_fbsb.c **** 	else if (fbs.req.flags & L1CTL_FBSB_F_SB)
+ 1280              		.loc 1 565 0
+ 1281 00c4 040011E3 		tst	r1, #4
+ 1282 00c8 7080BD08 		ldmeqfd	sp!, {r4, r5, r6, pc}
+ 566:layer1/prim_fbsb.c **** 		tdma_schedule_set(base_fn, sb_sched_set, 0);
+ 1283              		.loc 1 566 0
+ 1284 00cc 14109FE5 		ldr	r1, .L65+8
+ 1285 00d0 0600A0E1 		mov	r0, r6
+ 1286 00d4 0320A0E1 		mov	r2, r3
+ 1287              	.L64:
+ 567:layer1/prim_fbsb.c **** 
+ 568:layer1/prim_fbsb.c **** }
+ 1288              		.loc 1 568 0
+ 1289 00d8 7040BDE8 		ldmfd	sp!, {r4, r5, r6, lr}
+ 566:layer1/prim_fbsb.c **** 		tdma_schedule_set(base_fn, sb_sched_set, 0);
+ 1290              		.loc 1 566 0
+ 1291 00dc FEFFFFEA 		b	tdma_schedule_set
+ 1292              	.L66:
+ 1293              		.align	2
+ 1294              	.L65:
+ 1295 00e0 00000000 		.word	.LANCHOR0
+ 1296 00e4 00000000 		.word	.LANCHOR1
+ 1297 00e8 50010000 		.word	.LANCHOR1+336
+ 1298              		.cfi_endproc
+ 1299              	.LFE71:
+ 1301              		.section	.text.l1s_prim_fbsb_init,"ax",%progbits
+ 1302              		.align	2
+ 1304              	l1s_prim_fbsb_init:
+ 1305              	.LFB72:
+ 569:layer1/prim_fbsb.c **** 
+ 570:layer1/prim_fbsb.c **** static __attribute__ ((constructor)) void l1s_prim_fbsb_init(void)
+ 571:layer1/prim_fbsb.c **** {
+ 1306              		.loc 1 571 0
+ 1307              		.cfi_startproc
+ 1308              		@ args = 0, pretend = 0, frame = 0
+ 1309              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1310              		@ link register save eliminated.
+ 572:layer1/prim_fbsb.c **** 	l1s.completion[L1_COMPL_FB] = &l1a_fb_compl;
+ 1311              		.loc 1 572 0
+ 1312 0000 08209FE5 		ldr	r2, .L68
+ 1313 0004 08309FE5 		ldr	r3, .L68+4
+ 1314 0008 702A83E5 		str	r2, [r3, #2672]
+ 573:layer1/prim_fbsb.c **** }
+ 1315              		.loc 1 573 0
+ 1316 000c 1EFF2FE1 		bx	lr
+ 1317              	.L69:
+ 1318              		.align	2
+ 1319              	.L68:
+ 1320 0010 00000000 		.word	l1a_fb_compl
+ 1321 0014 00000000 		.word	l1s
+ 1322              		.cfi_endproc
+ 1323              	.LFE72:
+ 1325              		.section	.ctors,"aw",%progbits
+ 1326              		.align	2
+ 1327 0000 00000000 		.word	l1s_prim_fbsb_init
+ 1328              		.section	.rodata
+ 1329              		.align	2
+ 1330              		.set	.LANCHOR1,. + 0
+ 1333              	fb_sched_set:
+ 1334 0000 00000000 		.word	l1s_fbdet_cmd
+ 1335 0004 00       		.byte	0
+ 1336 0005 00       		.byte	0
+ 1337 0006 0000     		.space	2
+ 1338 0008 0000     		.short	0
+ 1339 000a 0300     		.short	3
+ 1340 000c 00000000 		.word	0
+ 1341 0010 00       		.byte	0
+ 1342 0011 00       		.byte	0
+ 1343 0012 00000000 		.space	6
+ 1343      0000
+ 1344 0018 00000000 		.word	0
+ 1345 001c 00       		.byte	0
+ 1346 001d 00       		.byte	0
+ 1347 001e 00000000 		.space	6
+ 1347      0000
+ 1348 0024 00000000 		.word	l1s_fbdet_resp
+ 1349 0028 00       		.byte	0
+ 1350 0029 01       		.byte	1
+ 1351 002a 0000     		.space	2
+ 1352 002c FCFF     		.short	-4
+ 1353 002e 0000     		.short	0
+ 1354 0030 00000000 		.word	0
+ 1355 0034 00       		.byte	0
+ 1356 0035 00       		.byte	0
+ 1357 0036 00000000 		.space	6
+ 1357      0000
+ 1358 003c 00000000 		.word	l1s_fbdet_resp
+ 1359 0040 00       		.byte	0
+ 1360 0041 02       		.byte	2
+ 1361 0042 0000     		.space	2
+ 1362 0044 FCFF     		.short	-4
+ 1363 0046 0000     		.short	0
+ 1364 0048 00000000 		.word	0
+ 1365 004c 00       		.byte	0
+ 1366 004d 00       		.byte	0
+ 1367 004e 00000000 		.space	6
+ 1367      0000
+ 1368 0054 00000000 		.word	l1s_fbdet_resp
+ 1369 0058 00       		.byte	0
+ 1370 0059 03       		.byte	3
+ 1371 005a 0000     		.space	2
+ 1372 005c FCFF     		.short	-4
+ 1373 005e 0000     		.short	0
+ 1374 0060 00000000 		.word	0
+ 1375 0064 00       		.byte	0
+ 1376 0065 00       		.byte	0
+ 1377 0066 00000000 		.space	6
+ 1377      0000
+ 1378 006c 00000000 		.word	l1s_fbdet_resp
+ 1379 0070 00       		.byte	0
+ 1380 0071 04       		.byte	4
+ 1381 0072 0000     		.space	2
+ 1382 0074 FCFF     		.short	-4
+ 1383 0076 0000     		.short	0
+ 1384 0078 00000000 		.word	0
+ 1385 007c 00       		.byte	0
+ 1386 007d 00       		.byte	0
+ 1387 007e 00000000 		.space	6
+ 1387      0000
+ 1388 0084 00000000 		.word	l1s_fbdet_resp
+ 1389 0088 00       		.byte	0
+ 1390 0089 05       		.byte	5
+ 1391 008a 0000     		.space	2
+ 1392 008c FCFF     		.short	-4
+ 1393 008e 0000     		.short	0
+ 1394 0090 00000000 		.word	0
+ 1395 0094 00       		.byte	0
+ 1396 0095 00       		.byte	0
+ 1397 0096 00000000 		.space	6
+ 1397      0000
+ 1398 009c 00000000 		.word	l1s_fbdet_resp
+ 1399 00a0 00       		.byte	0
+ 1400 00a1 06       		.byte	6
+ 1401 00a2 0000     		.space	2
+ 1402 00a4 FCFF     		.short	-4
+ 1403 00a6 0000     		.short	0
+ 1404 00a8 00000000 		.word	0
+ 1405 00ac 00       		.byte	0
+ 1406 00ad 00       		.byte	0
+ 1407 00ae 00000000 		.space	6
+ 1407      0000
+ 1408 00b4 00000000 		.word	l1s_fbdet_resp
+ 1409 00b8 00       		.byte	0
+ 1410 00b9 07       		.byte	7
+ 1411 00ba 0000     		.space	2
+ 1412 00bc FCFF     		.short	-4
+ 1413 00be 0000     		.short	0
+ 1414 00c0 00000000 		.word	0
+ 1415 00c4 00       		.byte	0
+ 1416 00c5 00       		.byte	0
+ 1417 00c6 00000000 		.space	6
+ 1417      0000
+ 1418 00cc 00000000 		.word	l1s_fbdet_resp
+ 1419 00d0 00       		.byte	0
+ 1420 00d1 08       		.byte	8
+ 1421 00d2 0000     		.space	2
+ 1422 00d4 FCFF     		.short	-4
+ 1423 00d6 0000     		.short	0
+ 1424 00d8 00000000 		.word	0
+ 1425 00dc 00       		.byte	0
+ 1426 00dd 00       		.byte	0
+ 1427 00de 00000000 		.space	6
+ 1427      0000
+ 1428 00e4 00000000 		.word	l1s_fbdet_resp
+ 1429 00e8 00       		.byte	0
+ 1430 00e9 09       		.byte	9
+ 1431 00ea 0000     		.space	2
+ 1432 00ec FCFF     		.short	-4
+ 1433 00ee 0000     		.short	0
+ 1434 00f0 00000000 		.word	0
+ 1435 00f4 00       		.byte	0
+ 1436 00f5 00       		.byte	0
+ 1437 00f6 00000000 		.space	6
+ 1437      0000
+ 1438 00fc 00000000 		.word	l1s_fbdet_resp
+ 1439 0100 00       		.byte	0
+ 1440 0101 0A       		.byte	10
+ 1441 0102 0000     		.space	2
+ 1442 0104 FCFF     		.short	-4
+ 1443 0106 0000     		.short	0
+ 1444 0108 00000000 		.word	0
+ 1445 010c 00       		.byte	0
+ 1446 010d 00       		.byte	0
+ 1447 010e 00000000 		.space	6
+ 1447      0000
+ 1448 0114 00000000 		.word	l1s_fbdet_resp
+ 1449 0118 00       		.byte	0
+ 1450 0119 0B       		.byte	11
+ 1451 011a 0000     		.space	2
+ 1452 011c FCFF     		.short	-4
+ 1453 011e 0000     		.short	0
+ 1454 0120 00000000 		.word	0
+ 1455 0124 00       		.byte	0
+ 1456 0125 00       		.byte	0
+ 1457 0126 00000000 		.space	6
+ 1457      0000
+ 1458 012c 00000000 		.word	l1s_fbdet_resp
+ 1459 0130 00       		.byte	0
+ 1460 0131 0C       		.byte	12
+ 1461 0132 0000     		.space	2
+ 1462 0134 FCFF     		.short	-4
+ 1463 0136 0000     		.short	0
+ 1464 0138 00000000 		.word	0
+ 1465 013c 00       		.byte	0
+ 1466 013d 00       		.byte	0
+ 1467 013e 00000000 		.space	6
+ 1467      0000
+ 1468 0144 00000000 		.word	tdma_end_set
+ 1469 0148 00       		.byte	0
+ 1470 0149 00       		.byte	0
+ 1471 014a 00000000 		.space	6
+ 1471      0000
+ 1474              	sb_sched_set:
+ 1475 0150 00000000 		.word	l1s_sbdet_cmd
+ 1476 0154 00       		.byte	0
+ 1477 0155 01       		.byte	1
+ 1478 0156 0000     		.space	2
+ 1479 0158 0000     		.short	0
+ 1480 015a 0300     		.short	3
+ 1481 015c 00000000 		.word	0
+ 1482 0160 00       		.byte	0
+ 1483 0161 00       		.byte	0
+ 1484 0162 00000000 		.space	6
+ 1484      0000
+ 1485 0168 00000000 		.word	l1s_sbdet_cmd
+ 1486 016c 00       		.byte	0
+ 1487 016d 02       		.byte	2
+ 1488 016e 0000     		.space	2
+ 1489 0170 0000     		.short	0
+ 1490 0172 0300     		.short	3
+ 1491 0174 00000000 		.word	0
+ 1492 0178 00       		.byte	0
+ 1493 0179 00       		.byte	0
+ 1494 017a 00000000 		.space	6
+ 1494      0000
+ 1495 0180 00000000 		.word	0
+ 1496 0184 00       		.byte	0
+ 1497 0185 00       		.byte	0
+ 1498 0186 00000000 		.space	6
+ 1498      0000
+ 1499 018c 00000000 		.word	l1s_sbdet_resp
+ 1500 0190 00       		.byte	0
+ 1501 0191 01       		.byte	1
+ 1502 0192 0000     		.space	2
+ 1503 0194 FCFF     		.short	-4
+ 1504 0196 0000     		.short	0
+ 1505 0198 00000000 		.word	0
+ 1506 019c 00       		.byte	0
+ 1507 019d 00       		.byte	0
+ 1508 019e 00000000 		.space	6
+ 1508      0000
+ 1509 01a4 00000000 		.word	l1s_sbdet_resp
+ 1510 01a8 00       		.byte	0
+ 1511 01a9 02       		.byte	2
+ 1512 01aa 0000     		.space	2
+ 1513 01ac FCFF     		.short	-4
+ 1514 01ae 0000     		.short	0
+ 1515 01b0 00000000 		.word	0
+ 1516 01b4 00       		.byte	0
+ 1517 01b5 00       		.byte	0
+ 1518 01b6 00000000 		.space	6
+ 1518      0000
+ 1519 01bc 00000000 		.word	tdma_end_set
+ 1520 01c0 00       		.byte	0
+ 1521 01c1 00       		.byte	0
+ 1522 01c2 00000000 		.space	6
+ 1522      0000
+ 1523              		.section	.rodata.str1.1,"aMS",%progbits,1
+ 1524              	.LC0:
+ 1525 0000 6D736762 		.ascii	"msgb(%p): Not enough tailroom msgb_push (%u < %u)\012"
+ 1525      28257029 
+ 1525      3A204E6F 
+ 1525      7420656E 
+ 1525      6F756768 
+ 1526 0032 00       		.ascii	"\000"
+ 1527              	.LC1:
+ 1528 0033 53422564 		.ascii	"SB%d \000"
+ 1528      2000
+ 1529              	.LC2:
+ 1530 0039 2825753A 		.ascii	"(%u:%u): TOA=%5u, Power=%4ddBm, Angle=%5dHz\012\000"
+ 1530      2575293A 
+ 1530      20544F41 
+ 1530      3D253575 
+ 1530      2C20506F 
+ 1531              	.LC3:
+ 1532 0066 3D3E2053 		.ascii	"=> SB 0x%08x: BSIC=%u \000"
+ 1532      42203078 
+ 1532      25303878 
+ 1532      3A204253 
+ 1532      49433D25 
+ 1533              	.LC4:
+ 1534 007d 3D3E2044 		.ascii	"=> DSP reports SB in bit that is %d bits in the fut"
+ 1534      53502072 
+ 1534      65706F72 
+ 1534      74732053 
+ 1534      4220696E 
+ 1535 00b0 7572653F 		.ascii	"ure?!?\012\000"
+ 1535      213F0A00 
+ 1536              	.LC5:
+ 1537 00b8 20716269 		.ascii	" qbits=%u\012\000"
+ 1537      74733D25 
+ 1537      750A00
+ 1538              	.LC6:
+ 1539 00c3 3D3E2044 		.ascii	"=> DSP reports FB in bit that is %d bits in the fut"
+ 1539      53502072 
+ 1539      65706F72 
+ 1539      74732046 
+ 1539      4220696E 
+ 1540 00f6 7572653F 		.ascii	"ure?!?\012\000"
+ 1540      213F0A00 
+ 1541              	.LC7:
+ 1542 00fe 3D3E4642 		.ascii	"=>FB @ FNR %u fn_offset=%d qbits=%u\012\000"
+ 1542      20402046 
+ 1542      4E522025 
+ 1542      7520666E 
+ 1542      5F6F6666 
+ 1543              	.LC8:
+ 1544 0123 46422575 		.ascii	"FB%u \000"
+ 1544      2000
+ 1545              	.LC9:
+ 1546 0129 2020666E 		.ascii	"  fn_offset=%d (fn=%u + attempt=%u + ntdma = %d)\012"
+ 1546      5F6F6666 
+ 1546      7365743D 
+ 1546      25642028 
+ 1546      666E3D25 
+ 1547 015a 00       		.ascii	"\000"
+ 1548              	.LC10:
+ 1549 015b 20206465 		.ascii	"  delay=%d (fn_offset=%d + 11 - fn=%u - 1\012\000"
+ 1549      6C61793D 
+ 1549      25642028 
+ 1549      666E5F6F 
+ 1549      66667365 
+ 1550              	.LC11:
+ 1551 0186 20207363 		.ascii	"  scheduling next FB/SB detection task with delay %"
+ 1551      68656475 
+ 1551      6C696E67 
+ 1551      206E6578 
+ 1551      74204642 
+ 1552 01b9 750A00   		.ascii	"u\012\000"
+ 1553              		.bss
+ 1554              		.align	2
+ 1555              		.set	.LANCHOR0,. + 0
+ 1558              	fbs:
+ 1559 0000 00000000 		.space	48
+ 1559      00000000 
+ 1559      00000000 
+ 1559      00000000 
+ 1559      00000000 
+ 1560              		.text
+ 1561              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 prim_fbsb.c
+     /tmp/cc8YlzBP.s:12     .text.l1ctl_fbsb_resp:0000000000000000 $a
+     /tmp/cc8YlzBP.s:14     .text.l1ctl_fbsb_resp:0000000000000000 l1ctl_fbsb_resp
+     /tmp/cc8YlzBP.s:131    .text.l1ctl_fbsb_resp:00000000000000b8 $d
+     /tmp/cc8YlzBP.s:138    .text.l1s_sbdet_resp:0000000000000000 $a
+     /tmp/cc8YlzBP.s:140    .text.l1s_sbdet_resp:0000000000000000 l1s_sbdet_resp
+     /tmp/cc8YlzBP.s:489    .text.l1s_sbdet_resp:00000000000002ec $d
+     /tmp/cc8YlzBP.s:507    .text.l1s_sbdet_cmd:0000000000000000 $a
+     /tmp/cc8YlzBP.s:509    .text.l1s_sbdet_cmd:0000000000000000 l1s_sbdet_cmd
+     /tmp/cc8YlzBP.s:554    .text.l1s_sbdet_cmd:0000000000000048 $d
+     /tmp/cc8YlzBP.s:561    .text.l1s_fbdet_cmd:0000000000000000 $a
+     /tmp/cc8YlzBP.s:563    .text.l1s_fbdet_cmd:0000000000000000 l1s_fbdet_cmd
+     /tmp/cc8YlzBP.s:612    .text.l1s_fbdet_cmd:0000000000000054 $d
+     /tmp/cc8YlzBP.s:620    .text.fbinfo2cellinfo.clone.0.clone.1:0000000000000000 $a
+     /tmp/cc8YlzBP.s:622    .text.fbinfo2cellinfo.clone.0.clone.1:0000000000000000 fbinfo2cellinfo.clone.0.clone.1
+     /tmp/cc8YlzBP.s:744    .text.fbinfo2cellinfo.clone.0.clone.1:00000000000000d0 $d
+     /tmp/cc8YlzBP.s:756    .text.l1s_fbdet_resp:0000000000000000 $a
+     /tmp/cc8YlzBP.s:758    .text.l1s_fbdet_resp:0000000000000000 l1s_fbdet_resp
+     /tmp/cc8YlzBP.s:1075   .text.l1s_fbdet_resp:00000000000002ec $d
+     /tmp/cc8YlzBP.s:1092   .text.l1a_fb_compl:0000000000000000 $a
+     /tmp/cc8YlzBP.s:1094   .text.l1a_fb_compl:0000000000000000 l1a_fb_compl
+     /tmp/cc8YlzBP.s:1127   .text.l1a_fb_compl:0000000000000028 $d
+     /tmp/cc8YlzBP.s:1132   .text.l1s_sb_test:0000000000000000 $a
+     /tmp/cc8YlzBP.s:1135   .text.l1s_sb_test:0000000000000000 l1s_sb_test
+     /tmp/cc8YlzBP.s:1156   .text.l1s_sb_test:0000000000000010 $d
+     /tmp/cc8YlzBP.s:1161   .text.l1s_fbsb_req:0000000000000000 $a
+     /tmp/cc8YlzBP.s:1164   .text.l1s_fbsb_req:0000000000000000 l1s_fbsb_req
+     /tmp/cc8YlzBP.s:1295   .text.l1s_fbsb_req:00000000000000e0 $d
+     /tmp/cc8YlzBP.s:1302   .text.l1s_prim_fbsb_init:0000000000000000 $a
+     /tmp/cc8YlzBP.s:1304   .text.l1s_prim_fbsb_init:0000000000000000 l1s_prim_fbsb_init
+     /tmp/cc8YlzBP.s:1320   .text.l1s_prim_fbsb_init:0000000000000010 $d
+     /tmp/cc8YlzBP.s:1326   .ctors:0000000000000000 $d
+     /tmp/cc8YlzBP.s:1329   .rodata:0000000000000000 $d
+     /tmp/cc8YlzBP.s:1333   .rodata:0000000000000000 fb_sched_set
+     /tmp/cc8YlzBP.s:1474   .rodata:0000000000000150 sb_sched_set
+     /tmp/cc8YlzBP.s:1554   .bss:0000000000000000 $d
+     /tmp/cc8YlzBP.s:1558   .bss:0000000000000000 fbs
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+l1s_snr_int
+l1_create_l2_msg
+osmo_panic
+l1_queue_for_l2
+__udivsi3
+printf
+agc_inp_dbm8_by_pm
+afc_input
+memset
+gsm_gsmtime2fn
+l1s_time_dump
+synchronize_tdma
+gsm_fn2gsmtime
+l1s_time_inc
+tdma_sched_reset
+l1s_dsp_abort
+l1s_reset_hw
+mframe_enable
+l1s_compl_sched
+dsp_api
+l1s
+rf_arfcn
+l1s_rx_win_ctrl
+rffe_compute_gain
+__divsi3
+tdma_schedule_set
+afc_correct
+afc_reset
+toa_reset
+tdma_end_set

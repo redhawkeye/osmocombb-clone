@@ -1,0 +1,2 @@
+   text	   data	    bss	    dec	    hex	filename
+   4346	     32	  16452	  20830	   515e	board/se_j100/chainload.highram.elf

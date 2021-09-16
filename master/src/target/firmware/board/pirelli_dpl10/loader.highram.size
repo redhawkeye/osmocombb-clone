@@ -1,0 +1,2 @@
+   text	   data	    bss	    dec	    hex	filename
+  25065	    380	  33988	  59433	   e829	board/pirelli_dpl10/loader.highram.elf

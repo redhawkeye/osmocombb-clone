@@ -1,0 +1,3416 @@
+   1              		.file	"prim_tch.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text.l1s_tch_d_resp,"ax",%progbits
+  12              		.align	2
+  14              	l1s_tch_d_resp:
+  15              	.LFB64:
+  16              		.file 1 "layer1/prim_tch.c"
+   1:layer1/prim_tch.c **** /* Layer 1 - TCH */
+   2:layer1/prim_tch.c **** 
+   3:layer1/prim_tch.c **** /* (C) 2010 by Dieter Spaar <spaar@mirider.augusta.de>
+   4:layer1/prim_tch.c ****  * (C) 2010 by Sylvain Munaut <tnt@246tnt.com>
+   5:layer1/prim_tch.c ****  *
+   6:layer1/prim_tch.c ****  * All Rights Reserved
+   7:layer1/prim_tch.c ****  *
+   8:layer1/prim_tch.c ****  * This program is free software; you can redistribute it and/or modify
+   9:layer1/prim_tch.c ****  * it under the terms of the GNU General Public License as published by
+  10:layer1/prim_tch.c ****  * the Free Software Foundation; either version 2 of the License, or
+  11:layer1/prim_tch.c ****  * (at your option) any later version.
+  12:layer1/prim_tch.c ****  *
+  13:layer1/prim_tch.c ****  * This program is distributed in the hope that it will be useful,
+  14:layer1/prim_tch.c ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  15:layer1/prim_tch.c ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  16:layer1/prim_tch.c ****  * GNU General Public License for more details.
+  17:layer1/prim_tch.c ****  *
+  18:layer1/prim_tch.c ****  * You should have received a copy of the GNU General Public License along
+  19:layer1/prim_tch.c ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  20:layer1/prim_tch.c ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  21:layer1/prim_tch.c ****  *
+  22:layer1/prim_tch.c ****  */
+  23:layer1/prim_tch.c **** 
+  24:layer1/prim_tch.c **** #include <stdint.h>
+  25:layer1/prim_tch.c **** #include <stdio.h>
+  26:layer1/prim_tch.c **** #include <string.h>
+  27:layer1/prim_tch.c **** #include <stdlib.h>
+  28:layer1/prim_tch.c **** 
+  29:layer1/prim_tch.c **** #include <defines.h>
+  30:layer1/prim_tch.c **** #include <debug.h>
+  31:layer1/prim_tch.c **** #include <memory.h>
+  32:layer1/prim_tch.c **** #include <byteorder.h>
+  33:layer1/prim_tch.c **** #include <osmocom/gsm/gsm_utils.h>
+  34:layer1/prim_tch.c **** #include <osmocom/gsm/protocol/gsm_04_08.h>
+  35:layer1/prim_tch.c **** #include <osmocom/core/msgb.h>
+  36:layer1/prim_tch.c **** #include <calypso/dsp_api.h>
+  37:layer1/prim_tch.c **** #include <calypso/irq.h>
+  38:layer1/prim_tch.c **** #include <calypso/tpu.h>
+  39:layer1/prim_tch.c **** #include <calypso/tsp.h>
+  40:layer1/prim_tch.c **** #include <calypso/dsp.h>
+  41:layer1/prim_tch.c **** #include <calypso/timer.h>
+  42:layer1/prim_tch.c **** #include <comm/sercomm.h>
+  43:layer1/prim_tch.c **** 
+  44:layer1/prim_tch.c **** #include <rffe.h>
+  45:layer1/prim_tch.c **** #include <layer1/sync.h>
+  46:layer1/prim_tch.c **** #include <layer1/afc.h>
+  47:layer1/prim_tch.c **** #include <layer1/agc.h>
+  48:layer1/prim_tch.c **** #include <layer1/toa.h>
+  49:layer1/prim_tch.c **** #include <layer1/tdma_sched.h>
+  50:layer1/prim_tch.c **** #include <layer1/mframe_sched.h>
+  51:layer1/prim_tch.c **** #include <layer1/tpu_window.h>
+  52:layer1/prim_tch.c **** #include <layer1/l23_api.h>
+  53:layer1/prim_tch.c **** #include <layer1/rfch.h>
+  54:layer1/prim_tch.c **** #include <layer1/prim.h>
+  55:layer1/prim_tch.c **** 
+  56:layer1/prim_tch.c **** #include <l1ctl_proto.h>
+  57:layer1/prim_tch.c **** 
+  58:layer1/prim_tch.c **** 
+  59:layer1/prim_tch.c **** /* This computes various parameters both for the DSP and for
+  60:layer1/prim_tch.c ****  * our logic. Not all are used all the time, but it's easier
+  61:layer1/prim_tch.c ****  * to build all in one place */
+  62:layer1/prim_tch.c **** static void tch_get_params(struct gsm_time *time, uint8_t chan_nr,
+  63:layer1/prim_tch.c ****                            uint32_t *fn_report, uint8_t *tch_f_hn,
+  64:layer1/prim_tch.c ****                            uint8_t *tch_sub, uint8_t *tch_mode)
+  65:layer1/prim_tch.c **** {
+  66:layer1/prim_tch.c **** 	uint8_t tn = chan_nr & 0x07;
+  67:layer1/prim_tch.c **** 	uint8_t cbits = chan_nr >> 3;
+  68:layer1/prim_tch.c **** 
+  69:layer1/prim_tch.c **** 	*tch_f_hn = (cbits & 2) ? 0 : 1;
+  70:layer1/prim_tch.c **** 
+  71:layer1/prim_tch.c **** 	if (*tch_f_hn) {
+  72:layer1/prim_tch.c **** 		*fn_report = (time->fn - (tn * 13) + 104) % 104;
+  73:layer1/prim_tch.c **** 		*tch_sub = 0;
+  74:layer1/prim_tch.c **** 	} else {
+  75:layer1/prim_tch.c **** 		uint8_t chan_sub = cbits & 1;
+  76:layer1/prim_tch.c **** 		uint8_t tn_report = (tn & ~1) | chan_sub;
+  77:layer1/prim_tch.c **** 		*fn_report = (time->fn - (tn_report * 13) + 104) % 104;
+  78:layer1/prim_tch.c **** 		*tch_sub = chan_sub;
+  79:layer1/prim_tch.c **** 	}
+  80:layer1/prim_tch.c **** 
+  81:layer1/prim_tch.c **** 	if (tch_mode) {
+  82:layer1/prim_tch.c **** 		switch (l1s.tch_mode) {
+  83:layer1/prim_tch.c **** 		case GSM48_CMODE_SPEECH_V1:
+  84:layer1/prim_tch.c **** 			*tch_mode = *tch_f_hn ? TCH_FS_MODE : TCH_HS_MODE;
+  85:layer1/prim_tch.c **** 			break;
+  86:layer1/prim_tch.c **** 		case GSM48_CMODE_SPEECH_EFR:
+  87:layer1/prim_tch.c **** 			*tch_mode = *tch_f_hn ? TCH_EFR_MODE : SIG_ONLY_MODE;
+  88:layer1/prim_tch.c **** 			break;
+  89:layer1/prim_tch.c **** 		default:
+  90:layer1/prim_tch.c **** 			*tch_mode = SIG_ONLY_MODE;
+  91:layer1/prim_tch.c **** 		}
+  92:layer1/prim_tch.c **** 	}
+  93:layer1/prim_tch.c **** }
+  94:layer1/prim_tch.c **** 
+  95:layer1/prim_tch.c **** 
+  96:layer1/prim_tch.c **** /* -------------------------------------------------------------------------
+  97:layer1/prim_tch.c ****  * Shared completion handler
+  98:layer1/prim_tch.c ****  * ------------------------------------------------------------------------- */
+  99:layer1/prim_tch.c **** 
+ 100:layer1/prim_tch.c **** /*
+ 101:layer1/prim_tch.c ****  * FIXME We really need a better way to handle completion, where we can
+ 102:layer1/prim_tch.c ****  *       pass arguments and such ...
+ 103:layer1/prim_tch.c ****  *
+ 104:layer1/prim_tch.c ****  *       Right now, we just 'hope' it gets processed before the next one ...
+ 105:layer1/prim_tch.c ****  */
+ 106:layer1/prim_tch.c **** 
+ 107:layer1/prim_tch.c **** #define TX_TYPE_SACCH	(1<<0)
+ 108:layer1/prim_tch.c **** #define TX_TYPE_FACCH	(1<<1)
+ 109:layer1/prim_tch.c **** #define TX_TYPE_TRAFFIC	(1<<2)
+ 110:layer1/prim_tch.c **** 
+ 111:layer1/prim_tch.c **** static uint16_t last_tx_tch_fn;
+ 112:layer1/prim_tch.c **** static uint16_t last_tx_tch_type;
+ 113:layer1/prim_tch.c **** 
+ 114:layer1/prim_tch.c **** static void l1a_tx_tch_compl(__unused enum l1_compl c)
+ 115:layer1/prim_tch.c **** {
+ 116:layer1/prim_tch.c **** 	struct msgb *msg;
+ 117:layer1/prim_tch.c **** 
+ 118:layer1/prim_tch.c **** 	if (last_tx_tch_type & (TX_TYPE_SACCH | TX_TYPE_FACCH)) {
+ 119:layer1/prim_tch.c **** 		msg = l1_create_l2_msg(L1CTL_DATA_CONF, last_tx_tch_fn, 0, 0);
+ 120:layer1/prim_tch.c **** 		l1_queue_for_l2(msg);
+ 121:layer1/prim_tch.c **** 	}
+ 122:layer1/prim_tch.c **** 
+ 123:layer1/prim_tch.c **** 	if (last_tx_tch_type & TX_TYPE_TRAFFIC) {
+ 124:layer1/prim_tch.c **** 		msg = l1_create_l2_msg(L1CTL_TRAFFIC_CONF, last_tx_tch_fn, 0, 0);
+ 125:layer1/prim_tch.c **** 		l1_queue_for_l2(msg);
+ 126:layer1/prim_tch.c **** 	}
+ 127:layer1/prim_tch.c **** 
+ 128:layer1/prim_tch.c **** 	last_tx_tch_type = 0;
+ 129:layer1/prim_tch.c **** }
+ 130:layer1/prim_tch.c **** 
+ 131:layer1/prim_tch.c **** static __attribute__ ((constructor)) void prim_tch_init(void)
+ 132:layer1/prim_tch.c **** {
+ 133:layer1/prim_tch.c **** 	l1s.completion[L1_COMPL_TX_TCH]  = &l1a_tx_tch_compl;
+ 134:layer1/prim_tch.c **** }
+ 135:layer1/prim_tch.c **** 
+ 136:layer1/prim_tch.c **** 
+ 137:layer1/prim_tch.c **** /* -------------------------------------------------------------------------
+ 138:layer1/prim_tch.c ****  * TCH: Voice & FACCH
+ 139:layer1/prim_tch.c ****  * ------------------------------------------------------------------------- */
+ 140:layer1/prim_tch.c **** 
+ 141:layer1/prim_tch.c **** /*
+ 142:layer1/prim_tch.c ****  * Voice and FACCH data are spread in various ways depending on a lot of
+ 143:layer1/prim_tch.c ****  * factors. Trying to handle that with the mframe scheduler is just a mess,
+ 144:layer1/prim_tch.c ****  * so we schedule it burst by burst and handle the complex logic inside the
+ 145:layer1/prim_tch.c ****  * primitive task code itself.
+ 146:layer1/prim_tch.c ****  */
+ 147:layer1/prim_tch.c **** 
+ 148:layer1/prim_tch.c **** 
+ 149:layer1/prim_tch.c **** #define FACCH_MEAS_HIST	8	/* Up to 8 bursts history */
+ 150:layer1/prim_tch.c **** struct l1s_rx_tch_state {
+ 151:layer1/prim_tch.c **** 	struct l1s_meas_hdr meas[FACCH_MEAS_HIST];
+ 152:layer1/prim_tch.c **** };
+ 153:layer1/prim_tch.c **** 
+ 154:layer1/prim_tch.c **** static struct l1s_rx_tch_state rx_tch;
+ 155:layer1/prim_tch.c **** 
+ 156:layer1/prim_tch.c **** 
+ 157:layer1/prim_tch.c **** static int l1s_tch_resp(__unused uint8_t p1, __unused uint8_t p2, uint16_t p3)
+ 158:layer1/prim_tch.c **** {
+ 159:layer1/prim_tch.c **** 	static uint8_t meas_id = 0;
+ 160:layer1/prim_tch.c **** 	uint8_t mf_task_id = p3 & 0xff;
+ 161:layer1/prim_tch.c **** 	struct gsm_time rx_time;
+ 162:layer1/prim_tch.c **** 	uint8_t chan_nr;
+ 163:layer1/prim_tch.c **** 	uint16_t arfcn;
+ 164:layer1/prim_tch.c **** 	uint8_t tsc, tn;
+ 165:layer1/prim_tch.c **** 	uint8_t tch_f_hn, tch_sub;
+ 166:layer1/prim_tch.c **** 	uint32_t fn_report;
+ 167:layer1/prim_tch.c **** 	int facch_rx_now, traffic_rx_now;
+ 168:layer1/prim_tch.c **** 
+ 169:layer1/prim_tch.c **** 	/* Get/compute various parameters */
+ 170:layer1/prim_tch.c **** 	gsm_fn2gsmtime(&rx_time, (l1s.current_time.fn - 1 + GSM_MAX_FN) % GSM_MAX_FN);
+ 171:layer1/prim_tch.c **** 	rfch_get_params(&rx_time, &arfcn, &tsc, &tn);
+ 172:layer1/prim_tch.c **** 	chan_nr = mframe_task2chan_nr(mf_task_id, tn);
+ 173:layer1/prim_tch.c **** 	tch_get_params(&rx_time, chan_nr, &fn_report, &tch_f_hn, &tch_sub, NULL);
+ 174:layer1/prim_tch.c **** 
+ 175:layer1/prim_tch.c **** 	meas_id = (meas_id + 1) % FACCH_MEAS_HIST; /* absolute value doesn't matter */
+ 176:layer1/prim_tch.c **** 
+ 177:layer1/prim_tch.c **** 	/* Collect measurements */
+ 178:layer1/prim_tch.c **** 	rx_tch.meas[meas_id].toa_qbit = dsp_api.db_r->a_serv_demod[D_TOA];
+ 179:layer1/prim_tch.c **** 	rx_tch.meas[meas_id].pm_dbm8 =
+ 180:layer1/prim_tch.c **** 		agc_inp_dbm8_by_pm(dsp_api.db_r->a_serv_demod[D_PM] >> 3);
+ 181:layer1/prim_tch.c **** 	rx_tch.meas[meas_id].freq_err =
+ 182:layer1/prim_tch.c **** 		ANGLE_TO_FREQ(dsp_api.db_r->a_serv_demod[D_ANGLE]);
+ 183:layer1/prim_tch.c **** 	rx_tch.meas[meas_id].snr = dsp_api.db_r->a_serv_demod[D_SNR];
+ 184:layer1/prim_tch.c **** 
+ 185:layer1/prim_tch.c **** 	/* feed computed frequency error into AFC loop */
+ 186:layer1/prim_tch.c **** 	if (rx_tch.meas[meas_id].snr > AFC_SNR_THRESHOLD)
+ 187:layer1/prim_tch.c **** 		afc_input(rx_tch.meas[meas_id].freq_err, arfcn, 1);
+ 188:layer1/prim_tch.c **** 	else
+ 189:layer1/prim_tch.c **** 		afc_input(rx_tch.meas[meas_id].freq_err, arfcn, 0);
+ 190:layer1/prim_tch.c **** 
+ 191:layer1/prim_tch.c **** 	/* feed computed TOA into TA loop */
+ 192:layer1/prim_tch.c **** 	toa_input(rx_tch.meas[meas_id].toa_qbit << 2, rx_tch.meas[meas_id].snr);
+ 193:layer1/prim_tch.c **** 
+ 194:layer1/prim_tch.c **** 	/* Tell the RF frontend to set the gain appropriately */
+ 195:layer1/prim_tch.c **** 	rffe_compute_gain(rx_tch.meas[meas_id].pm_dbm8 / 8,
+ 196:layer1/prim_tch.c **** 		CAL_DSP_TGT_BB_LVL);
+ 197:layer1/prim_tch.c **** 
+ 198:layer1/prim_tch.c **** 	/* FACCH Block end ? */
+ 199:layer1/prim_tch.c **** 	if (tch_f_hn) {
+ 200:layer1/prim_tch.c **** 		/* FACCH/F: B0(0...7),B1(4...11),B2(8...11,0...3) (mod 13) */
+ 201:layer1/prim_tch.c **** 		facch_rx_now = ((rx_time.fn % 13) % 4) == 3;
+ 202:layer1/prim_tch.c **** 	} else {
+ 203:layer1/prim_tch.c **** 		/* FAACH/H: See GSM 05.02 Clause 7 Table 1of9 */
+ 204:layer1/prim_tch.c **** 		uint8_t t2_norm = rx_time.t2 - tch_sub;
+ 205:layer1/prim_tch.c **** 		facch_rx_now = (t2_norm == 15) ||
+ 206:layer1/prim_tch.c **** 		               (t2_norm == 23) ||
+ 207:layer1/prim_tch.c **** 		               (t2_norm ==  6);
+ 208:layer1/prim_tch.c **** 	}
+ 209:layer1/prim_tch.c **** 
+ 210:layer1/prim_tch.c **** 	if (facch_rx_now && (dsp_api.ndb->a_fd[0] & (1<<B_BLUD))) {
+ 211:layer1/prim_tch.c **** 		struct msgb *msg;
+ 212:layer1/prim_tch.c **** 		struct l1ctl_info_dl *dl;
+ 213:layer1/prim_tch.c **** 		struct l1ctl_data_ind *di;
+ 214:layer1/prim_tch.c **** 		uint16_t num_biterr;
+ 215:layer1/prim_tch.c **** 		uint32_t avg_snr = 0;
+ 216:layer1/prim_tch.c **** 		int32_t avg_dbm8 = 0;
+ 217:layer1/prim_tch.c **** 		int i, n;
+ 218:layer1/prim_tch.c **** 
+ 219:layer1/prim_tch.c **** 		/* Allocate msgb */
+ 220:layer1/prim_tch.c **** 			/* FIXME: we actually want all allocation out of L1S! */
+ 221:layer1/prim_tch.c **** 		msg = l1ctl_msgb_alloc(L1CTL_DATA_IND);
+ 222:layer1/prim_tch.c **** 		if(!msg) {
+ 223:layer1/prim_tch.c **** 			printf("TCH FACCH: unable to allocate msgb\n");
+ 224:layer1/prim_tch.c **** 			goto skip_rx_facch;
+ 225:layer1/prim_tch.c **** 		}
+ 226:layer1/prim_tch.c **** 
+ 227:layer1/prim_tch.c **** 		dl = (struct l1ctl_info_dl *) msgb_put(msg, sizeof(*dl));
+ 228:layer1/prim_tch.c **** 		di = (struct l1ctl_data_ind *) msgb_put(msg, sizeof(*di));
+ 229:layer1/prim_tch.c **** 
+ 230:layer1/prim_tch.c **** 		/* Fill DL header (should be about the first burst ... here is the last) */
+ 231:layer1/prim_tch.c **** 		dl->chan_nr = chan_nr;
+ 232:layer1/prim_tch.c **** 		dl->link_id = 0x00;	/* FACCH */
+ 233:layer1/prim_tch.c **** 		dl->band_arfcn = htons(arfcn);
+ 234:layer1/prim_tch.c **** 		dl->frame_nr = htonl(rx_time.fn);
+ 235:layer1/prim_tch.c **** 
+ 236:layer1/prim_tch.c **** 		/* Average SNR & RX level */
+ 237:layer1/prim_tch.c **** 		n = tch_f_hn ? 8 : 6;
+ 238:layer1/prim_tch.c **** 		for (i=0; i<n; i++) {
+ 239:layer1/prim_tch.c **** 			int j = (meas_id + FACCH_MEAS_HIST - i) % FACCH_MEAS_HIST;
+ 240:layer1/prim_tch.c **** 			avg_snr += rx_tch.meas[j].snr;
+ 241:layer1/prim_tch.c **** 			avg_dbm8 += rx_tch.meas[j].pm_dbm8;
+ 242:layer1/prim_tch.c **** 		}
+ 243:layer1/prim_tch.c **** 
+ 244:layer1/prim_tch.c **** 		dl->snr = avg_snr / n;
+ 245:layer1/prim_tch.c **** 		dl->rx_level = dbm2rxlev(avg_dbm8 / (8*n));
+ 246:layer1/prim_tch.c **** 
+ 247:layer1/prim_tch.c **** 		/* Errors & CRC status */
+ 248:layer1/prim_tch.c **** 		num_biterr = dsp_api.ndb->a_fd[2] & 0xffff;
+ 249:layer1/prim_tch.c **** 		if (num_biterr > 0xff)
+ 250:layer1/prim_tch.c **** 			dl->num_biterr = 0xff;
+ 251:layer1/prim_tch.c **** 		else
+ 252:layer1/prim_tch.c **** 			dl->num_biterr = num_biterr;
+ 253:layer1/prim_tch.c **** 
+ 254:layer1/prim_tch.c **** 		dl->fire_crc = ((dsp_api.ndb->a_fd[0] & 0xffff) & ((1 << B_FIRE1) | (1 << B_FIRE0))) >> B_FIRE0;
+ 255:layer1/prim_tch.c **** 
+ 256:layer1/prim_tch.c **** 		/* Update rx level for pm report */
+ 257:layer1/prim_tch.c **** 		pu_update_rx_level(dl->rx_level);
+ 258:layer1/prim_tch.c **** 
+ 259:layer1/prim_tch.c **** 		/* Copy actual data, skipping the information block [0,1,2] */
+ 260:layer1/prim_tch.c **** 		dsp_memcpy_from_api(di->data, &dsp_api.ndb->a_fd[3], 23, 0);
+ 261:layer1/prim_tch.c **** 
+ 262:layer1/prim_tch.c **** 		/* Give message to up layer */
+ 263:layer1/prim_tch.c **** 		l1_queue_for_l2(msg);
+ 264:layer1/prim_tch.c **** 
+ 265:layer1/prim_tch.c **** 	skip_rx_facch:
+ 266:layer1/prim_tch.c **** 		/* Reset A_FD header (needed by DSP) */
+ 267:layer1/prim_tch.c **** 		/* B_FIRE1 =1, B_FIRE0 =0 , BLUD =0 */
+ 268:layer1/prim_tch.c **** 		dsp_api.ndb->a_fd[0] = (1<<B_FIRE1);
+ 269:layer1/prim_tch.c **** 		dsp_api.ndb->a_fd[2] = 0xffff;
+ 270:layer1/prim_tch.c **** 
+ 271:layer1/prim_tch.c **** 		/* Reset A_DD_0 header in NDB (needed by DSP) */
+ 272:layer1/prim_tch.c **** 		dsp_api.ndb->a_dd_0[0] = 0;
+ 273:layer1/prim_tch.c **** 		dsp_api.ndb->a_dd_0[2] = 0xffff;
+ 274:layer1/prim_tch.c **** 
+ 275:layer1/prim_tch.c **** 		/* Reset A_DD_1 header in NDB (needed by DSP) */
+ 276:layer1/prim_tch.c **** 		dsp_api.ndb->a_dd_1[0] = 0;
+ 277:layer1/prim_tch.c **** 		dsp_api.ndb->a_dd_1[2] = 0xffff;
+ 278:layer1/prim_tch.c **** 	}
+ 279:layer1/prim_tch.c **** 
+ 280:layer1/prim_tch.c **** 	/* Traffic now ? */
+ 281:layer1/prim_tch.c **** 	if (tch_f_hn) {
+ 282:layer1/prim_tch.c **** 		/* TCH/F: B0(0...7),B1(4...11),B2(8...11,0...3) (mod 13)*/
+ 283:layer1/prim_tch.c **** 		traffic_rx_now = ((rx_time.fn % 13) % 4) == 3;
+ 284:layer1/prim_tch.c **** 	} else {
+ 285:layer1/prim_tch.c **** 		/* TCH/H0: B0(0,2,4,6),B1(4,6,8,10),B2(8,10,0,2) (mod 13) */
+ 286:layer1/prim_tch.c **** 		/*     H1: B0(1,3,5,7),B1(5,7,9,11),B2(9,11,1,3) (mod 13) */
+ 287:layer1/prim_tch.c **** 		traffic_rx_now = (((rx_time.fn - tch_sub + 13) % 13) % 4) == 2;
+ 288:layer1/prim_tch.c **** 	}
+ 289:layer1/prim_tch.c **** 
+ 290:layer1/prim_tch.c **** 	if (traffic_rx_now) {
+ 291:layer1/prim_tch.c **** 		volatile uint16_t *traffic_buf;
+ 292:layer1/prim_tch.c **** 
+ 293:layer1/prim_tch.c **** 		traffic_buf = tch_sub ? dsp_api.ndb->a_dd_1 : dsp_api.ndb->a_dd_0;
+ 294:layer1/prim_tch.c **** 
+ 295:layer1/prim_tch.c **** 		if (traffic_buf[0] & (1<<B_BLUD)) {
+ 296:layer1/prim_tch.c **** 			/* Send the data to upper layers (if interested and good frame) */
+ 297:layer1/prim_tch.c **** 			if ((l1s.audio_mode & AUDIO_RX_TRAFFIC_IND) &&
+ 298:layer1/prim_tch.c **** 			    !(dsp_api.ndb->a_dd_0[0] & (1<<B_BFI))) {
+ 299:layer1/prim_tch.c **** 				struct msgb *msg;
+ 300:layer1/prim_tch.c **** 				struct l1ctl_info_dl *dl;
+ 301:layer1/prim_tch.c **** 				struct l1ctl_traffic_ind *ti;
+ 302:layer1/prim_tch.c **** 
+ 303:layer1/prim_tch.c **** 				/* Allocate msgb */
+ 304:layer1/prim_tch.c **** 				/* FIXME: we actually want all allocation out of L1S! */
+ 305:layer1/prim_tch.c **** 				msg = l1ctl_msgb_alloc(L1CTL_TRAFFIC_IND);
+ 306:layer1/prim_tch.c **** 				if(!msg) {
+ 307:layer1/prim_tch.c **** 					printf("TCH traffic: unable to allocate msgb\n");
+ 308:layer1/prim_tch.c **** 					goto skip_rx_traffic;
+ 309:layer1/prim_tch.c **** 				}
+ 310:layer1/prim_tch.c **** 
+ 311:layer1/prim_tch.c **** 				dl = (struct l1ctl_info_dl *) msgb_put(msg, sizeof(*dl));
+ 312:layer1/prim_tch.c **** 				ti = (struct l1ctl_traffic_ind *) msgb_put(msg, sizeof(*ti));
+ 313:layer1/prim_tch.c **** 
+ 314:layer1/prim_tch.c **** 				/* Copy actual data, skipping the information block [0,1,2] */
+ 315:layer1/prim_tch.c **** 				dsp_memcpy_from_api(ti->data, &traffic_buf[3], 33, 1);
+ 316:layer1/prim_tch.c **** 
+ 317:layer1/prim_tch.c **** 				/* Give message to up layer */
+ 318:layer1/prim_tch.c **** 				l1_queue_for_l2(msg);
+ 319:layer1/prim_tch.c **** 			}
+ 320:layer1/prim_tch.c **** 
+ 321:layer1/prim_tch.c **** 	skip_rx_traffic:
+ 322:layer1/prim_tch.c **** 			/* Reset traffic buffer header in NDB (needed by DSP) */
+ 323:layer1/prim_tch.c **** 			traffic_buf[0] = 0;
+ 324:layer1/prim_tch.c **** 			traffic_buf[2] = 0xffff;
+ 325:layer1/prim_tch.c **** 		}
+ 326:layer1/prim_tch.c **** 	}
+ 327:layer1/prim_tch.c **** 
+ 328:layer1/prim_tch.c **** 	/* mark READ page as being used */
+ 329:layer1/prim_tch.c **** 	dsp_api.r_page_used = 1;
+ 330:layer1/prim_tch.c **** 
+ 331:layer1/prim_tch.c **** 	return 0;
+ 332:layer1/prim_tch.c **** }
+ 333:layer1/prim_tch.c **** 
+ 334:layer1/prim_tch.c **** static int l1s_tch_cmd(__unused uint8_t p1, __unused uint8_t p2, uint16_t p3)
+ 335:layer1/prim_tch.c **** {
+ 336:layer1/prim_tch.c **** 	uint8_t mf_task_id = p3 & 0xff;
+ 337:layer1/prim_tch.c **** 	uint8_t chan_nr;
+ 338:layer1/prim_tch.c **** 	uint16_t arfcn;
+ 339:layer1/prim_tch.c **** 	uint8_t tsc, tn;
+ 340:layer1/prim_tch.c **** 	uint8_t tch_f_hn, tch_sub, tch_mode;
+ 341:layer1/prim_tch.c **** 	uint32_t fn_report;
+ 342:layer1/prim_tch.c **** 	uint8_t sync = 0;
+ 343:layer1/prim_tch.c **** 	static int icnt;
+ 344:layer1/prim_tch.c **** 	int facch_tx_now, traffic_tx_now;
+ 345:layer1/prim_tch.c **** 
+ 346:layer1/prim_tch.c **** 	/* Get/compute various parameters */
+ 347:layer1/prim_tch.c **** 	rfch_get_params(&l1s.next_time, &arfcn, &tsc, &tn);
+ 348:layer1/prim_tch.c **** 	chan_nr = mframe_task2chan_nr(mf_task_id, tn);
+ 349:layer1/prim_tch.c **** 	tch_get_params(&l1s.next_time, chan_nr, &fn_report, &tch_f_hn, &tch_sub, &tch_mode);
+ 350:layer1/prim_tch.c **** 
+ 351:layer1/prim_tch.c **** 	/* Sync & FACCH delay */
+ 352:layer1/prim_tch.c **** 	if (l1s.tch_sync) {
+ 353:layer1/prim_tch.c **** 		l1s.tch_sync = 0;
+ 354:layer1/prim_tch.c **** 		sync = 1;
+ 355:layer1/prim_tch.c **** 		icnt = 0;
+ 356:layer1/prim_tch.c **** 	} else if (icnt <= 26)
+ 357:layer1/prim_tch.c **** 		icnt++;
+ 358:layer1/prim_tch.c **** 
+ 359:layer1/prim_tch.c **** 	/* Load FACCH data if we start a new burst */
+ 360:layer1/prim_tch.c **** 	/* (the DSP wants the data on the CMD of the burst _preceding_ the
+ 361:layer1/prim_tch.c **** 	 * first burst) */
+ 362:layer1/prim_tch.c **** 	if (tch_f_hn) {
+ 363:layer1/prim_tch.c **** 		/* FACCH/F: B0(0...7),B1(4...11),B2(8...11,0...3) */
+ 364:layer1/prim_tch.c **** 		facch_tx_now = ((l1s.next_time.fn % 13) % 4) == 3;
+ 365:layer1/prim_tch.c **** 	} else {
+ 366:layer1/prim_tch.c **** 		/* FAACH/H: See GSM 05.02 Clause 7 Table 1of9 */
+ 367:layer1/prim_tch.c **** 		uint8_t t2_norm = l1s.next_time.t2 - tch_sub;
+ 368:layer1/prim_tch.c **** 		facch_tx_now = (t2_norm == 23) ||
+ 369:layer1/prim_tch.c **** 		               (t2_norm ==  6) ||
+ 370:layer1/prim_tch.c **** 		               (t2_norm == 15);
+ 371:layer1/prim_tch.c **** 	}
+ 372:layer1/prim_tch.c **** 
+ 373:layer1/prim_tch.c **** 	if (facch_tx_now) {
+ 374:layer1/prim_tch.c **** 		uint16_t *info_ptr = dsp_api.ndb->a_fu;
+ 375:layer1/prim_tch.c **** 		struct msgb *msg;
+ 376:layer1/prim_tch.c **** 		const uint8_t *data;
+ 377:layer1/prim_tch.c **** 
+ 378:layer1/prim_tch.c **** 		/* Pull FACCH data (if ready) */
+ 379:layer1/prim_tch.c **** 		if (icnt > 26)
+ 380:layer1/prim_tch.c **** 			msg = msgb_dequeue(&l1s.tx_queue[L1S_CHAN_MAIN]);
+ 381:layer1/prim_tch.c **** 		else
+ 382:layer1/prim_tch.c **** 			msg = NULL;
+ 383:layer1/prim_tch.c **** 
+ 384:layer1/prim_tch.c **** 		/* If TX is empty and we're signalling only, use dummy frame */
+ 385:layer1/prim_tch.c **** 		if (msg)
+ 386:layer1/prim_tch.c **** 			data = msg->l3h;
+ 387:layer1/prim_tch.c **** 		else if (tch_mode == SIG_ONLY_MODE)
+ 388:layer1/prim_tch.c **** 			data = pu_get_idle_frame();
+ 389:layer1/prim_tch.c **** 		else
+ 390:layer1/prim_tch.c **** 			data = NULL;
+ 391:layer1/prim_tch.c **** 
+ 392:layer1/prim_tch.c **** 		/* Do we really send something ? */
+ 393:layer1/prim_tch.c **** 		if (data) {
+ 394:layer1/prim_tch.c **** 			/* Fill data block header */
+ 395:layer1/prim_tch.c **** 			info_ptr[0] = (1 << B_BLUD);	/* 1st word: Set B_BLU bit. */
+ 396:layer1/prim_tch.c **** 			info_ptr[1] = 0;		/* 2nd word: cleared. */
+ 397:layer1/prim_tch.c **** 			info_ptr[2] = 0;		/* 3nd word: cleared. */
+ 398:layer1/prim_tch.c **** 
+ 399:layer1/prim_tch.c **** 			/* Copy the actual data after the header */
+ 400:layer1/prim_tch.c **** 			dsp_memcpy_to_api(&info_ptr[3], data, 23, 0);
+ 401:layer1/prim_tch.c **** 		}
+ 402:layer1/prim_tch.c **** 
+ 403:layer1/prim_tch.c **** 		/* Indicate completion (FIXME: early but easier this way for now) */
+ 404:layer1/prim_tch.c **** 		if (msg) {
+ 405:layer1/prim_tch.c **** 			last_tx_tch_fn = l1s.next_time.fn;
+ 406:layer1/prim_tch.c **** 			last_tx_tch_type |= TX_TYPE_FACCH;
+ 407:layer1/prim_tch.c **** 			l1s_compl_sched(L1_COMPL_TX_TCH);
+ 408:layer1/prim_tch.c **** 		}
+ 409:layer1/prim_tch.c **** 
+ 410:layer1/prim_tch.c **** 		/* Free msg now that we're done with it */
+ 411:layer1/prim_tch.c **** 		if (msg)
+ 412:layer1/prim_tch.c **** 			msgb_free(msg);
+ 413:layer1/prim_tch.c **** 	}
+ 414:layer1/prim_tch.c **** 
+ 415:layer1/prim_tch.c **** 	/* Traffic now ? */
+ 416:layer1/prim_tch.c **** 	if (tch_f_hn) {
+ 417:layer1/prim_tch.c **** 		/* TCH/F: B0(0...7),B1(4...11),B2(8...11,0...3) (mod 13)*/
+ 418:layer1/prim_tch.c **** 		traffic_tx_now = ((l1s.next_time.fn % 13) % 4) == 3;
+ 419:layer1/prim_tch.c **** 	} else {
+ 420:layer1/prim_tch.c **** 		/* TCH/H0: B0(0,2,4,6),B1(4,6,8,10),B2(8,10,0,2) (mod 13) */
+ 421:layer1/prim_tch.c **** 		/*     H1: B0(1,3,5,7),B1(5,7,9,11),B2(9,11,1,3) (mod 13) */
+ 422:layer1/prim_tch.c **** 		traffic_tx_now = (((l1s.next_time.fn - tch_sub + 13) % 13) % 4) == 2;
+ 423:layer1/prim_tch.c **** 	}
+ 424:layer1/prim_tch.c **** 
+ 425:layer1/prim_tch.c **** 	if (traffic_tx_now) {
+ 426:layer1/prim_tch.c **** 		volatile uint16_t *traffic_buf;
+ 427:layer1/prim_tch.c **** 		struct msgb *msg;
+ 428:layer1/prim_tch.c **** 		const uint8_t *data;
+ 429:layer1/prim_tch.c **** 
+ 430:layer1/prim_tch.c **** 		/* Reset play mode */
+ 431:layer1/prim_tch.c **** 		dsp_api.ndb->d_tch_mode &= ~B_PLAY_UL;
+ 432:layer1/prim_tch.c **** 
+ 433:layer1/prim_tch.c **** 		/* Check l1s audio mode */
+ 434:layer1/prim_tch.c **** 		if (!(l1s.audio_mode & AUDIO_TX_TRAFFIC_REQ))
+ 435:layer1/prim_tch.c **** 			goto skip_tx_traffic;
+ 436:layer1/prim_tch.c **** 
+ 437:layer1/prim_tch.c **** 		/* Traffic buffer = !tch_sub */
+ 438:layer1/prim_tch.c **** 		traffic_buf = tch_sub ? dsp_api.ndb->a_du_0 : dsp_api.ndb->a_du_1;
+ 439:layer1/prim_tch.c **** 
+ 440:layer1/prim_tch.c **** 		/* Pull Traffic data (if any) */
+ 441:layer1/prim_tch.c **** 		msg = msgb_dequeue(&l1s.tx_queue[L1S_CHAN_TRAFFIC]);
+ 442:layer1/prim_tch.c **** 
+ 443:layer1/prim_tch.c **** 		/* Copy actual data, skipping the information block [0,1,2] */
+ 444:layer1/prim_tch.c **** 		if (msg) {
+ 445:layer1/prim_tch.c **** 			data = msg->l2h;
+ 446:layer1/prim_tch.c **** 			dsp_memcpy_to_api(&traffic_buf[3], data, 33, 1);
+ 447:layer1/prim_tch.c **** 
+ 448:layer1/prim_tch.c **** 			traffic_buf[0] = (1 << B_BLUD);	/* 1st word: Set B_BLU bit. */
+ 449:layer1/prim_tch.c **** 			traffic_buf[1] = 0;		/* 2nd word: cleared. */
+ 450:layer1/prim_tch.c **** 			traffic_buf[2] = 0;		/* 3nd word: cleared. */
+ 451:layer1/prim_tch.c **** 		}
+ 452:layer1/prim_tch.c **** 
+ 453:layer1/prim_tch.c **** 		if (msg)
+ 454:layer1/prim_tch.c **** 			dsp_api.ndb->d_tch_mode |= B_PLAY_UL;
+ 455:layer1/prim_tch.c **** 
+ 456:layer1/prim_tch.c **** 		/* Indicate completion (FIXME: early but easier this way for now) */
+ 457:layer1/prim_tch.c **** 		if (msg) {
+ 458:layer1/prim_tch.c **** 			last_tx_tch_fn = l1s.next_time.fn;
+ 459:layer1/prim_tch.c **** 			last_tx_tch_type |= TX_TYPE_TRAFFIC;
+ 460:layer1/prim_tch.c **** 			l1s_compl_sched(L1_COMPL_TX_TCH);
+ 461:layer1/prim_tch.c **** 		}
+ 462:layer1/prim_tch.c **** 
+ 463:layer1/prim_tch.c **** 		/* Free msg now that we're done with it */
+ 464:layer1/prim_tch.c **** 		if (msg)
+ 465:layer1/prim_tch.c **** 			msgb_free(msg);
+ 466:layer1/prim_tch.c **** 	}
+ 467:layer1/prim_tch.c **** skip_tx_traffic:
+ 468:layer1/prim_tch.c **** 
+ 469:layer1/prim_tch.c **** 	/* Configure DSP for TX/RX */
+ 470:layer1/prim_tch.c **** 	l1s_tx_apc_helper(arfcn);
+ 471:layer1/prim_tch.c **** 
+ 472:layer1/prim_tch.c **** 	dsp_load_tch_param(
+ 473:layer1/prim_tch.c **** 		&l1s.next_time,
+ 474:layer1/prim_tch.c **** 		tch_mode, tch_f_hn ? TCH_F : TCH_H, tch_sub,
+ 475:layer1/prim_tch.c **** 		0, sync, tn
+ 476:layer1/prim_tch.c **** 	);
+ 477:layer1/prim_tch.c **** 
+ 478:layer1/prim_tch.c **** 	dsp_load_rx_task(TCHT_DSP_TASK, 0, tsc); /* burst_id unused for TCH */
+ 479:layer1/prim_tch.c **** 	l1s_rx_win_ctrl(arfcn, L1_RXWIN_NB, 0);
+ 480:layer1/prim_tch.c **** 
+ 481:layer1/prim_tch.c **** 	dsp_load_tx_task(TCHT_DSP_TASK, 0, tsc); /* burst_id unused for TCH */
+ 482:layer1/prim_tch.c **** 	l1s_tx_win_ctrl(arfcn | ARFCN_UPLINK, L1_TXWIN_NB, 0, 3);
+ 483:layer1/prim_tch.c **** 
+ 484:layer1/prim_tch.c **** 	return 0;
+ 485:layer1/prim_tch.c **** }
+ 486:layer1/prim_tch.c **** 
+ 487:layer1/prim_tch.c **** 
+ 488:layer1/prim_tch.c **** const struct tdma_sched_item tch_sched_set[] = {
+ 489:layer1/prim_tch.c **** 	SCHED_ITEM_DT(l1s_tch_cmd, 0, 0, 0),	SCHED_END_FRAME(),
+ 490:layer1/prim_tch.c **** 						SCHED_END_FRAME(),
+ 491:layer1/prim_tch.c **** 	SCHED_ITEM(l1s_tch_resp, 0, 0, -4),	SCHED_END_FRAME(),
+ 492:layer1/prim_tch.c **** 	SCHED_END_SET()
+ 493:layer1/prim_tch.c **** };
+ 494:layer1/prim_tch.c **** 
+ 495:layer1/prim_tch.c **** 
+ 496:layer1/prim_tch.c **** /* -------------------------------------------------------------------------
+ 497:layer1/prim_tch.c ****  * TCH/H: Dummy
+ 498:layer1/prim_tch.c ****  * ------------------------------------------------------------------------- */
+ 499:layer1/prim_tch.c **** 
+ 500:layer1/prim_tch.c **** /* This task is needed to perform some operation in the DSP when there is
+ 501:layer1/prim_tch.c ****  * no data to be exchanged */
+ 502:layer1/prim_tch.c **** 
+ 503:layer1/prim_tch.c **** static int l1s_tch_d_resp(__unused uint8_t p1, __unused uint8_t p2, uint16_t p3)
+ 504:layer1/prim_tch.c **** {
+  17              		.loc 1 504 0
+  18              		.cfi_startproc
+  19              		@ args = 0, pretend = 0, frame = 0
+  20              		@ frame_needed = 0, uses_anonymous_args = 0
+  21              		@ link register save eliminated.
+  22              	.LVL0:
+ 505:layer1/prim_tch.c **** 	/* mark READ page as being used */
+ 506:layer1/prim_tch.c **** 	dsp_api.r_page_used = 1;
+  23              		.loc 1 506 0
+  24 0000 0C309FE5 		ldr	r3, .L2
+  25 0004 0120A0E3 		mov	r2, #1
+  26              	.LVL1:
+  27 0008 182083E5 		str	r2, [r3, #24]
+ 507:layer1/prim_tch.c **** 
+ 508:layer1/prim_tch.c **** 	return 0;
+ 509:layer1/prim_tch.c **** }
+  28              		.loc 1 509 0
+  29 000c 0000A0E3 		mov	r0, #0
+  30              	.LVL2:
+  31 0010 1EFF2FE1 		bx	lr
+  32              	.L3:
+  33              		.align	2
+  34              	.L2:
+  35 0014 00000000 		.word	dsp_api
+  36              		.cfi_endproc
+  37              	.LFE64:
+  39              		.section	.text.__fswab32,"ax",%progbits
+  40              		.align	2
+  42              	__fswab32:
+  43              	.LFB2:
+  44              		.file 2 "include/swab.h"
+   1:include/swab.h **** #ifndef _LINUX_SWAB_H
+   2:include/swab.h **** #define _LINUX_SWAB_H
+   3:include/swab.h **** 
+   4:include/swab.h **** #include <stdint.h>
+   5:include/swab.h **** #include <defines.h>
+   6:include/swab.h **** #include <asm/swab.h>
+   7:include/swab.h **** 
+   8:include/swab.h **** /*
+   9:include/swab.h ****  * casts are necessary for constants, because we never know how for sure
+  10:include/swab.h ****  * how U/UL/ULL map to uint16_t, uint32_t, uint64_t. At least not in a portable way.
+  11:include/swab.h ****  */
+  12:include/swab.h **** #define ___constant_swab16(x) ((uint16_t)(				\
+  13:include/swab.h **** 	(((uint16_t)(x) & (uint16_t)0x00ffU) << 8) |			\
+  14:include/swab.h **** 	(((uint16_t)(x) & (uint16_t)0xff00U) >> 8)))
+  15:include/swab.h **** 
+  16:include/swab.h **** #define ___constant_swab32(x) ((uint32_t)(				\
+  17:include/swab.h **** 	(((uint32_t)(x) & (uint32_t)0x000000ffUL) << 24) |		\
+  18:include/swab.h **** 	(((uint32_t)(x) & (uint32_t)0x0000ff00UL) <<  8) |		\
+  19:include/swab.h **** 	(((uint32_t)(x) & (uint32_t)0x00ff0000UL) >>  8) |		\
+  20:include/swab.h **** 	(((uint32_t)(x) & (uint32_t)0xff000000UL) >> 24)))
+  21:include/swab.h **** 
+  22:include/swab.h **** #define ___constant_swab64(x) ((uint64_t)(				\
+  23:include/swab.h **** 	(((uint64_t)(x) & (uint64_t)0x00000000000000ffULL) << 56) |	\
+  24:include/swab.h **** 	(((uint64_t)(x) & (uint64_t)0x000000000000ff00ULL) << 40) |	\
+  25:include/swab.h **** 	(((uint64_t)(x) & (uint64_t)0x0000000000ff0000ULL) << 24) |	\
+  26:include/swab.h **** 	(((uint64_t)(x) & (uint64_t)0x00000000ff000000ULL) <<  8) |	\
+  27:include/swab.h **** 	(((uint64_t)(x) & (uint64_t)0x000000ff00000000ULL) >>  8) |	\
+  28:include/swab.h **** 	(((uint64_t)(x) & (uint64_t)0x0000ff0000000000ULL) >> 24) |	\
+  29:include/swab.h **** 	(((uint64_t)(x) & (uint64_t)0x00ff000000000000ULL) >> 40) |	\
+  30:include/swab.h **** 	(((uint64_t)(x) & (uint64_t)0xff00000000000000ULL) >> 56)))
+  31:include/swab.h **** 
+  32:include/swab.h **** #define ___constant_swahw32(x) ((uint32_t)(			\
+  33:include/swab.h **** 	(((uint32_t)(x) & (uint32_t)0x0000ffffUL) << 16) |		\
+  34:include/swab.h **** 	(((uint32_t)(x) & (uint32_t)0xffff0000UL) >> 16)))
+  35:include/swab.h **** 
+  36:include/swab.h **** #define ___constant_swahb32(x) ((uint32_t)(			\
+  37:include/swab.h **** 	(((uint32_t)(x) & (uint32_t)0x00ff00ffUL) << 8) |		\
+  38:include/swab.h **** 	(((uint32_t)(x) & (uint32_t)0xff00ff00UL) >> 8)))
+  39:include/swab.h **** 
+  40:include/swab.h **** /*
+  41:include/swab.h ****  * Implement the following as inlines, but define the interface using
+  42:include/swab.h ****  * macros to allow constant folding when possible:
+  43:include/swab.h ****  * ___swab16, ___swab32, ___swab64, ___swahw32, ___swahb32
+  44:include/swab.h ****  */
+  45:include/swab.h **** 
+  46:include/swab.h **** static inline __attribute_const__ uint16_t __fswab16(uint16_t val)
+  47:include/swab.h **** {
+  48:include/swab.h **** #ifdef __arch_swab16
+  49:include/swab.h **** 	return __arch_swab16(val);
+  50:include/swab.h **** #else
+  51:include/swab.h **** 	return ___constant_swab16(val);
+  52:include/swab.h **** #endif
+  53:include/swab.h **** }
+  54:include/swab.h **** 
+  55:include/swab.h **** static inline __attribute_const__ uint32_t __fswab32(uint32_t val)
+  56:include/swab.h **** {
+  45              		.loc 2 56 0
+  46              		.cfi_startproc
+  47              		@ args = 0, pretend = 0, frame = 0
+  48              		@ frame_needed = 0, uses_anonymous_args = 0
+  49              		@ link register save eliminated.
+  50              	.LVL3:
+  51              	.LBB20:
+  52              	.LBB21:
+  53              		.file 3 "include/asm/swab.h"
+   1:include/asm/swab.h **** /*
+   2:include/asm/swab.h ****  *  arch/arm/include/asm/byteorder.h
+   3:include/asm/swab.h ****  *
+   4:include/asm/swab.h ****  * ARM Endian-ness.  In little endian mode, the data bus is connected such
+   5:include/asm/swab.h ****  * that byte accesses appear as:
+   6:include/asm/swab.h ****  *  0 = d0...d7, 1 = d8...d15, 2 = d16...d23, 3 = d24...d31
+   7:include/asm/swab.h ****  * and word accesses (data or instruction) appear as:
+   8:include/asm/swab.h ****  *  d0...d31
+   9:include/asm/swab.h ****  *
+  10:include/asm/swab.h ****  * When in big endian mode, byte accesses appear as:
+  11:include/asm/swab.h ****  *  0 = d24...d31, 1 = d16...d23, 2 = d8...d15, 3 = d0...d7
+  12:include/asm/swab.h ****  * and word accesses (data or instruction) appear as:
+  13:include/asm/swab.h ****  *  d0...d31
+  14:include/asm/swab.h ****  */
+  15:include/asm/swab.h **** #ifndef __ASM_ARM_SWAB_H
+  16:include/asm/swab.h **** #define __ASM_ARM_SWAB_H
+  17:include/asm/swab.h **** 
+  18:include/asm/swab.h **** #include <stdint.h>
+  19:include/asm/swab.h **** #include <defines.h>
+  20:include/asm/swab.h **** 
+  21:include/asm/swab.h **** static inline uint32_t __arch_swab32(uint32_t x)
+  22:include/asm/swab.h **** {
+  23:include/asm/swab.h **** 	uint32_t t;
+  24:include/asm/swab.h **** 
+  25:include/asm/swab.h **** #ifndef __thumb__
+  26:include/asm/swab.h **** 	if (!__builtin_constant_p(x)) {
+  27:include/asm/swab.h **** 		/*
+  28:include/asm/swab.h **** 		 * The compiler needs a bit of a hint here to always do the
+  29:include/asm/swab.h **** 		 * right thing and not screw it up to different degrees
+  30:include/asm/swab.h **** 		 * depending on the gcc version.
+  31:include/asm/swab.h **** 		 */
+  32:include/asm/swab.h **** 		asm ("eor\t%0, %1, %1, ror #16" : "=r" (t) : "r" (x));
+  54              		.loc 3 32 0
+  55              	@ 32 "include/asm/swab.h" 1
+  56 0000 603820E0 		eor	r3, r0, r0, ror #16
+  57              	@ 0 "" 2
+  58              	.LVL4:
+  33:include/asm/swab.h **** 	} else
+  34:include/asm/swab.h **** #endif
+  35:include/asm/swab.h **** 		t = x ^ ((x << 16) | (x >> 16)); /* eor r1,r0,r0,ror #16 */
+  36:include/asm/swab.h **** 
+  37:include/asm/swab.h **** 	x = (x << 24) | (x >> 8);		/* mov r0,r0,ror #8      */
+  38:include/asm/swab.h **** 	t &= ~0x00FF0000;			/* bic r1,r1,#0x00FF0000 */
+  59              		.loc 3 38 0
+  60 0004 FF38C3E3 		bic	r3, r3, #16711680
+  61              	.LVL5:
+  39:include/asm/swab.h **** 	x ^= (t >> 8);				/* eor r0,r0,r1,lsr #8   */
+  62              		.loc 3 39 0
+  63 0008 2334A0E1 		mov	r3, r3, lsr #8
+  64              	.LVL6:
+  65              	.LBE21:
+  66              	.LBE20:
+  57:include/swab.h **** #ifdef __arch_swab32
+  58:include/swab.h **** 	return __arch_swab32(val);
+  59:include/swab.h **** #else
+  60:include/swab.h **** 	return ___constant_swab32(val);
+  61:include/swab.h **** #endif
+  62:include/swab.h **** }
+  67              		.loc 2 62 0
+  68 000c 600423E0 		eor	r0, r3, r0, ror #8
+  69              	.LVL7:
+  70 0010 1EFF2FE1 		bx	lr
+  71              		.cfi_endproc
+  72              	.LFE2:
+  74              		.section	.text.msgb_put,"ax",%progbits
+  75              		.align	2
+  77              	msgb_put:
+  78              	.LFB38:
+  79              		.file 4 "../../shared/libosmocore/include/osmocom/core/msgb.h"
+   1:../../shared/libosmocore/include/osmocom/core/msgb.h **** #ifndef _MSGB_H
+   2:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define _MSGB_H
+   3:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+   4:../../shared/libosmocore/include/osmocom/core/msgb.h **** /* (C) 2008 by Harald Welte <laforge@gnumonks.org>
+   5:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * All Rights Reserved
+   6:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+   7:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This program is free software; you can redistribute it and/or modify
+   8:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * it under the terms of the GNU General Public License as published by
+   9:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * the Free Software Foundation; either version 2 of the License, or
+  10:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * (at your option) any later version.
+  11:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+  12:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This program is distributed in the hope that it will be useful,
+  13:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  14:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  15:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * GNU General Public License for more details.
+  16:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+  17:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * You should have received a copy of the GNU General Public License along
+  18:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  19:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  20:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+  21:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+  22:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  23:../../shared/libosmocore/include/osmocom/core/msgb.h **** #include <stdint.h>
+  24:../../shared/libosmocore/include/osmocom/core/msgb.h **** #include <osmocom/core/linuxlist.h>
+  25:../../shared/libosmocore/include/osmocom/core/msgb.h **** #include <osmocom/core/utils.h>
+  26:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  27:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \defgroup msgb Message buffers
+  28:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  @{
+  29:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+  30:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  31:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \file msgb.h
+  32:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \brief Osmocom message buffers
+  33:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * The Osmocom message buffers are modelled after the 'struct skb'
+  34:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * inside the Linux kernel network stack.  As they exist in userspace,
+  35:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * they are much simplified.  However, terminology such as headroom,
+  36:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * tailroom, push/pull/put etc. remains the same.
+  37:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+  38:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  39:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define MSGB_DEBUG
+  40:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  41:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief Osmocom message buffer */
+  42:../../shared/libosmocore/include/osmocom/core/msgb.h **** struct msgb {
+  43:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	struct llist_head list; /*!< \brief linked list header */
+  44:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  45:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  46:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	/* Part of which TRX logical channel we were received / transmitted */
+  47:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	/* FIXME: move them into the control buffer */
+  48:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	union {
+  49:../../shared/libosmocore/include/osmocom/core/msgb.h **** 		void *dst; /*!< \brief reference of origin/destination */
+  50:../../shared/libosmocore/include/osmocom/core/msgb.h **** 		struct gsm_bts_trx *trx;
+  51:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	};
+  52:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	struct gsm_lchan *lchan; /*!< \brief logical channel */
+  53:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  54:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *l1h; /*!< \brief pointer to Layer1 header (if any) */
+  55:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *l2h; /*!< \brief pointer to A-bis layer 2 header: OML, RSL(RLL), NS */
+  56:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *l3h; /*!< \brief pointer to Layer 3 header. For OML: FOM; RSL: 04.08; GPRS: BSSGP *
+  57:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *l4h; /*!< \brief pointer to layer 4 header */
+  58:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  59:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned long cb[5]; /*!< \brief control buffer */
+  60:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  61:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint16_t data_len;   /*!< \brief length of underlying data array */
+  62:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	uint16_t len;	     /*!< \brief length of bytes used in msgb */
+  63:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  64:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *head;	/*!< \brief start of underlying memory buffer */
+  65:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *tail;	/*!< \brief end of message in buffer */
+  66:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *data;	/*!< \brief start of message in buffer */
+  67:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char _data[0]; /*!< \brief optional immediate data array */
+  68:../../shared/libosmocore/include/osmocom/core/msgb.h **** };
+  69:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  70:../../shared/libosmocore/include/osmocom/core/msgb.h **** extern struct msgb *msgb_alloc(uint16_t size, const char *name);
+  71:../../shared/libosmocore/include/osmocom/core/msgb.h **** extern void msgb_free(struct msgb *m);
+  72:../../shared/libosmocore/include/osmocom/core/msgb.h **** extern void msgb_enqueue(struct llist_head *queue, struct msgb *msg);
+  73:../../shared/libosmocore/include/osmocom/core/msgb.h **** extern struct msgb *msgb_dequeue(struct llist_head *queue);
+  74:../../shared/libosmocore/include/osmocom/core/msgb.h **** extern void msgb_reset(struct msgb *m);
+  75:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  76:../../shared/libosmocore/include/osmocom/core/msgb.h **** #ifdef MSGB_DEBUG
+  77:../../shared/libosmocore/include/osmocom/core/msgb.h **** #include <osmocom/core/panic.h>
+  78:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define MSGB_ABORT(msg, fmt, args ...) do {		\
+  79:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	osmo_panic("msgb(%p): " fmt, msg, ## args);	\
+  80:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	} while(0)
+  81:../../shared/libosmocore/include/osmocom/core/msgb.h **** #else
+  82:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define MSGB_ABORT(msg, fmt, args ...)
+  83:../../shared/libosmocore/include/osmocom/core/msgb.h **** #endif
+  84:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  85:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief obtain L1 header of msgb */
+  86:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define msgb_l1(m)	((void *)(m->l1h))
+  87:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief obtain L2 header of msgb */
+  88:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define msgb_l2(m)	((void *)(m->l2h))
+  89:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief obtain L3 header of msgb */
+  90:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define msgb_l3(m)	((void *)(m->l3h))
+  91:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief obtain SMS header of msgb */
+  92:../../shared/libosmocore/include/osmocom/core/msgb.h **** #define msgb_sms(m)	((void *)(m->l4h))
+  93:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+  94:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief determine length of L1 message
+  95:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+  96:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns size of L1 message in bytes
+  97:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+  98:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function computes the number of bytes between the tail of the
+  99:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * message and the layer 1 header.
+ 100:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 101:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline unsigned int msgb_l1len(const struct msgb *msgb)
+ 102:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 103:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->tail - (uint8_t *)msgb_l1(msgb);
+ 104:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 105:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 106:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief determine length of L2 message
+ 107:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 108:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns size of L2 message in bytes
+ 109:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 110:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function computes the number of bytes between the tail of the
+ 111:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * message and the layer 2 header.
+ 112:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 113:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline unsigned int msgb_l2len(const struct msgb *msgb)
+ 114:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 115:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->tail - (uint8_t *)msgb_l2(msgb);
+ 116:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 117:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 118:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief determine length of L3 message
+ 119:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 120:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns size of L3 message in bytes
+ 121:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 122:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function computes the number of bytes between the tail of the
+ 123:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * message and the layer 3 header.
+ 124:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 125:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline unsigned int msgb_l3len(const struct msgb *msgb)
+ 126:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 127:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->tail - (uint8_t *)msgb_l3(msgb);
+ 128:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 129:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 130:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief determine the length of the header
+ 131:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 132:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns number of bytes between start of buffer and start of msg
+ 133:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 134:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function computes the length difference between the underlying
+ 135:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * data buffer and the used section of the \a msgb.
+ 136:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 137:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline unsigned int msgb_headlen(const struct msgb *msgb)
+ 138:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 139:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return msgb->len - msgb->data_len;
+ 140:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 141:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 142:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief determine how much tail room is left in msgb
+ 143:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 144:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns number of bytes remaining at end of msgb
+ 145:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 146:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function computes the amount of octets left in the underlying
+ 147:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * data buffer after the end of the message.
+ 148:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 149:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline int msgb_tailroom(const struct msgb *msgb)
+ 150:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 151:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return (msgb->head + msgb->data_len) - msgb->tail;
+ 152:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 153:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 154:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief determine the amount of headroom in msgb
+ 155:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 156:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns number of bytes left ahead of message start in msgb
+ 157:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 158:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function computes the amount of bytes left in the underlying
+ 159:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * data buffer before the start of the actual message.
+ 160:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 161:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline int msgb_headroom(const struct msgb *msgb)
+ 162:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 163:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return (msgb->data - msgb->head);
+ 164:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 165:../../shared/libosmocore/include/osmocom/core/msgb.h **** 
+ 166:../../shared/libosmocore/include/osmocom/core/msgb.h **** /*! \brief append data to end of message buffer
+ 167:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] msgb message buffer
+ 168:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \param[in] len number of bytes to append to message
+ 169:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *  \returns pointer to start of newly-appended data
+ 170:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 171:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * This function will move the \a tail pointer of the message buffer \a
+ 172:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * len bytes further, thus enlarging the message by \a len bytes.
+ 173:../../shared/libosmocore/include/osmocom/core/msgb.h ****  *
+ 174:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * The return value is a pointer to start of the newly added section at
+ 175:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * the end of the message and can be used for actually filling/copying
+ 176:../../shared/libosmocore/include/osmocom/core/msgb.h ****  * data into it.
+ 177:../../shared/libosmocore/include/osmocom/core/msgb.h ****  */
+ 178:../../shared/libosmocore/include/osmocom/core/msgb.h **** static inline unsigned char *msgb_put(struct msgb *msgb, unsigned int len)
+ 179:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+  80              		.loc 4 179 0
+  81              		.cfi_startproc
+  82              		@ args = 0, pretend = 0, frame = 0
+  83              		@ frame_needed = 0, uses_anonymous_args = 0
+  84              	.LVL8:
+  85              	.LBB22:
+  86              	.LBB23:
+ 151:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return (msgb->head + msgb->data_len) - msgb->tail;
+  87              		.loc 4 151 0
+  88 0000 B433D0E1 		ldrh	r3, [r0, #52]
+  89 0004 382090E5 		ldr	r2, [r0, #56]
+  90              	.LBE23:
+  91              	.LBE22:
+  92              		.loc 4 179 0
+  93 0008 70402DE9 		stmfd	sp!, {r4, r5, r6, lr}
+  94              	.LCFI0:
+  95              		.cfi_def_cfa_offset 16
+ 180:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	unsigned char *tmp = msgb->tail;
+  96              		.loc 4 180 0
+  97 000c 3C6090E5 		ldr	r6, [r0, #60]
+  98              		.cfi_offset 14, -4
+  99              		.cfi_offset 6, -8
+ 100              		.cfi_offset 5, -12
+ 101              		.cfi_offset 4, -16
+ 102              	.LVL9:
+ 103              	.LBB25:
+ 104              	.LBB24:
+ 151:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return (msgb->head + msgb->data_len) - msgb->tail;
+ 105              		.loc 4 151 0
+ 106 0010 032082E0 		add	r2, r2, r3
+ 107 0014 022066E0 		rsb	r2, r6, r2
+ 108              	.LBE24:
+ 109              	.LBE25:
+ 181:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	if (msgb_tailroom(msgb) < (int) len)
+ 110              		.loc 4 181 0
+ 111 0018 010052E1 		cmp	r2, r1
+ 179:../../shared/libosmocore/include/osmocom/core/msgb.h **** {
+ 112              		.loc 4 179 0
+ 113 001c 0040A0E1 		mov	r4, r0
+ 114              	.LVL10:
+ 115 0020 0150A0E1 		mov	r5, r1
+ 116              		.loc 4 181 0
+ 117              	.LVL11:
+ 182:../../shared/libosmocore/include/osmocom/core/msgb.h **** 		MSGB_ABORT(msgb, "Not enough tailroom msgb_push (%u < %u)\n",
+ 118              		.loc 4 182 0
+ 119 0024 28009FB5 		ldrlt	r0, .L7
+ 120              	.LVL12:
+ 121 0028 0410A0B1 		movlt	r1, r4
+ 122              	.LVL13:
+ 123 002c 0530A0B1 		movlt	r3, r5
+ 124 0030 FEFFFFBB 		bllt	osmo_panic
+ 125              	.LVL14:
+ 126              	.L6:
+ 183:../../shared/libosmocore/include/osmocom/core/msgb.h **** 			   msgb_tailroom(msgb), len);
+ 184:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->tail += len;
+ 127              		.loc 4 184 0
+ 128 0034 3C3094E5 		ldr	r3, [r4, #60]
+ 129 0038 053083E0 		add	r3, r3, r5
+ 130 003c 3C3084E5 		str	r3, [r4, #60]
+ 185:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	msgb->len += len;
+ 131              		.loc 4 185 0
+ 132 0040 B633D4E1 		ldrh	r3, [r4, #54]
+ 133 0044 035085E0 		add	r5, r5, r3
+ 134              	.LVL15:
+ 135 0048 B653C4E1 		strh	r5, [r4, #54]	@ movhi
+ 186:../../shared/libosmocore/include/osmocom/core/msgb.h **** 	return tmp;
+ 187:../../shared/libosmocore/include/osmocom/core/msgb.h **** }
+ 136              		.loc 4 187 0
+ 137 004c 0600A0E1 		mov	r0, r6
+ 138 0050 7080BDE8 		ldmfd	sp!, {r4, r5, r6, pc}
+ 139              	.L8:
+ 140              		.align	2
+ 141              	.L7:
+ 142 0054 00000000 		.word	.LC0
+ 143              		.cfi_endproc
+ 144              	.LFE38:
+ 146              		.section	.text.l1a_tx_tch_compl,"ax",%progbits
+ 147              		.align	2
+ 149              	l1a_tx_tch_compl:
+ 150              	.LFB60:
+ 115:layer1/prim_tch.c **** {
+ 151              		.loc 1 115 0
+ 152              		.cfi_startproc
+ 153              		@ args = 0, pretend = 0, frame = 0
+ 154              		@ frame_needed = 0, uses_anonymous_args = 0
+ 155              	.LVL16:
+ 118:layer1/prim_tch.c **** 	if (last_tx_tch_type & (TX_TYPE_SACCH | TX_TYPE_FACCH)) {
+ 156              		.loc 1 118 0
+ 157 0000 5C309FE5 		ldr	r3, .L12
+ 158 0004 B020D3E1 		ldrh	r2, [r3, #0]
+ 159 0008 030012E3 		tst	r2, #3
+ 115:layer1/prim_tch.c **** {
+ 160              		.loc 1 115 0
+ 161 000c 04E02DE5 		str	lr, [sp, #-4]!
+ 162              	.LCFI1:
+ 163              		.cfi_def_cfa_offset 4
+ 118:layer1/prim_tch.c **** 	if (last_tx_tch_type & (TX_TYPE_SACCH | TX_TYPE_FACCH)) {
+ 164              		.loc 1 118 0
+ 165 0010 0500000A 		beq	.L10
+ 166              		.cfi_offset 14, -4
+ 119:layer1/prim_tch.c **** 		msg = l1_create_l2_msg(L1CTL_DATA_CONF, last_tx_tch_fn, 0, 0);
+ 167              		.loc 1 119 0
+ 168 0014 0020A0E3 		mov	r2, #0
+ 169 0018 B210D3E1 		ldrh	r1, [r3, #2]
+ 170 001c 0F00A0E3 		mov	r0, #15
+ 171              	.LVL17:
+ 172 0020 0230A0E1 		mov	r3, r2
+ 173 0024 FEFFFFEB 		bl	l1_create_l2_msg
+ 120:layer1/prim_tch.c **** 		l1_queue_for_l2(msg);
+ 174              		.loc 1 120 0
+ 175 0028 FEFFFFEB 		bl	l1_queue_for_l2
+ 176              	.L10:
+ 123:layer1/prim_tch.c **** 	if (last_tx_tch_type & TX_TYPE_TRAFFIC) {
+ 177              		.loc 1 123 0
+ 178 002c 30309FE5 		ldr	r3, .L12
+ 179 0030 B020D3E1 		ldrh	r2, [r3, #0]
+ 180 0034 040012E3 		tst	r2, #4
+ 181 0038 0500000A 		beq	.L11
+ 124:layer1/prim_tch.c **** 		msg = l1_create_l2_msg(L1CTL_TRAFFIC_CONF, last_tx_tch_fn, 0, 0);
+ 182              		.loc 1 124 0
+ 183 003c 0020A0E3 		mov	r2, #0
+ 184 0040 B210D3E1 		ldrh	r1, [r3, #2]
+ 185 0044 1D00A0E3 		mov	r0, #29
+ 186 0048 0230A0E1 		mov	r3, r2
+ 187 004c FEFFFFEB 		bl	l1_create_l2_msg
+ 125:layer1/prim_tch.c **** 		l1_queue_for_l2(msg);
+ 188              		.loc 1 125 0
+ 189 0050 FEFFFFEB 		bl	l1_queue_for_l2
+ 190              	.L11:
+ 128:layer1/prim_tch.c **** 	last_tx_tch_type = 0;
+ 191              		.loc 1 128 0
+ 192 0054 08309FE5 		ldr	r3, .L12
+ 193 0058 0020A0E3 		mov	r2, #0	@ movhi
+ 194 005c B020C3E1 		strh	r2, [r3, #0]	@ movhi
+ 129:layer1/prim_tch.c **** }
+ 195              		.loc 1 129 0
+ 196 0060 04F09DE4 		ldr	pc, [sp], #4
+ 197              	.L13:
+ 198              		.align	2
+ 199              	.L12:
+ 200 0064 00000000 		.word	.LANCHOR0
+ 201              		.cfi_endproc
+ 202              	.LFE60:
+ 204              		.global	__umodsi3
+ 205              		.section	.text.tch_get_params.clone.0,"ax",%progbits
+ 206              		.align	2
+ 208              	tch_get_params.clone.0:
+ 209              	.LFB68:
+  62:layer1/prim_tch.c **** static void tch_get_params(struct gsm_time *time, uint8_t chan_nr,
+ 210              		.loc 1 62 0
+ 211              		.cfi_startproc
+ 212              		@ args = 8, pretend = 0, frame = 0
+ 213              		@ frame_needed = 0, uses_anonymous_args = 0
+ 214              	.LVL18:
+ 215 0000 F0412DE9 		stmfd	sp!, {r4, r5, r6, r7, r8, lr}
+ 216              	.LCFI2:
+ 217              		.cfi_def_cfa_offset 24
+  67:layer1/prim_tch.c **** 	uint8_t cbits = chan_nr >> 3;
+ 218              		.loc 1 67 0
+ 219 0004 A181A0E1 		mov	r8, r1, lsr #3
+ 220              		.cfi_offset 14, -4
+ 221              		.cfi_offset 8, -8
+ 222              		.cfi_offset 7, -12
+ 223              		.cfi_offset 6, -16
+ 224              		.cfi_offset 5, -20
+ 225              		.cfi_offset 4, -24
+  69:layer1/prim_tch.c **** 	*tch_f_hn = (cbits & 2) ? 0 : 1;
+ 226              		.loc 1 69 0
+ 227 0008 020018E3 		tst	r8, #2
+  62:layer1/prim_tch.c **** static void tch_get_params(struct gsm_time *time, uint8_t chan_nr,
+ 228              		.loc 1 62 0
+ 229 000c 0360A0E1 		mov	r6, r3
+  69:layer1/prim_tch.c **** 	*tch_f_hn = (cbits & 2) ? 0 : 1;
+ 230              		.loc 1 69 0
+ 231 0010 0030A013 		movne	r3, #0
+ 232 0014 0130A003 		moveq	r3, #1
+ 233              	.LVL19:
+ 234 0018 0030C6E5 		strb	r3, [r6, #0]
+  71:layer1/prim_tch.c **** 	if (*tch_f_hn) {
+ 235              		.loc 1 71 0
+ 236 001c 000053E3 		cmp	r3, #0
+  62:layer1/prim_tch.c **** static void tch_get_params(struct gsm_time *time, uint8_t chan_nr,
+ 237              		.loc 1 62 0
+ 238 0020 0240A0E1 		mov	r4, r2
+ 239 0024 18709DE5 		ldr	r7, [sp, #24]
+ 240 0028 1C509DE5 		ldr	r5, [sp, #28]
+  66:layer1/prim_tch.c **** 	uint8_t tn = chan_nr & 0x07;
+ 241              		.loc 1 66 0
+ 242 002c 072001E2 		and	r2, r1, #7
+ 243              	.LVL20:
+ 244 0030 000090E5 		ldr	r0, [r0, #0]
+  71:layer1/prim_tch.c **** 	if (*tch_f_hn) {
+ 245              		.loc 1 71 0
+ 246 0034 0800000A 		beq	.L15
+  72:layer1/prim_tch.c **** 		*fn_report = (time->fn - (tn * 13) + 104) % 104;
+ 247              		.loc 1 72 0
+ 248 0038 0C30E0E3 		mvn	r3, #12
+ 249 003c 680080E2 		add	r0, r0, #104
+ 250 0040 930220E0 		mla	r0, r3, r2, r0
+ 251 0044 6810A0E3 		mov	r1, #104
+ 252              	.LVL21:
+ 253 0048 FEFFFFEB 		bl	__umodsi3
+ 254              	.LVL22:
+  73:layer1/prim_tch.c **** 		*tch_sub = 0;
+ 255              		.loc 1 73 0
+ 256 004c 0030A0E3 		mov	r3, #0
+  72:layer1/prim_tch.c **** 		*fn_report = (time->fn - (tn * 13) + 104) % 104;
+ 257              		.loc 1 72 0
+ 258 0050 000084E5 		str	r0, [r4, #0]
+  73:layer1/prim_tch.c **** 		*tch_sub = 0;
+ 259              		.loc 1 73 0
+ 260 0054 0030C7E5 		strb	r3, [r7, #0]
+ 261 0058 090000EA 		b	.L16
+ 262              	.LVL23:
+ 263              	.L15:
+ 264              	.LBB26:
+  75:layer1/prim_tch.c **** 		uint8_t chan_sub = cbits & 1;
+ 265              		.loc 1 75 0
+ 266 005c 018008E2 		and	r8, r8, #1
+ 267              	.LVL24:
+  76:layer1/prim_tch.c **** 		uint8_t tn_report = (tn & ~1) | chan_sub;
+ 268              		.loc 1 76 0
+ 269 0060 061001E2 		and	r1, r1, #6
+ 270              	.LVL25:
+  77:layer1/prim_tch.c **** 		*fn_report = (time->fn - (tn_report * 13) + 104) % 104;
+ 271              		.loc 1 77 0
+ 272 0064 683080E2 		add	r3, r0, #104
+ 273 0068 011088E1 		orr	r1, r8, r1
+ 274 006c 0C00E0E3 		mvn	r0, #12
+ 275 0070 913020E0 		mla	r0, r1, r0, r3
+ 276 0074 6810A0E3 		mov	r1, #104
+ 277 0078 FEFFFFEB 		bl	__umodsi3
+ 278              	.LVL26:
+ 279 007c 000084E5 		str	r0, [r4, #0]
+  78:layer1/prim_tch.c **** 		*tch_sub = chan_sub;
+ 280              		.loc 1 78 0
+ 281 0080 0080C7E5 		strb	r8, [r7, #0]
+ 282              	.LVL27:
+ 283              	.L16:
+ 284              	.LBE26:
+  81:layer1/prim_tch.c **** 	if (tch_mode) {
+ 285              		.loc 1 81 0
+ 286 0084 000055E3 		cmp	r5, #0
+ 287 0088 F081BD08 		ldmeqfd	sp!, {r4, r5, r6, r7, r8, pc}
+  82:layer1/prim_tch.c **** 		switch (l1s.tch_mode) {
+ 288              		.loc 1 82 0
+ 289 008c 44309FE5 		ldr	r3, .L28
+ 290 0090 4A3AD3E5 		ldrb	r3, [r3, #2634]	@ zero_extendqisi2
+ 291 0094 010053E3 		cmp	r3, #1
+ 292 0098 0300000A 		beq	.L19
+ 293 009c 210053E3 		cmp	r3, #33
+  90:layer1/prim_tch.c **** 			*tch_mode = SIG_ONLY_MODE;
+ 294              		.loc 1 90 0
+ 295 00a0 0030A013 		movne	r3, #0
+  82:layer1/prim_tch.c **** 		switch (l1s.tch_mode) {
+ 296              		.loc 1 82 0
+ 297 00a4 0900001A 		bne	.L26
+ 298 00a8 040000EA 		b	.L27
+ 299              	.L19:
+  84:layer1/prim_tch.c **** 			*tch_mode = *tch_f_hn ? TCH_FS_MODE : TCH_HS_MODE;
+ 300              		.loc 1 84 0
+ 301 00ac 0030D6E5 		ldrb	r3, [r6, #0]	@ zero_extendqisi2
+ 302 00b0 000053E3 		cmp	r3, #0
+ 303 00b4 0230A003 		moveq	r3, #2
+ 304 00b8 0130A013 		movne	r3, #1
+ 305 00bc 030000EA 		b	.L26
+ 306              	.L27:
+  87:layer1/prim_tch.c **** 			*tch_mode = *tch_f_hn ? TCH_EFR_MODE : SIG_ONLY_MODE;
+ 307              		.loc 1 87 0
+ 308 00c0 0030D6E5 		ldrb	r3, [r6, #0]	@ zero_extendqisi2
+ 309 00c4 000053E3 		cmp	r3, #0
+ 310 00c8 0830A013 		movne	r3, #8
+ 311 00cc 0030A003 		moveq	r3, #0
+ 312              	.L26:
+  90:layer1/prim_tch.c **** 			*tch_mode = SIG_ONLY_MODE;
+ 313              		.loc 1 90 0
+ 314 00d0 0030C5E5 		strb	r3, [r5, #0]
+ 315 00d4 F081BDE8 		ldmfd	sp!, {r4, r5, r6, r7, r8, pc}
+ 316              	.L29:
+ 317              		.align	2
+ 318              	.L28:
+ 319 00d8 00000000 		.word	l1s
+ 320              		.cfi_endproc
+ 321              	.LFE68:
+ 323              		.global	__udivsi3
+ 324              		.section	.text.l1s_tch_a_resp,"ax",%progbits
+ 325              		.align	2
+ 327              	l1s_tch_a_resp:
+ 328              	.LFB66:
+ 510:layer1/prim_tch.c **** 
+ 511:layer1/prim_tch.c **** static int l1s_tch_d_cmd(__unused uint8_t p1, __unused uint8_t p2, uint16_t p3)
+ 512:layer1/prim_tch.c **** {
+ 513:layer1/prim_tch.c **** 	uint8_t mf_task_id = p3 & 0xff;
+ 514:layer1/prim_tch.c **** 	uint8_t chan_nr;
+ 515:layer1/prim_tch.c **** 	uint8_t tsc, tn;
+ 516:layer1/prim_tch.c **** 	uint8_t tch_f_hn, tch_sub, tch_mode;
+ 517:layer1/prim_tch.c **** 	uint32_t fn_report;
+ 518:layer1/prim_tch.c **** 
+ 519:layer1/prim_tch.c **** 	/* Get/compute various parameters */
+ 520:layer1/prim_tch.c **** 	rfch_get_params(&l1s.next_time, NULL, &tsc, &tn);
+ 521:layer1/prim_tch.c **** 	chan_nr = mframe_task2chan_nr(mf_task_id, tn);
+ 522:layer1/prim_tch.c **** 	tch_get_params(&l1s.next_time, chan_nr, &fn_report, &tch_f_hn, &tch_sub, &tch_mode);
+ 523:layer1/prim_tch.c **** 
+ 524:layer1/prim_tch.c **** 	/* Configure DSP */
+ 525:layer1/prim_tch.c **** 	dsp_load_tch_param(
+ 526:layer1/prim_tch.c **** 		&l1s.next_time,
+ 527:layer1/prim_tch.c **** 		tch_mode, tch_f_hn ? TCH_F : TCH_H, tch_sub,
+ 528:layer1/prim_tch.c **** 		0, 0, tn
+ 529:layer1/prim_tch.c **** 	);
+ 530:layer1/prim_tch.c **** 
+ 531:layer1/prim_tch.c **** 	dsp_load_rx_task(TCHD_DSP_TASK, 0, tsc); /* burst_id unused for TCH */
+ 532:layer1/prim_tch.c **** 	dsp_load_tx_task(TCHD_DSP_TASK, 0, tsc); /* burst_id unused for TCH */
+ 533:layer1/prim_tch.c **** 
+ 534:layer1/prim_tch.c **** 	return 0;
+ 535:layer1/prim_tch.c **** }
+ 536:layer1/prim_tch.c **** 
+ 537:layer1/prim_tch.c **** const struct tdma_sched_item tch_d_sched_set[] = {
+ 538:layer1/prim_tch.c **** 	SCHED_ITEM_DT(l1s_tch_d_cmd, 0, 0, 0),	SCHED_END_FRAME(),
+ 539:layer1/prim_tch.c **** 						SCHED_END_FRAME(),
+ 540:layer1/prim_tch.c **** 	SCHED_ITEM(l1s_tch_d_resp, 0, 0, -4),	SCHED_END_FRAME(),
+ 541:layer1/prim_tch.c **** 	SCHED_END_SET()
+ 542:layer1/prim_tch.c **** };
+ 543:layer1/prim_tch.c **** 
+ 544:layer1/prim_tch.c **** 
+ 545:layer1/prim_tch.c **** /* -------------------------------------------------------------------------
+ 546:layer1/prim_tch.c ****  * TCH: SACCH
+ 547:layer1/prim_tch.c ****  * ------------------------------------------------------------------------- */
+ 548:layer1/prim_tch.c **** 
+ 549:layer1/prim_tch.c **** /*
+ 550:layer1/prim_tch.c ****  * SACCH data are spread over 4 bursts, however they are so far appart that
+ 551:layer1/prim_tch.c ****  * we can't use the normal scheduler to schedule all them at once in a single
+ 552:layer1/prim_tch.c ****  * set.
+ 553:layer1/prim_tch.c ****  * Therefore, the task code itself decides in which burst it is, if it's the
+ 554:layer1/prim_tch.c ****  * start/end, and act appropriately.
+ 555:layer1/prim_tch.c ****  */
+ 556:layer1/prim_tch.c **** 
+ 557:layer1/prim_tch.c **** 
+ 558:layer1/prim_tch.c **** struct l1s_rx_tch_a_state {
+ 559:layer1/prim_tch.c **** 	struct l1s_meas_hdr meas[4];
+ 560:layer1/prim_tch.c **** 
+ 561:layer1/prim_tch.c **** 	struct msgb *msg;
+ 562:layer1/prim_tch.c **** 	struct l1ctl_info_dl *dl;
+ 563:layer1/prim_tch.c **** 	struct l1ctl_data_ind *di;
+ 564:layer1/prim_tch.c **** };
+ 565:layer1/prim_tch.c **** 
+ 566:layer1/prim_tch.c **** static struct l1s_rx_tch_a_state rx_tch_a;
+ 567:layer1/prim_tch.c **** 
+ 568:layer1/prim_tch.c **** 
+ 569:layer1/prim_tch.c **** static int l1s_tch_a_resp(__unused uint8_t p1, __unused uint8_t p2, uint16_t p3)
+ 570:layer1/prim_tch.c **** {
+ 329              		.loc 1 570 0
+ 330              		.cfi_startproc
+ 331              		@ args = 0, pretend = 0, frame = 24
+ 332              		@ frame_needed = 0, uses_anonymous_args = 0
+ 333              	.LVL28:
+ 334 0000 F0402DE9 		stmfd	sp!, {r4, r5, r6, r7, lr}
+ 335              	.LCFI3:
+ 336              		.cfi_def_cfa_offset 20
+ 571:layer1/prim_tch.c **** 	uint8_t mf_task_id = p3 & 0xff;
+ 572:layer1/prim_tch.c **** 	struct gsm_time rx_time;
+ 573:layer1/prim_tch.c **** 	uint8_t chan_nr;
+ 574:layer1/prim_tch.c **** 	uint16_t arfcn;
+ 575:layer1/prim_tch.c **** 	uint8_t tsc, tn;
+ 576:layer1/prim_tch.c **** 	uint8_t tch_f_hn, tch_sub;
+ 577:layer1/prim_tch.c **** 	uint32_t fn_report;
+ 578:layer1/prim_tch.c **** 	uint8_t burst_id;
+ 579:layer1/prim_tch.c **** 
+ 580:layer1/prim_tch.c **** 	/* It may happen we've never gone through cmd(0) yet, skip until then */
+ 581:layer1/prim_tch.c **** 	if (!rx_tch_a.msg)
+ 337              		.loc 1 581 0
+ 338 0004 5C629FE5 		ldr	r6, .L39
+ 339              		.cfi_offset 14, -4
+ 340              		.cfi_offset 7, -8
+ 341              		.cfi_offset 6, -12
+ 342              		.cfi_offset 5, -16
+ 343              		.cfi_offset 4, -20
+ 344 0008 243096E5 		ldr	r3, [r6, #36]
+ 570:layer1/prim_tch.c **** {
+ 345              		.loc 1 570 0
+ 346 000c 0228A0E1 		mov	r2, r2, asl #16
+ 347              	.LVL29:
+ 348              		.loc 1 581 0
+ 349 0010 000053E3 		cmp	r3, #0
+ 570:layer1/prim_tch.c **** {
+ 350              		.loc 1 570 0
+ 351 0014 20D04DE2 		sub	sp, sp, #32
+ 352              	.LCFI4:
+ 353              		.cfi_def_cfa_offset 52
+ 570:layer1/prim_tch.c **** {
+ 354              		.loc 1 570 0
+ 355 0018 2258A0E1 		mov	r5, r2, lsr #16
+ 356              	.LVL30:
+ 357              		.loc 1 581 0
+ 358 001c 8B00000A 		beq	.L31
+ 582:layer1/prim_tch.c **** 		goto skip;
+ 583:layer1/prim_tch.c **** 
+ 584:layer1/prim_tch.c **** 	/* Get/compute various parameters */
+ 585:layer1/prim_tch.c **** 	gsm_fn2gsmtime(&rx_time, (l1s.current_time.fn - 1 + GSM_MAX_FN) % GSM_MAX_FN);
+ 359              		.loc 1 585 0
+ 360 0020 44329FE5 		ldr	r3, .L39+4
+ 361 0024 44029FE5 		ldr	r0, .L39+8
+ 362              	.LVL31:
+ 363 0028 003093E5 		ldr	r3, [r3, #0]
+ 364 002c 40129FE5 		ldr	r1, .L39+12
+ 365              	.LVL32:
+ 366 0030 000083E0 		add	r0, r3, r0
+ 367 0034 FEFFFFEB 		bl	__umodsi3
+ 368 0038 08408DE2 		add	r4, sp, #8
+ 369 003c 0010A0E1 		mov	r1, r0
+ 370 0040 0400A0E1 		mov	r0, r4
+ 371 0044 FEFFFFEB 		bl	gsm_fn2gsmtime
+ 586:layer1/prim_tch.c **** 	rfch_get_params(&rx_time, &arfcn, &tsc, &tn);
+ 372              		.loc 1 586 0
+ 373 0048 0400A0E1 		mov	r0, r4
+ 374 004c 1F208DE2 		add	r2, sp, #31
+ 375 0050 1E308DE2 		add	r3, sp, #30
+ 376 0054 1A108DE2 		add	r1, sp, #26
+ 377 0058 FEFFFFEB 		bl	rfch_get_params
+ 587:layer1/prim_tch.c **** 	chan_nr = mframe_task2chan_nr(mf_task_id, tn);
+ 378              		.loc 1 587 0
+ 379 005c FF0005E2 		and	r0, r5, #255
+ 380              	.LVL33:
+ 381 0060 1E10DDE5 		ldrb	r1, [sp, #30]	@ zero_extendqisi2
+ 382 0064 FEFFFFEB 		bl	mframe_task2chan_nr
+ 588:layer1/prim_tch.c **** 	tch_get_params(&rx_time, chan_nr, &fn_report, &tch_f_hn, &tch_sub, NULL);
+ 383              		.loc 1 588 0
+ 384 0068 1C308DE2 		add	r3, sp, #28
+ 385 006c 0050A0E3 		mov	r5, #0
+ 386              	.LVL34:
+ 387 0070 14208DE2 		add	r2, sp, #20
+ 587:layer1/prim_tch.c **** 	chan_nr = mframe_task2chan_nr(mf_task_id, tn);
+ 388              		.loc 1 587 0
+ 389 0074 0010A0E1 		mov	r1, r0
+ 390              	.LVL35:
+ 391              		.loc 1 588 0
+ 392 0078 00308DE5 		str	r3, [sp, #0]
+ 393 007c 0400A0E1 		mov	r0, r4
+ 394              	.LVL36:
+ 395 0080 1D308DE2 		add	r3, sp, #29
+ 396 0084 04508DE5 		str	r5, [sp, #4]
+ 397 0088 FEFFFFEB 		bl	tch_get_params.clone.0
+ 398              	.LVL37:
+ 589:layer1/prim_tch.c **** 	burst_id = (fn_report - 12) / 26;
+ 399              		.loc 1 589 0
+ 400 008c 14009DE5 		ldr	r0, [sp, #20]
+ 401 0090 1A10A0E3 		mov	r1, #26
+ 402 0094 0C0040E2 		sub	r0, r0, #12
+ 403 0098 FEFFFFEB 		bl	__udivsi3
+ 590:layer1/prim_tch.c **** 
+ 591:layer1/prim_tch.c **** 	/* Collect measurements */
+ 592:layer1/prim_tch.c **** 	rx_tch_a.meas[burst_id].toa_qbit = dsp_api.db_r->a_serv_demod[D_TOA];
+ 404              		.loc 1 592 0
+ 405 009c D4719FE5 		ldr	r7, .L39+16
+ 406 00a0 043097E5 		ldr	r3, [r7, #4]
+ 589:layer1/prim_tch.c **** 	burst_id = (fn_report - 12) / 26;
+ 407              		.loc 1 589 0
+ 408 00a4 FF4000E2 		and	r4, r0, #255
+ 409              	.LVL38:
+ 410              		.loc 1 592 0
+ 411 00a8 B011D3E1 		ldrh	r1, [r3, #16]
+ 593:layer1/prim_tch.c **** 	rx_tch_a.meas[burst_id].pm_dbm8 =
+ 594:layer1/prim_tch.c **** 		agc_inp_dbm8_by_pm(dsp_api.db_r->a_serv_demod[D_PM] >> 3);
+ 412              		.loc 1 594 0
+ 413 00ac B201D3E1 		ldrh	r0, [r3, #18]
+ 592:layer1/prim_tch.c **** 	rx_tch_a.meas[burst_id].toa_qbit = dsp_api.db_r->a_serv_demod[D_TOA];
+ 414              		.loc 1 592 0
+ 415 00b0 846186E0 		add	r6, r6, r4, asl #3
+ 416 00b4 B610C6E1 		strh	r1, [r6, #6]	@ movhi
+ 417              		.loc 1 594 0
+ 418 00b8 A001A0E1 		mov	r0, r0, lsr #3
+ 419 00bc FEFFFFEB 		bl	agc_inp_dbm8_by_pm
+ 595:layer1/prim_tch.c **** 	rx_tch_a.meas[burst_id].freq_err =
+ 596:layer1/prim_tch.c **** 		ANGLE_TO_FREQ(dsp_api.db_r->a_serv_demod[D_ANGLE]);
+ 420              		.loc 1 596 0
+ 421 00c0 041097E5 		ldr	r1, [r7, #4]
+ 593:layer1/prim_tch.c **** 	rx_tch_a.meas[burst_id].pm_dbm8 =
+ 422              		.loc 1 593 0
+ 423 00c4 B800C6E1 		strh	r0, [r6, #8]	@ movhi
+ 424              		.loc 1 596 0
+ 425 00c8 F421D1E1 		ldrsh	r2, [r1, #20]
+ 426 00cc A8019FE5 		ldr	r0, .L39+20
+ 427 00d0 900202E0 		mul	r2, r0, r2
+ 428 00d4 050052E1 		cmp	r2, r5
+ 429 00d8 FF0C82E2 		add	r0, r2, #65280
+ 430 00dc FF2080B2 		addlt	r2, r0, #255
+ 593:layer1/prim_tch.c **** 	rx_tch_a.meas[burst_id].pm_dbm8 =
+ 431              		.loc 1 593 0
+ 432 00e0 083086E2 		add	r3, r6, #8
+ 433              		.loc 1 596 0
+ 434 00e4 4228A0E1 		mov	r2, r2, asr #16
+ 595:layer1/prim_tch.c **** 	rx_tch_a.meas[burst_id].freq_err =
+ 435              		.loc 1 595 0
+ 436 00e8 B220C3E1 		strh	r2, [r3, #2]	@ movhi
+ 597:layer1/prim_tch.c **** 	rx_tch_a.meas[burst_id].snr = dsp_api.db_r->a_serv_demod[D_SNR];
+ 437              		.loc 1 597 0
+ 438 00ec B621D1E1 		ldrh	r2, [r1, #22]
+ 598:layer1/prim_tch.c **** 
+ 599:layer1/prim_tch.c **** 	/* feed computed frequency error into AFC loop */
+ 600:layer1/prim_tch.c **** 	if (rx_tch_a.meas[burst_id].snr > AFC_SNR_THRESHOLD)
+ 439              		.loc 1 600 0
+ 440 00f0 0A0C52E3 		cmp	r2, #2560
+ 597:layer1/prim_tch.c **** 	rx_tch_a.meas[burst_id].snr = dsp_api.db_r->a_serv_demod[D_SNR];
+ 441              		.loc 1 597 0
+ 442 00f4 B420C6E1 		strh	r2, [r6, #4]	@ movhi
+ 601:layer1/prim_tch.c **** 		afc_input(rx_tch_a.meas[burst_id].freq_err, arfcn, 1);
+ 602:layer1/prim_tch.c **** 	else
+ 603:layer1/prim_tch.c **** 		afc_input(rx_tch_a.meas[burst_id].freq_err, arfcn, 0);
+ 443              		.loc 1 603 0
+ 444 00f8 0520A091 		movls	r2, r5
+ 604:layer1/prim_tch.c **** 
+ 605:layer1/prim_tch.c **** 	/* feed computed TOA into TA loop */
+ 606:layer1/prim_tch.c **** 	toa_input(rx_tch_a.meas[burst_id].toa_qbit << 2, rx_tch_a.meas[burst_id].snr);
+ 445              		.loc 1 606 0
+ 446 00fc 64519FE5 		ldr	r5, .L39
+ 447 0100 F200D3E1 		ldrsh	r0, [r3, #2]
+ 601:layer1/prim_tch.c **** 		afc_input(rx_tch_a.meas[burst_id].freq_err, arfcn, 1);
+ 448              		.loc 1 601 0
+ 449 0104 0120A083 		movhi	r2, #1
+ 450              		.loc 1 606 0
+ 451 0108 846185E0 		add	r6, r5, r4, asl #3
+ 452              	.LVL39:
+ 453 010c BA11DDE1 		ldrh	r1, [sp, #26]
+ 454              	.LVL40:
+ 603:layer1/prim_tch.c **** 		afc_input(rx_tch_a.meas[burst_id].freq_err, arfcn, 0);
+ 455              		.loc 1 603 0
+ 456 0110 FEFFFFEB 		bl	afc_input
+ 457              		.loc 1 606 0
+ 458 0114 F600D6E1 		ldrsh	r0, [r6, #6]
+ 459 0118 B410D6E1 		ldrh	r1, [r6, #4]
+ 460 011c 0001A0E1 		mov	r0, r0, asl #2
+ 461 0120 FEFFFFEB 		bl	toa_input
+ 607:layer1/prim_tch.c **** 
+ 608:layer1/prim_tch.c **** 	/* Tell the RF frontend to set the gain appropriately */
+ 609:layer1/prim_tch.c **** 	rffe_compute_gain(rx_tch_a.meas[burst_id].pm_dbm8 / 8,
+ 462              		.loc 1 609 0
+ 463 0124 F800D6E1 		ldrsh	r0, [r6, #8]
+ 464 0128 000050E3 		cmp	r0, #0
+ 465 012c 073080E2 		add	r3, r0, #7
+ 466 0130 0300A0B1 		movlt	r0, r3
+ 467 0134 C001A0E1 		mov	r0, r0, asr #3
+ 468 0138 5010A0E3 		mov	r1, #80
+ 469 013c FEFFFFEB 		bl	rffe_compute_gain
+ 610:layer1/prim_tch.c **** 		CAL_DSP_TGT_BB_LVL);
+ 611:layer1/prim_tch.c **** 
+ 612:layer1/prim_tch.c **** 	/* Last burst, read data & send to the up layer */
+ 613:layer1/prim_tch.c **** 	if ((burst_id == 3) && (dsp_api.ndb->a_cd[0] & (1<<B_BLUD))) {
+ 470              		.loc 1 613 0
+ 471 0140 030054E3 		cmp	r4, #3
+ 472 0144 4100001A 		bne	.L31
+ 473              		.loc 1 613 0 is_stmt 0 discriminator 1
+ 474 0148 28319FE5 		ldr	r3, .L39+16
+ 475 014c 002093E5 		ldr	r2, [r3, #0]
+ 476 0150 7F3FA0E3 		mov	r3, #508
+ 477 0154 F33092E1 		ldrsh	r3, [r2, r3]
+ 478 0158 000053E3 		cmp	r3, #0
+ 479 015c 3B0000AA 		bge	.L31
+ 569:layer1/prim_tch.c **** static int l1s_tch_a_resp(__unused uint8_t p1, __unused uint8_t p2, uint16_t p3)
+ 480              		.loc 1 569 0 is_stmt 1
+ 481 0160 0000A0E3 		mov	r0, #0
+ 482              		.loc 1 613 0
+ 483 0164 043085E2 		add	r3, r5, #4
+ 569:layer1/prim_tch.c **** static int l1s_tch_a_resp(__unused uint8_t p1, __unused uint8_t p2, uint16_t p3)
+ 484              		.loc 1 569 0
+ 485 0168 0020A0E1 		mov	r2, r0
+ 486 016c 245085E2 		add	r5, r5, #36
+ 487              	.L34:
+ 488              	.LBB27:
+ 614:layer1/prim_tch.c **** 		unsigned int i;
+ 615:layer1/prim_tch.c **** 		uint16_t num_biterr;
+ 616:layer1/prim_tch.c **** 		uint32_t avg_snr = 0;
+ 617:layer1/prim_tch.c **** 		int32_t avg_dbm8 = 0;
+ 618:layer1/prim_tch.c **** 
+ 619:layer1/prim_tch.c **** 		/* Average SNR & RX level + error & crc status */
+ 620:layer1/prim_tch.c **** 		for (i=0; i<4; i++) {
+ 621:layer1/prim_tch.c **** 			avg_snr += rx_tch_a.meas[i].snr;
+ 489              		.loc 1 621 0 discriminator 2
+ 490 0170 B010D3E1 		ldrh	r1, [r3, #0]
+ 491 0174 012082E0 		add	r2, r2, r1
+ 492              	.LVL41:
+ 622:layer1/prim_tch.c **** 			avg_dbm8 += rx_tch_a.meas[i].pm_dbm8;
+ 493              		.loc 1 622 0 discriminator 2
+ 494 0178 F410D3E1 		ldrsh	r1, [r3, #4]
+ 495 017c 083083E2 		add	r3, r3, #8
+ 620:layer1/prim_tch.c **** 		for (i=0; i<4; i++) {
+ 496              		.loc 1 620 0 discriminator 2
+ 497 0180 050053E1 		cmp	r3, r5
+ 498              		.loc 1 622 0 discriminator 2
+ 499 0184 010080E0 		add	r0, r0, r1
+ 500              	.LVL42:
+ 620:layer1/prim_tch.c **** 		for (i=0; i<4; i++) {
+ 501              		.loc 1 620 0 discriminator 2
+ 502 0188 F8FFFF1A 		bne	.L34
+ 623:layer1/prim_tch.c **** 		}
+ 624:layer1/prim_tch.c **** 		rx_tch_a.dl->snr = avg_snr / 4;
+ 503              		.loc 1 624 0
+ 504 018c D4409FE5 		ldr	r4, .L39
+ 505              	.LVL43:
+ 625:layer1/prim_tch.c **** 		rx_tch_a.dl->rx_level = dbm2rxlev(avg_dbm8 / (8*4));
+ 506              		.loc 1 625 0
+ 507 0190 1F3080E2 		add	r3, r0, #31
+ 624:layer1/prim_tch.c **** 		rx_tch_a.dl->snr = avg_snr / 4;
+ 508              		.loc 1 624 0
+ 509 0194 285094E5 		ldr	r5, [r4, #40]
+ 510              		.loc 1 625 0
+ 511 0198 000050E3 		cmp	r0, #0
+ 512 019c 0300A0B1 		movlt	r0, r3
+ 513              	.LVL44:
+ 624:layer1/prim_tch.c **** 		rx_tch_a.dl->snr = avg_snr / 4;
+ 514              		.loc 1 624 0
+ 515 01a0 2221A0E1 		mov	r2, r2, lsr #2
+ 516              	.LVL45:
+ 517 01a4 0920C5E5 		strb	r2, [r5, #9]
+ 518              		.loc 1 625 0
+ 519 01a8 C002A0E1 		mov	r0, r0, asr #5
+ 520 01ac FEFFFFEB 		bl	dbm2rxlev
+ 521              	.LVL46:
+ 626:layer1/prim_tch.c **** 
+ 627:layer1/prim_tch.c **** 		num_biterr = dsp_api.ndb->a_cd[2];
+ 522              		.loc 1 627 0
+ 523 01b0 C0309FE5 		ldr	r3, .L39+16
+ 625:layer1/prim_tch.c **** 		rx_tch_a.dl->rx_level = dbm2rxlev(avg_dbm8 / (8*4));
+ 524              		.loc 1 625 0
+ 525 01b4 0800C5E5 		strb	r0, [r5, #8]
+ 526              		.loc 1 627 0
+ 527 01b8 002093E5 		ldr	r2, [r3, #0]
+ 528 01bc 023CA0E3 		mov	r3, #512
+ 529 01c0 B33092E1 		ldrh	r3, [r2, r3]
+ 530              	.LVL47:
+ 628:layer1/prim_tch.c **** 		if (num_biterr > 0xff)
+ 531              		.loc 1 628 0
+ 532 01c4 FF0053E3 		cmp	r3, #255
+ 629:layer1/prim_tch.c **** 			rx_tch_a.dl->num_biterr = 0xff;
+ 533              		.loc 1 629 0
+ 534 01c8 28309485 		ldrhi	r3, [r4, #40]
+ 535              	.LVL48:
+ 630:layer1/prim_tch.c **** 		else
+ 631:layer1/prim_tch.c **** 			rx_tch_a.dl->num_biterr = num_biterr;
+ 536              		.loc 1 631 0
+ 537 01cc 28109495 		ldrls	r1, [r4, #40]
+ 629:layer1/prim_tch.c **** 			rx_tch_a.dl->num_biterr = 0xff;
+ 538              		.loc 1 629 0
+ 539 01d0 0010E083 		mvnhi	r1, #0
+ 540 01d4 0A10C385 		strhib	r1, [r3, #10]
+ 541              		.loc 1 631 0
+ 542 01d8 0A30C195 		strlsb	r3, [r1, #10]
+ 632:layer1/prim_tch.c **** 
+ 633:layer1/prim_tch.c **** 		rx_tch_a.dl->fire_crc = ((dsp_api.ndb->a_cd[0] & 0xffff) & ((1 << B_FIRE1) | (1 << B_FIRE0))) >> 
+ 543              		.loc 1 633 0
+ 544 01dc 7F5FA0E3 		mov	r5, #508
+ 545 01e0 80409FE5 		ldr	r4, .L39
+ 546 01e4 B52092E1 		ldrh	r2, [r2, r5]
+ 547 01e8 283094E5 		ldr	r3, [r4, #40]
+ 548 01ec 602002E2 		and	r2, r2, #96
+ 549 01f0 C222A0E1 		mov	r2, r2, asr #5
+ 634:layer1/prim_tch.c **** 
+ 635:layer1/prim_tch.c **** 		/* Update rx level for pm report */
+ 636:layer1/prim_tch.c **** 		pu_update_rx_level(rx_tch_a.dl->rx_level);
+ 637:layer1/prim_tch.c **** 
+ 638:layer1/prim_tch.c **** 		/* Copy actual data, skipping the information block [0,1,2] */
+ 639:layer1/prim_tch.c **** 		dsp_memcpy_from_api(rx_tch_a.di->data, &dsp_api.ndb->a_cd[3], 23, 0);
+ 550              		.loc 1 639 0
+ 551 01f4 7C609FE5 		ldr	r6, .L39+16
+ 633:layer1/prim_tch.c **** 		rx_tch_a.dl->fire_crc = ((dsp_api.ndb->a_cd[0] & 0xffff) & ((1 << B_FIRE1) | (1 << B_FIRE0))) >> 
+ 552              		.loc 1 633 0
+ 553 01f8 0B20C3E5 		strb	r2, [r3, #11]
+ 636:layer1/prim_tch.c **** 		pu_update_rx_level(rx_tch_a.dl->rx_level);
+ 554              		.loc 1 636 0
+ 555 01fc 0800D3E5 		ldrb	r0, [r3, #8]	@ zero_extendqisi2
+ 556 0200 FEFFFFEB 		bl	pu_update_rx_level
+ 557              		.loc 1 639 0
+ 558 0204 001096E5 		ldr	r1, [r6, #0]
+ 559 0208 051081E0 		add	r1, r1, r5
+ 560 020c 061081E2 		add	r1, r1, #6
+ 561 0210 1720A0E3 		mov	r2, #23
+ 562 0214 0030A0E3 		mov	r3, #0
+ 563 0218 2C0094E5 		ldr	r0, [r4, #44]
+ 564 021c FEFFFFEB 		bl	dsp_memcpy_from_api
+ 640:layer1/prim_tch.c **** 
+ 641:layer1/prim_tch.c **** 		/* Give message to up layer */
+ 642:layer1/prim_tch.c **** 		l1_queue_for_l2(rx_tch_a.msg);
+ 565              		.loc 1 642 0
+ 566 0220 240094E5 		ldr	r0, [r4, #36]
+ 567 0224 FEFFFFEB 		bl	l1_queue_for_l2
+ 643:layer1/prim_tch.c **** 		rx_tch_a.msg = NULL; rx_tch_a.dl = NULL; rx_tch_a.di = NULL;
+ 568              		.loc 1 643 0
+ 569 0228 0030A0E3 		mov	r3, #0
+ 570 022c 243084E5 		str	r3, [r4, #36]
+ 571 0230 283084E5 		str	r3, [r4, #40]
+ 572 0234 2C3084E5 		str	r3, [r4, #44]
+ 644:layer1/prim_tch.c **** 
+ 645:layer1/prim_tch.c **** 		/* Reset header */
+ 646:layer1/prim_tch.c **** 		dsp_api.ndb->a_cd[0] = (1<<B_FIRE1);
+ 573              		.loc 1 646 0
+ 574 0238 003096E5 		ldr	r3, [r6, #0]
+ 575 023c 4020A0E3 		mov	r2, #64	@ movhi
+ 576 0240 B52083E1 		strh	r2, [r3, r5]	@ movhi
+ 647:layer1/prim_tch.c **** 		dsp_api.ndb->a_cd[2] = 0xffff;
+ 577              		.loc 1 647 0
+ 578 0244 0010E0E3 		mvn	r1, #0	@ movhi
+ 579 0248 022CA0E3 		mov	r2, #512
+ 580 024c B21083E1 		strh	r1, [r3, r2]	@ movhi
+ 581              	.LVL49:
+ 582              	.L31:
+ 583              	.LBE27:
+ 648:layer1/prim_tch.c **** 	}
+ 649:layer1/prim_tch.c **** 
+ 650:layer1/prim_tch.c **** skip:
+ 651:layer1/prim_tch.c **** 	/* mark READ page as being used */
+ 652:layer1/prim_tch.c **** 	dsp_api.r_page_used = 1;
+ 584              		.loc 1 652 0
+ 585 0250 20309FE5 		ldr	r3, .L39+16
+ 586 0254 0120A0E3 		mov	r2, #1
+ 587 0258 182083E5 		str	r2, [r3, #24]
+ 653:layer1/prim_tch.c **** 
+ 654:layer1/prim_tch.c **** 	return 0;
+ 655:layer1/prim_tch.c **** }
+ 588              		.loc 1 655 0
+ 589 025c 0000A0E3 		mov	r0, #0
+ 590 0260 20D08DE2 		add	sp, sp, #32
+ 591 0264 F080BDE8 		ldmfd	sp!, {r4, r5, r6, r7, pc}
+ 592              	.L40:
+ 593              		.align	2
+ 594              	.L39:
+ 595 0268 00000000 		.word	.LANCHOR0
+ 596 026c 00000000 		.word	l1s
+ 597 0270 FF6F2900 		.word	2715647
+ 598 0274 00702900 		.word	2715648
+ 599 0278 00000000 		.word	dsp_api
+ 600 027c C0500100 		.word	86208
+ 601              		.cfi_endproc
+ 602              	.LFE66:
+ 604              		.section	.text.l1s_tch_d_cmd,"ax",%progbits
+ 605              		.align	2
+ 607              	l1s_tch_d_cmd:
+ 608              	.LFB65:
+ 512:layer1/prim_tch.c **** {
+ 609              		.loc 1 512 0
+ 610              		.cfi_startproc
+ 611              		@ args = 0, pretend = 0, frame = 12
+ 612              		@ frame_needed = 0, uses_anonymous_args = 0
+ 613              	.LVL50:
+ 614 0000 10402DE9 		stmfd	sp!, {r4, lr}
+ 615              	.LCFI5:
+ 616              		.cfi_def_cfa_offset 8
+ 617 0004 0228A0E1 		mov	r2, r2, asl #16
+ 618              	.LVL51:
+ 619 0008 18D04DE2 		sub	sp, sp, #24
+ 620              	.LCFI6:
+ 621              		.cfi_def_cfa_offset 32
+ 520:layer1/prim_tch.c **** 	rfch_get_params(&l1s.next_time, NULL, &tsc, &tn);
+ 622              		.loc 1 520 0
+ 623 000c 16308DE2 		add	r3, sp, #22
+ 512:layer1/prim_tch.c **** {
+ 624              		.loc 1 512 0
+ 625 0010 2248A0E1 		mov	r4, r2, lsr #16
+ 626              		.cfi_offset 14, -4
+ 627              		.cfi_offset 4, -8
+ 628              	.LVL52:
+ 520:layer1/prim_tch.c **** 	rfch_get_params(&l1s.next_time, NULL, &tsc, &tn);
+ 629              		.loc 1 520 0
+ 630 0014 98009FE5 		ldr	r0, .L44
+ 631              	.LVL53:
+ 632 0018 17208DE2 		add	r2, sp, #23
+ 633 001c 0010A0E3 		mov	r1, #0
+ 634              	.LVL54:
+ 635 0020 FEFFFFEB 		bl	rfch_get_params
+ 636              	.LVL55:
+ 521:layer1/prim_tch.c **** 	chan_nr = mframe_task2chan_nr(mf_task_id, tn);
+ 637              		.loc 1 521 0
+ 638 0024 1610DDE5 		ldrb	r1, [sp, #22]	@ zero_extendqisi2
+ 639 0028 FF0004E2 		and	r0, r4, #255
+ 640 002c FEFFFFEB 		bl	mframe_task2chan_nr
+ 522:layer1/prim_tch.c **** 	tch_get_params(&l1s.next_time, chan_nr, &fn_report, &tch_f_hn, &tch_sub, &tch_mode);
+ 641              		.loc 1 522 0
+ 642 0030 14308DE2 		add	r3, sp, #20
+ 643 0034 00308DE5 		str	r3, [sp, #0]
+ 644 0038 13308DE2 		add	r3, sp, #19
+ 521:layer1/prim_tch.c **** 	chan_nr = mframe_task2chan_nr(mf_task_id, tn);
+ 645              		.loc 1 521 0
+ 646 003c 0010A0E1 		mov	r1, r0
+ 647              	.LVL56:
+ 522:layer1/prim_tch.c **** 	tch_get_params(&l1s.next_time, chan_nr, &fn_report, &tch_f_hn, &tch_sub, &tch_mode);
+ 648              		.loc 1 522 0
+ 649 0040 04308DE5 		str	r3, [sp, #4]
+ 650 0044 0C208DE2 		add	r2, sp, #12
+ 651 0048 15308DE2 		add	r3, sp, #21
+ 652 004c 60009FE5 		ldr	r0, .L44
+ 653              	.LVL57:
+ 654 0050 FEFFFFEB 		bl	tch_get_params.clone.0
+ 655              	.LVL58:
+ 525:layer1/prim_tch.c **** 	dsp_load_tch_param(
+ 656              		.loc 1 525 0
+ 657 0054 1520DDE5 		ldrb	r2, [sp, #21]	@ zero_extendqisi2
+ 658              	.LVL59:
+ 659 0058 0040A0E3 		mov	r4, #0
+ 660              	.LVL60:
+ 661 005c 1600DDE5 		ldrb	r0, [sp, #22]	@ zero_extendqisi2
+ 662              	.LVL61:
+ 663 0060 040052E1 		cmp	r2, r4
+ 664              	.LVL62:
+ 665 0064 0220A003 		moveq	r2, #2
+ 666              	.LVL63:
+ 667 0068 0120A013 		movne	r2, #1
+ 668              	.LVL64:
+ 669 006c 1430DDE5 		ldrb	r3, [sp, #20]	@ zero_extendqisi2
+ 670              	.LVL65:
+ 671 0070 1310DDE5 		ldrb	r1, [sp, #19]	@ zero_extendqisi2
+ 672 0074 08008DE5 		str	r0, [sp, #8]
+ 673              	.LVL66:
+ 674 0078 34009FE5 		ldr	r0, .L44
+ 675              	.LVL67:
+ 676 007c 00408DE5 		str	r4, [sp, #0]
+ 677 0080 04408DE5 		str	r4, [sp, #4]
+ 678 0084 FEFFFFEB 		bl	dsp_load_tch_param
+ 531:layer1/prim_tch.c **** 	dsp_load_rx_task(TCHD_DSP_TASK, 0, tsc); /* burst_id unused for TCH */
+ 679              		.loc 1 531 0
+ 680 0088 0410A0E1 		mov	r1, r4
+ 681              	.LVL68:
+ 682 008c 1720DDE5 		ldrb	r2, [sp, #23]	@ zero_extendqisi2
+ 683 0090 1C00A0E3 		mov	r0, #28
+ 684 0094 FEFFFFEB 		bl	dsp_load_rx_task
+ 532:layer1/prim_tch.c **** 	dsp_load_tx_task(TCHD_DSP_TASK, 0, tsc); /* burst_id unused for TCH */
+ 685              		.loc 1 532 0
+ 686 0098 1C00A0E3 		mov	r0, #28
+ 687 009c 0410A0E1 		mov	r1, r4
+ 688 00a0 1720DDE5 		ldrb	r2, [sp, #23]	@ zero_extendqisi2
+ 689 00a4 FEFFFFEB 		bl	dsp_load_tx_task
+ 535:layer1/prim_tch.c **** }
+ 690              		.loc 1 535 0
+ 691 00a8 0400A0E1 		mov	r0, r4
+ 692 00ac 18D08DE2 		add	sp, sp, #24
+ 693 00b0 1080BDE8 		ldmfd	sp!, {r4, pc}
+ 694              	.L45:
+ 695              		.align	2
+ 696              	.L44:
+ 697 00b4 0C000000 		.word	l1s+12
+ 698              		.cfi_endproc
+ 699              	.LFE65:
+ 701              		.section	.text.l1s_tch_a_cmd,"ax",%progbits
+ 702              		.align	2
+ 704              	l1s_tch_a_cmd:
+ 705              	.LFB67:
+ 656:layer1/prim_tch.c **** 
+ 657:layer1/prim_tch.c **** static int l1s_tch_a_cmd(__unused uint8_t p1, __unused uint8_t p2, uint16_t p3)
+ 658:layer1/prim_tch.c **** {
+ 706              		.loc 1 658 0
+ 707              		.cfi_startproc
+ 708              		@ args = 0, pretend = 0, frame = 12
+ 709              		@ frame_needed = 0, uses_anonymous_args = 0
+ 710              	.LVL69:
+ 711 0000 70402DE9 		stmfd	sp!, {r4, r5, r6, lr}
+ 712              	.LCFI7:
+ 713              		.cfi_def_cfa_offset 16
+ 714 0004 0228A0E1 		mov	r2, r2, asl #16
+ 715              	.LVL70:
+ 716 0008 18D04DE2 		sub	sp, sp, #24
+ 717              	.LCFI8:
+ 718              		.cfi_def_cfa_offset 40
+ 659:layer1/prim_tch.c **** 	uint8_t mf_task_id = p3 & 0xff;
+ 660:layer1/prim_tch.c **** 	uint8_t chan_nr;
+ 661:layer1/prim_tch.c **** 	uint16_t arfcn;
+ 662:layer1/prim_tch.c **** 	uint8_t tsc, tn;
+ 663:layer1/prim_tch.c **** 	uint8_t tch_f_hn, tch_sub, tch_mode;
+ 664:layer1/prim_tch.c **** 	uint32_t fn_report;
+ 665:layer1/prim_tch.c **** 	uint8_t burst_id;
+ 666:layer1/prim_tch.c **** 
+ 667:layer1/prim_tch.c **** 	/* Get/compute various parameters */
+ 668:layer1/prim_tch.c **** 	rfch_get_params(&l1s.next_time, &arfcn, &tsc, &tn);
+ 719              		.loc 1 668 0
+ 720 000c 16308DE2 		add	r3, sp, #22
+ 658:layer1/prim_tch.c **** {
+ 721              		.loc 1 658 0
+ 722 0010 2248A0E1 		mov	r4, r2, lsr #16
+ 723              		.cfi_offset 14, -4
+ 724              		.cfi_offset 6, -8
+ 725              		.cfi_offset 5, -12
+ 726              		.cfi_offset 4, -16
+ 727              	.LVL71:
+ 728              		.loc 1 668 0
+ 729 0014 18029FE5 		ldr	r0, .L56
+ 730              	.LVL72:
+ 731 0018 17208DE2 		add	r2, sp, #23
+ 732 001c 10108DE2 		add	r1, sp, #16
+ 733              	.LVL73:
+ 734 0020 FEFFFFEB 		bl	rfch_get_params
+ 735              	.LVL74:
+ 669:layer1/prim_tch.c **** 	chan_nr = mframe_task2chan_nr(mf_task_id, tn);
+ 736              		.loc 1 669 0
+ 737 0024 1610DDE5 		ldrb	r1, [sp, #22]	@ zero_extendqisi2
+ 738 0028 FF0004E2 		and	r0, r4, #255
+ 739 002c FEFFFFEB 		bl	mframe_task2chan_nr
+ 670:layer1/prim_tch.c **** 	tch_get_params(&l1s.next_time, chan_nr, &fn_report, &tch_f_hn, &tch_sub, &tch_mode);
+ 740              		.loc 1 670 0
+ 741 0030 14308DE2 		add	r3, sp, #20
+ 669:layer1/prim_tch.c **** 	chan_nr = mframe_task2chan_nr(mf_task_id, tn);
+ 742              		.loc 1 669 0
+ 743 0034 0050A0E1 		mov	r5, r0
+ 744              	.LVL75:
+ 745              		.loc 1 670 0
+ 746 0038 00308DE5 		str	r3, [sp, #0]
+ 747 003c 13308DE2 		add	r3, sp, #19
+ 748 0040 04308DE5 		str	r3, [sp, #4]
+ 749 0044 E8019FE5 		ldr	r0, .L56
+ 750              	.LVL76:
+ 751 0048 0510A0E1 		mov	r1, r5
+ 752 004c 0C208DE2 		add	r2, sp, #12
+ 753 0050 15308DE2 		add	r3, sp, #21
+ 754 0054 FEFFFFEB 		bl	tch_get_params.clone.0
+ 755              	.LVL77:
+ 671:layer1/prim_tch.c **** 	burst_id = (fn_report - 12) / 26;
+ 756              		.loc 1 671 0
+ 757 0058 0C009DE5 		ldr	r0, [sp, #12]
+ 758 005c 1A10A0E3 		mov	r1, #26
+ 759 0060 0C0040E2 		sub	r0, r0, #12
+ 760              	.LVL78:
+ 761 0064 FEFFFFEB 		bl	__udivsi3
+ 762              	.LVL79:
+ 672:layer1/prim_tch.c **** 
+ 673:layer1/prim_tch.c **** 	/* Load SACCH data if we start a new burst */
+ 674:layer1/prim_tch.c **** 	if (burst_id == 0) {
+ 763              		.loc 1 674 0
+ 764 0068 FF0010E3 		tst	r0, #255
+ 765 006c 4800001A 		bne	.L47
+ 766              	.LBB28:
+ 675:layer1/prim_tch.c **** 		uint16_t *info_ptr = dsp_api.ndb->a_cu;
+ 767              		.loc 1 675 0
+ 768 0070 C0319FE5 		ldr	r3, .L56+4
+ 676:layer1/prim_tch.c **** 		struct msgb *msg;
+ 677:layer1/prim_tch.c **** 		const uint8_t *data;
+ 678:layer1/prim_tch.c **** 
+ 679:layer1/prim_tch.c **** 		/* If the TX queue is empty, send dummy measurement */
+ 680:layer1/prim_tch.c **** 		msg = msgb_dequeue(&l1s.tx_queue[L1S_CHAN_SACCH]);
+ 769              		.loc 1 680 0
+ 770 0074 C0019FE5 		ldr	r0, .L56+8
+ 675:layer1/prim_tch.c **** 		uint16_t *info_ptr = dsp_api.ndb->a_cu;
+ 771              		.loc 1 675 0
+ 772 0078 006093E5 		ldr	r6, [r3, #0]
+ 773              	.LVL80:
+ 774              		.loc 1 680 0
+ 775 007c FEFFFFEB 		bl	msgb_dequeue
+ 776              	.LVL81:
+ 681:layer1/prim_tch.c **** 		data = msg ? msg->l3h : pu_get_meas_frame();
+ 777              		.loc 1 681 0
+ 778 0080 004050E2 		subs	r4, r0, #0
+ 779              	.LVL82:
+ 780 0084 18109415 		ldrne	r1, [r4, #24]
+ 781 0088 0100001A 		bne	.L49
+ 782              		.loc 1 681 0 is_stmt 0 discriminator 2
+ 783 008c FEFFFFEB 		bl	pu_get_meas_frame
+ 784              	.LVL83:
+ 785 0090 0010A0E1 		mov	r1, r0
+ 786              	.L49:
+ 787              	.LVL84:
+ 682:layer1/prim_tch.c **** 
+ 683:layer1/prim_tch.c **** 		/* Fill data block header */
+ 684:layer1/prim_tch.c **** 		info_ptr[0] = (1 << B_BLUD);	/* 1st word: Set B_BLU bit. */
+ 788              		.loc 1 684 0 is_stmt 1 discriminator 3
+ 789 0094 0229A0E3 		mov	r2, #32768
+ 790 0098 993FA0E3 		mov	r3, #612
+ 791 009c B32086E1 		strh	r2, [r6, r3]	@ movhi
+ 685:layer1/prim_tch.c **** 		info_ptr[1] = 0;		/* 2nd word: cleared. */
+ 792              		.loc 1 685 0 discriminator 3
+ 793 00a0 0020A0E3 		mov	r2, #0	@ movhi
+ 794 00a4 023083E2 		add	r3, r3, #2
+ 795 00a8 B32086E1 		strh	r2, [r6, r3]	@ movhi
+ 686:layer1/prim_tch.c **** 		info_ptr[2] = 0;		/* 3nd word: cleared. */
+ 796              		.loc 1 686 0 discriminator 3
+ 797 00ac 023083E2 		add	r3, r3, #2
+ 687:layer1/prim_tch.c **** 
+ 688:layer1/prim_tch.c **** 		/* Copy the actual data after the header */
+ 689:layer1/prim_tch.c **** 		dsp_memcpy_to_api(&info_ptr[3], data, 23, 0);
+ 798              		.loc 1 689 0 discriminator 3
+ 799 00b0 030086E0 		add	r0, r6, r3
+ 686:layer1/prim_tch.c **** 		info_ptr[2] = 0;		/* 3nd word: cleared. */
+ 800              		.loc 1 686 0 discriminator 3
+ 801 00b4 B32086E1 		strh	r2, [r6, r3]	@ movhi
+ 802              		.loc 1 689 0 discriminator 3
+ 803 00b8 020080E2 		add	r0, r0, #2
+ 804 00bc 1720A0E3 		mov	r2, #23
+ 805 00c0 9A3F43E2 		sub	r3, r3, #616
+ 806 00c4 FEFFFFEB 		bl	dsp_memcpy_to_api
+ 807              	.LVL85:
+ 690:layer1/prim_tch.c **** 
+ 691:layer1/prim_tch.c **** 		/* Indicate completion (FIXME: early but easier this way for now) */
+ 692:layer1/prim_tch.c **** 		if (msg) {
+ 808              		.loc 1 692 0 discriminator 3
+ 809 00c8 000054E3 		cmp	r4, #0
+ 810 00cc 5300000A 		beq	.L50
+ 693:layer1/prim_tch.c **** 			last_tx_tch_fn = l1s.next_time.fn;
+ 811              		.loc 1 693 0
+ 812 00d0 68219FE5 		ldr	r2, .L56+12
+ 813 00d4 68319FE5 		ldr	r3, .L56+16
+ 814 00d8 BC20D2E1 		ldrh	r2, [r2, #12]
+ 815 00dc B220C3E1 		strh	r2, [r3, #2]	@ movhi
+ 694:layer1/prim_tch.c **** 			last_tx_tch_type |= TX_TYPE_SACCH;
+ 816              		.loc 1 694 0
+ 817 00e0 B020D3E1 		ldrh	r2, [r3, #0]
+ 818 00e4 012082E3 		orr	r2, r2, #1
+ 819 00e8 B020C3E1 		strh	r2, [r3, #0]	@ movhi
+ 695:layer1/prim_tch.c **** 			l1s_compl_sched(L1_COMPL_TX_TCH);
+ 820              		.loc 1 695 0
+ 821 00ec 0300A0E3 		mov	r0, #3
+ 822 00f0 FEFFFFEB 		bl	l1s_compl_sched
+ 696:layer1/prim_tch.c **** 		}
+ 697:layer1/prim_tch.c **** 
+ 698:layer1/prim_tch.c **** 		/* Free msg now that we're done with it */
+ 699:layer1/prim_tch.c **** 		if (msg)
+ 700:layer1/prim_tch.c **** 			msgb_free(msg);
+ 823              		.loc 1 700 0
+ 824 00f4 0400A0E1 		mov	r0, r4
+ 825 00f8 FEFFFFEB 		bl	msgb_free
+ 826 00fc 470000EA 		b	.L50
+ 827              	.L53:
+ 828              	.LBE28:
+ 701:layer1/prim_tch.c **** 	}
+ 702:layer1/prim_tch.c **** 
+ 703:layer1/prim_tch.c **** 	/* Allocate RX burst */
+ 704:layer1/prim_tch.c **** 	if (burst_id == 0) {
+ 705:layer1/prim_tch.c **** 		/* Clear 'dangling' msgb */
+ 706:layer1/prim_tch.c **** 		if (rx_tch_a.msg) {
+ 707:layer1/prim_tch.c **** 			/* Can happen if the task was shutdown in the middle of
+ 708:layer1/prim_tch.c **** 			 * 4 bursts ... */
+ 709:layer1/prim_tch.c **** 			msgb_free(rx_tch_a.msg);
+ 829              		.loc 1 709 0
+ 830 0100 FEFFFFEB 		bl	msgb_free
+ 831              	.L54:
+ 710:layer1/prim_tch.c **** 		}
+ 711:layer1/prim_tch.c **** 
+ 712:layer1/prim_tch.c **** 		/* Allocate burst */
+ 713:layer1/prim_tch.c **** 			/* FIXME: we actually want all allocation out of L1S! */
+ 714:layer1/prim_tch.c **** 		rx_tch_a.msg = l1ctl_msgb_alloc(L1CTL_DATA_IND);
+ 832              		.loc 1 714 0
+ 833 0104 0300A0E3 		mov	r0, #3
+ 834 0108 FEFFFFEB 		bl	l1ctl_msgb_alloc
+ 835 010c 30319FE5 		ldr	r3, .L56+16
+ 715:layer1/prim_tch.c **** 		if (!rx_tch_a.msg)
+ 836              		.loc 1 715 0
+ 837 0110 000050E3 		cmp	r0, #0
+ 714:layer1/prim_tch.c **** 		rx_tch_a.msg = l1ctl_msgb_alloc(L1CTL_DATA_IND);
+ 838              		.loc 1 714 0
+ 839 0114 240083E5 		str	r0, [r3, #36]
+ 840              		.loc 1 715 0
+ 716:layer1/prim_tch.c **** 			printf("tch_a_cmd(0): unable to allocate msgb\n");
+ 841              		.loc 1 716 0
+ 842 0118 28019F05 		ldreq	r0, .L56+20
+ 843 011c FEFFFF0B 		bleq	puts
+ 844              	.L51:
+ 717:layer1/prim_tch.c **** 
+ 718:layer1/prim_tch.c **** 		rx_tch_a.dl = (struct l1ctl_info_dl *) msgb_put(rx_tch_a.msg, sizeof(*rx_tch_a.dl));
+ 845              		.loc 1 718 0
+ 846 0120 1C419FE5 		ldr	r4, .L56+16
+ 847              	.LVL86:
+ 848 0124 0C10A0E3 		mov	r1, #12
+ 849 0128 240094E5 		ldr	r0, [r4, #36]
+ 850 012c FEFFFFEB 		bl	msgb_put
+ 719:layer1/prim_tch.c **** 		rx_tch_a.di = (struct l1ctl_data_ind *) msgb_put(rx_tch_a.msg, sizeof(*rx_tch_a.di));
+ 851              		.loc 1 719 0
+ 852 0130 1710A0E3 		mov	r1, #23
+ 718:layer1/prim_tch.c **** 		rx_tch_a.dl = (struct l1ctl_info_dl *) msgb_put(rx_tch_a.msg, sizeof(*rx_tch_a.dl));
+ 853              		.loc 1 718 0
+ 854 0134 280084E5 		str	r0, [r4, #40]
+ 855              		.loc 1 719 0
+ 856 0138 240094E5 		ldr	r0, [r4, #36]
+ 857 013c FEFFFFEB 		bl	msgb_put
+ 858 0140 2C0084E5 		str	r0, [r4, #44]
+ 720:layer1/prim_tch.c **** 
+ 721:layer1/prim_tch.c **** 		/* Pre-fill DL header with some info about burst(0) */
+ 722:layer1/prim_tch.c **** 		rx_tch_a.dl->chan_nr = chan_nr;
+ 859              		.loc 1 722 0
+ 860 0144 284094E5 		ldr	r4, [r4, #40]
+ 723:layer1/prim_tch.c **** 		rx_tch_a.dl->link_id = 0x40;	/* SACCH */
+ 861              		.loc 1 723 0
+ 862 0148 4030A0E3 		mov	r3, #64
+ 722:layer1/prim_tch.c **** 		rx_tch_a.dl->chan_nr = chan_nr;
+ 863              		.loc 1 722 0
+ 864 014c 0050C4E5 		strb	r5, [r4, #0]
+ 865              		.loc 1 723 0
+ 866 0150 0130C4E5 		strb	r3, [r4, #1]
+ 867              	.LVL87:
+ 724:layer1/prim_tch.c **** 		rx_tch_a.dl->band_arfcn = htons(arfcn);
+ 868              		.loc 1 724 0
+ 869 0154 B031DDE1 		ldrh	r3, [sp, #16]
+ 870              	.LVL88:
+ 871              	.LBB29:
+ 872              	.LBB30:
+  51:include/swab.h **** 	return ___constant_swab16(val);
+ 873              		.loc 2 51 0
+ 874 0158 2324A0E1 		mov	r2, r3, lsr #8
+ 875 015c 033482E1 		orr	r3, r2, r3, asl #8
+ 876              	.LVL89:
+ 877              	.LBE30:
+ 878              	.LBE29:
+ 879              		.loc 1 724 0
+ 880 0160 0230C4E5 		strb	r3, [r4, #2]
+ 881 0164 2334A0E1 		mov	r3, r3, lsr #8
+ 882 0168 0330C4E5 		strb	r3, [r4, #3]
+ 725:layer1/prim_tch.c **** 		rx_tch_a.dl->frame_nr = htonl(l1s.next_time.fn);
+ 883              		.loc 1 725 0
+ 884 016c CC309FE5 		ldr	r3, .L56+12
+ 885 0170 0C0093E5 		ldr	r0, [r3, #12]
+ 886 0174 FEFFFFEB 		bl	__fswab32
+ 887 0178 2034A0E1 		mov	r3, r0, lsr #8
+ 888 017c 0400C4E5 		strb	r0, [r4, #4]
+ 889 0180 0530C4E5 		strb	r3, [r4, #5]
+ 890 0184 2038A0E1 		mov	r3, r0, lsr #16
+ 891 0188 200CA0E1 		mov	r0, r0, lsr #24
+ 892 018c 0630C4E5 		strb	r3, [r4, #6]
+ 893 0190 0700C4E5 		strb	r0, [r4, #7]
+ 894              	.LVL90:
+ 895              	.L47:
+ 726:layer1/prim_tch.c **** 	}
+ 727:layer1/prim_tch.c **** 
+ 728:layer1/prim_tch.c **** 	/* Configure DSP for TX/RX */
+ 729:layer1/prim_tch.c **** 	l1s_tx_apc_helper(arfcn);
+ 896              		.loc 1 729 0
+ 897 0194 B001DDE1 		ldrh	r0, [sp, #16]
+ 898 0198 FEFFFFEB 		bl	l1s_tx_apc_helper
+ 899              	.LVL91:
+ 730:layer1/prim_tch.c **** 
+ 731:layer1/prim_tch.c **** 	dsp_load_tch_param(
+ 900              		.loc 1 731 0
+ 901 019c 1520DDE5 		ldrb	r2, [sp, #21]	@ zero_extendqisi2
+ 902              	.LVL92:
+ 903 01a0 0040A0E3 		mov	r4, #0
+ 904 01a4 1600DDE5 		ldrb	r0, [sp, #22]	@ zero_extendqisi2
+ 905              	.LVL93:
+ 906 01a8 040052E1 		cmp	r2, r4
+ 907              	.LVL94:
+ 908 01ac 0220A003 		moveq	r2, #2
+ 909              	.LVL95:
+ 910 01b0 0120A013 		movne	r2, #1
+ 911              	.LVL96:
+ 912 01b4 1430DDE5 		ldrb	r3, [sp, #20]	@ zero_extendqisi2
+ 913              	.LVL97:
+ 914 01b8 1310DDE5 		ldrb	r1, [sp, #19]	@ zero_extendqisi2
+ 915 01bc 08008DE5 		str	r0, [sp, #8]
+ 916              	.LVL98:
+ 917 01c0 6C009FE5 		ldr	r0, .L56
+ 918              	.LVL99:
+ 919 01c4 00408DE5 		str	r4, [sp, #0]
+ 920 01c8 04408DE5 		str	r4, [sp, #4]
+ 921 01cc FEFFFFEB 		bl	dsp_load_tch_param
+ 732:layer1/prim_tch.c **** 		&l1s.next_time,
+ 733:layer1/prim_tch.c **** 		tch_mode, tch_f_hn ? TCH_F : TCH_H, tch_sub,
+ 734:layer1/prim_tch.c **** 		0, 0, tn
+ 735:layer1/prim_tch.c **** 	);
+ 736:layer1/prim_tch.c **** 
+ 737:layer1/prim_tch.c **** 	dsp_load_rx_task(TCHA_DSP_TASK, 0, tsc); /* burst_id unused for TCHA */
+ 922              		.loc 1 737 0
+ 923 01d0 0410A0E1 		mov	r1, r4
+ 924              	.LVL100:
+ 925 01d4 1720DDE5 		ldrb	r2, [sp, #23]	@ zero_extendqisi2
+ 926 01d8 0E00A0E3 		mov	r0, #14
+ 927 01dc FEFFFFEB 		bl	dsp_load_rx_task
+ 738:layer1/prim_tch.c **** 	l1s_rx_win_ctrl(arfcn, L1_RXWIN_NB, 0);
+ 928              		.loc 1 738 0
+ 929 01e0 B001DDE1 		ldrh	r0, [sp, #16]
+ 930 01e4 0420A0E1 		mov	r2, r4
+ 931 01e8 0310A0E3 		mov	r1, #3
+ 932 01ec FEFFFFEB 		bl	l1s_rx_win_ctrl
+ 739:layer1/prim_tch.c **** 
+ 740:layer1/prim_tch.c **** 	dsp_load_tx_task(TCHA_DSP_TASK, 0, tsc); /* burst_id unused for TCHA */
+ 933              		.loc 1 740 0
+ 934 01f0 0410A0E1 		mov	r1, r4
+ 935 01f4 1720DDE5 		ldrb	r2, [sp, #23]	@ zero_extendqisi2
+ 936 01f8 0E00A0E3 		mov	r0, #14
+ 937 01fc FEFFFFEB 		bl	dsp_load_tx_task
+ 741:layer1/prim_tch.c **** 	l1s_tx_win_ctrl(arfcn, L1_TXWIN_NB | ARFCN_UPLINK, 0, 3);
+ 938              		.loc 1 741 0
+ 939 0200 B001DDE1 		ldrh	r0, [sp, #16]
+ 940 0204 0119A0E3 		mov	r1, #16384
+ 941 0208 0420A0E1 		mov	r2, r4
+ 942 020c 0330A0E3 		mov	r3, #3
+ 943 0210 FEFFFFEB 		bl	l1s_tx_win_ctrl
+ 742:layer1/prim_tch.c **** 
+ 743:layer1/prim_tch.c **** 	return 0;
+ 744:layer1/prim_tch.c **** }
+ 944              		.loc 1 744 0
+ 945 0214 0400A0E1 		mov	r0, r4
+ 946 0218 18D08DE2 		add	sp, sp, #24
+ 947 021c 7080BDE8 		ldmfd	sp!, {r4, r5, r6, pc}
+ 948              	.LVL101:
+ 949              	.L50:
+ 706:layer1/prim_tch.c **** 		if (rx_tch_a.msg) {
+ 950              		.loc 1 706 0
+ 951 0220 1C309FE5 		ldr	r3, .L56+16
+ 952 0224 240093E5 		ldr	r0, [r3, #36]
+ 953 0228 000050E3 		cmp	r0, #0
+ 954 022c B3FFFF1A 		bne	.L53
+ 955 0230 B3FFFFEA 		b	.L54
+ 956              	.L57:
+ 957              		.align	2
+ 958              	.L56:
+ 959 0234 0C000000 		.word	l1s+12
+ 960 0238 00000000 		.word	dsp_api
+ 961 023c 580A0000 		.word	l1s+2648
+ 962 0240 00000000 		.word	l1s
+ 963 0244 00000000 		.word	.LANCHOR0
+ 964 0248 33000000 		.word	.LC1
+ 965              		.cfi_endproc
+ 966              	.LFE67:
+ 968              		.global	__divsi3
+ 969              		.section	.text.l1s_tch_resp,"ax",%progbits
+ 970              		.align	2
+ 972              	l1s_tch_resp:
+ 973              	.LFB62:
+ 158:layer1/prim_tch.c **** {
+ 974              		.loc 1 158 0
+ 975              		.cfi_startproc
+ 976              		@ args = 0, pretend = 0, frame = 24
+ 977              		@ frame_needed = 0, uses_anonymous_args = 0
+ 978              	.LVL102:
+ 979 0000 F0412DE9 		stmfd	sp!, {r4, r5, r6, r7, r8, lr}
+ 980              	.LCFI9:
+ 981              		.cfi_def_cfa_offset 24
+ 170:layer1/prim_tch.c **** 	gsm_fn2gsmtime(&rx_time, (l1s.current_time.fn - 1 + GSM_MAX_FN) % GSM_MAX_FN);
+ 982              		.loc 1 170 0
+ 983 0004 48349FE5 		ldr	r3, .L82
+ 984 0008 48049FE5 		ldr	r0, .L82+4
+ 985              	.LVL103:
+ 986 000c 003093E5 		ldr	r3, [r3, #0]
+ 158:layer1/prim_tch.c **** {
+ 987              		.loc 1 158 0
+ 988 0010 20D04DE2 		sub	sp, sp, #32
+ 989              	.LCFI10:
+ 990              		.cfi_def_cfa_offset 56
+ 158:layer1/prim_tch.c **** {
+ 991              		.loc 1 158 0
+ 992 0014 0228A0E1 		mov	r2, r2, asl #16
+ 993              	.LVL104:
+ 170:layer1/prim_tch.c **** 	gsm_fn2gsmtime(&rx_time, (l1s.current_time.fn - 1 + GSM_MAX_FN) % GSM_MAX_FN);
+ 994              		.loc 1 170 0
+ 995 0018 000083E0 		add	r0, r3, r0
+ 996 001c 38149FE5 		ldr	r1, .L82+8
+ 997              	.LVL105:
+ 158:layer1/prim_tch.c **** {
+ 998              		.loc 1 158 0
+ 999 0020 2258A0E1 		mov	r5, r2, lsr #16
+ 1000              		.cfi_offset 14, -4
+ 1001              		.cfi_offset 8, -8
+ 1002              		.cfi_offset 7, -12
+ 1003              		.cfi_offset 6, -16
+ 1004              		.cfi_offset 5, -20
+ 1005              		.cfi_offset 4, -24
+ 1006              	.LVL106:
+ 170:layer1/prim_tch.c **** 	gsm_fn2gsmtime(&rx_time, (l1s.current_time.fn - 1 + GSM_MAX_FN) % GSM_MAX_FN);
+ 1007              		.loc 1 170 0
+ 1008 0024 FEFFFFEB 		bl	__umodsi3
+ 1009 0028 08408DE2 		add	r4, sp, #8
+ 1010 002c 0010A0E1 		mov	r1, r0
+ 1011 0030 0400A0E1 		mov	r0, r4
+ 1012 0034 FEFFFFEB 		bl	gsm_fn2gsmtime
+ 171:layer1/prim_tch.c **** 	rfch_get_params(&rx_time, &arfcn, &tsc, &tn);
+ 1013              		.loc 1 171 0
+ 1014 0038 0400A0E1 		mov	r0, r4
+ 1015 003c 1F208DE2 		add	r2, sp, #31
+ 1016 0040 1E308DE2 		add	r3, sp, #30
+ 1017 0044 1A108DE2 		add	r1, sp, #26
+ 1018 0048 FEFFFFEB 		bl	rfch_get_params
+ 172:layer1/prim_tch.c **** 	chan_nr = mframe_task2chan_nr(mf_task_id, tn);
+ 1019              		.loc 1 172 0
+ 1020 004c FF0005E2 		and	r0, r5, #255
+ 1021              	.LVL107:
+ 1022 0050 1E10DDE5 		ldrb	r1, [sp, #30]	@ zero_extendqisi2
+ 1023 0054 FEFFFFEB 		bl	mframe_task2chan_nr
+ 173:layer1/prim_tch.c **** 	tch_get_params(&rx_time, chan_nr, &fn_report, &tch_f_hn, &tch_sub, NULL);
+ 1024              		.loc 1 173 0
+ 1025 0058 1C308DE2 		add	r3, sp, #28
+ 172:layer1/prim_tch.c **** 	chan_nr = mframe_task2chan_nr(mf_task_id, tn);
+ 1026              		.loc 1 172 0
+ 1027 005c 0050A0E1 		mov	r5, r0
+ 1028              	.LVL108:
+ 173:layer1/prim_tch.c **** 	tch_get_params(&rx_time, chan_nr, &fn_report, &tch_f_hn, &tch_sub, NULL);
+ 1029              		.loc 1 173 0
+ 1030 0060 0400A0E1 		mov	r0, r4
+ 1031              	.LVL109:
+ 175:layer1/prim_tch.c **** 	meas_id = (meas_id + 1) % FACCH_MEAS_HIST; /* absolute value doesn't matter */
+ 1032              		.loc 1 175 0
+ 1033 0064 F4439FE5 		ldr	r4, .L82+12
+ 173:layer1/prim_tch.c **** 	tch_get_params(&rx_time, chan_nr, &fn_report, &tch_f_hn, &tch_sub, NULL);
+ 1034              		.loc 1 173 0
+ 1035 0068 0060A0E3 		mov	r6, #0
+ 1036 006c 14208DE2 		add	r2, sp, #20
+ 1037 0070 00308DE5 		str	r3, [sp, #0]
+ 1038 0074 0510A0E1 		mov	r1, r5
+ 1039 0078 1D308DE2 		add	r3, sp, #29
+ 1040 007c 04608DE5 		str	r6, [sp, #4]
+ 1041 0080 FEFFFFEB 		bl	tch_get_params.clone.0
+ 175:layer1/prim_tch.c **** 	meas_id = (meas_id + 1) % FACCH_MEAS_HIST; /* absolute value doesn't matter */
+ 1042              		.loc 1 175 0
+ 1043 0084 3080D4E5 		ldrb	r8, [r4, #48]	@ zero_extendqisi2
+ 178:layer1/prim_tch.c **** 	rx_tch.meas[meas_id].toa_qbit = dsp_api.db_r->a_serv_demod[D_TOA];
+ 1044              		.loc 1 178 0
+ 1045 0088 D4739FE5 		ldr	r7, .L82+16
+ 175:layer1/prim_tch.c **** 	meas_id = (meas_id + 1) % FACCH_MEAS_HIST; /* absolute value doesn't matter */
+ 1046              		.loc 1 175 0
+ 1047 008c 018088E2 		add	r8, r8, #1
+ 1048 0090 078008E2 		and	r8, r8, #7
+ 1049 0094 3080C4E5 		strb	r8, [r4, #48]
+ 178:layer1/prim_tch.c **** 	rx_tch.meas[meas_id].toa_qbit = dsp_api.db_r->a_serv_demod[D_TOA];
+ 1050              		.loc 1 178 0
+ 1051 0098 043097E5 		ldr	r3, [r7, #4]
+ 1052 009c B011D3E1 		ldrh	r1, [r3, #16]
+ 180:layer1/prim_tch.c **** 		agc_inp_dbm8_by_pm(dsp_api.db_r->a_serv_demod[D_PM] >> 3);
+ 1053              		.loc 1 180 0
+ 1054 00a0 B201D3E1 		ldrh	r0, [r3, #18]
+ 178:layer1/prim_tch.c **** 	rx_tch.meas[meas_id].toa_qbit = dsp_api.db_r->a_serv_demod[D_TOA];
+ 1055              		.loc 1 178 0
+ 1056 00a4 888184E0 		add	r8, r4, r8, asl #3
+ 1057 00a8 B613C8E1 		strh	r1, [r8, #54]	@ movhi
+ 180:layer1/prim_tch.c **** 		agc_inp_dbm8_by_pm(dsp_api.db_r->a_serv_demod[D_PM] >> 3);
+ 1058              		.loc 1 180 0
+ 1059 00ac A001A0E1 		mov	r0, r0, lsr #3
+ 1060 00b0 FEFFFFEB 		bl	agc_inp_dbm8_by_pm
+ 182:layer1/prim_tch.c **** 		ANGLE_TO_FREQ(dsp_api.db_r->a_serv_demod[D_ANGLE]);
+ 1061              		.loc 1 182 0
+ 1062 00b4 041097E5 		ldr	r1, [r7, #4]
+ 181:layer1/prim_tch.c **** 	rx_tch.meas[meas_id].freq_err =
+ 1063              		.loc 1 181 0
+ 1064 00b8 3030D4E5 		ldrb	r3, [r4, #48]	@ zero_extendqisi2
+ 179:layer1/prim_tch.c **** 	rx_tch.meas[meas_id].pm_dbm8 =
+ 1065              		.loc 1 179 0
+ 1066 00bc B803C8E1 		strh	r0, [r8, #56]	@ movhi
+ 181:layer1/prim_tch.c **** 	rx_tch.meas[meas_id].freq_err =
+ 1067              		.loc 1 181 0
+ 1068 00c0 834184E0 		add	r4, r4, r3, asl #3
+ 182:layer1/prim_tch.c **** 		ANGLE_TO_FREQ(dsp_api.db_r->a_serv_demod[D_ANGLE]);
+ 1069              		.loc 1 182 0
+ 1070 00c4 9C039FE5 		ldr	r0, .L82+20
+ 1071 00c8 F431D1E1 		ldrsh	r3, [r1, #20]
+ 1072 00cc 900303E0 		mul	r3, r0, r3
+ 1073 00d0 FF0C83E2 		add	r0, r3, #65280
+ 1074 00d4 060053E1 		cmp	r3, r6
+ 1075 00d8 FF3080B2 		addlt	r3, r0, #255
+ 181:layer1/prim_tch.c **** 	rx_tch.meas[meas_id].freq_err =
+ 1076              		.loc 1 181 0
+ 1077 00dc 382084E2 		add	r2, r4, #56
+ 182:layer1/prim_tch.c **** 		ANGLE_TO_FREQ(dsp_api.db_r->a_serv_demod[D_ANGLE]);
+ 1078              		.loc 1 182 0
+ 1079 00e0 4338A0E1 		mov	r3, r3, asr #16
+ 181:layer1/prim_tch.c **** 	rx_tch.meas[meas_id].freq_err =
+ 1080              		.loc 1 181 0
+ 1081 00e4 B230C2E1 		strh	r3, [r2, #2]	@ movhi
+ 183:layer1/prim_tch.c **** 	rx_tch.meas[meas_id].snr = dsp_api.db_r->a_serv_demod[D_SNR];
+ 1082              		.loc 1 183 0
+ 1083 00e8 B631D1E1 		ldrh	r3, [r1, #22]
+ 186:layer1/prim_tch.c **** 	if (rx_tch.meas[meas_id].snr > AFC_SNR_THRESHOLD)
+ 1084              		.loc 1 186 0
+ 1085 00ec 0A0C53E3 		cmp	r3, #2560
+ 183:layer1/prim_tch.c **** 	rx_tch.meas[meas_id].snr = dsp_api.db_r->a_serv_demod[D_SNR];
+ 1086              		.loc 1 183 0
+ 1087 00f0 B433C4E1 		strh	r3, [r4, #52]	@ movhi
+ 192:layer1/prim_tch.c **** 	toa_input(rx_tch.meas[meas_id].toa_qbit << 2, rx_tch.meas[meas_id].snr);
+ 1088              		.loc 1 192 0
+ 1089 00f4 64439FE5 		ldr	r4, .L82+12
+ 1090 00f8 F200D2E1 		ldrsh	r0, [r2, #2]
+ 1091              	.LVL110:
+ 1092 00fc BA11DDE1 		ldrh	r1, [sp, #26]
+ 1093              	.LVL111:
+ 187:layer1/prim_tch.c **** 		afc_input(rx_tch.meas[meas_id].freq_err, arfcn, 1);
+ 1094              		.loc 1 187 0
+ 1095 0100 0120A083 		movhi	r2, #1
+ 189:layer1/prim_tch.c **** 		afc_input(rx_tch.meas[meas_id].freq_err, arfcn, 0);
+ 1096              		.loc 1 189 0
+ 1097 0104 0620A091 		movls	r2, r6
+ 1098 0108 FEFFFFEB 		bl	afc_input
+ 192:layer1/prim_tch.c **** 	toa_input(rx_tch.meas[meas_id].toa_qbit << 2, rx_tch.meas[meas_id].snr);
+ 1099              		.loc 1 192 0
+ 1100 010c 3030D4E5 		ldrb	r3, [r4, #48]	@ zero_extendqisi2
+ 1101 0110 833184E0 		add	r3, r4, r3, asl #3
+ 1102 0114 F603D3E1 		ldrsh	r0, [r3, #54]
+ 1103 0118 B413D3E1 		ldrh	r1, [r3, #52]
+ 1104 011c 0001A0E1 		mov	r0, r0, asl #2
+ 1105 0120 FEFFFFEB 		bl	toa_input
+ 195:layer1/prim_tch.c **** 	rffe_compute_gain(rx_tch.meas[meas_id].pm_dbm8 / 8,
+ 1106              		.loc 1 195 0
+ 1107 0124 3030D4E5 		ldrb	r3, [r4, #48]	@ zero_extendqisi2
+ 1108 0128 834184E0 		add	r4, r4, r3, asl #3
+ 1109 012c F803D4E1 		ldrsh	r0, [r4, #56]
+ 1110 0130 073080E2 		add	r3, r0, #7
+ 1111 0134 000050E3 		cmp	r0, #0
+ 1112 0138 0300A0B1 		movlt	r0, r3
+ 1113 013c C001A0E1 		mov	r0, r0, asr #3
+ 1114 0140 5010A0E3 		mov	r1, #80
+ 1115 0144 FEFFFFEB 		bl	rffe_compute_gain
+ 1116              	.LVL112:
+ 199:layer1/prim_tch.c **** 	if (tch_f_hn) {
+ 1117              		.loc 1 199 0
+ 1118 0148 1D30DDE5 		ldrb	r3, [sp, #29]	@ zero_extendqisi2
+ 1119              	.LVL113:
+ 1120 014c 000053E3 		cmp	r3, #0
+ 1121              	.LVL114:
+ 1122 0150 0500000A 		beq	.L61
+ 201:layer1/prim_tch.c **** 		facch_rx_now = ((rx_time.fn % 13) % 4) == 3;
+ 1123              		.loc 1 201 0
+ 1124 0154 08009DE5 		ldr	r0, [sp, #8]
+ 1125 0158 0D10A0E3 		mov	r1, #13
+ 1126 015c FEFFFFEB 		bl	__umodsi3
+ 1127              	.LVL115:
+ 1128 0160 030000E2 		and	r0, r0, #3
+ 210:layer1/prim_tch.c **** 	if (facch_rx_now && (dsp_api.ndb->a_fd[0] & (1<<B_BLUD))) {
+ 1129              		.loc 1 210 0
+ 1130 0164 030050E3 		cmp	r0, #3
+ 1131 0168 070000EA 		b	.L81
+ 1132              	.LVL116:
+ 1133              	.L61:
+ 1134              	.LBB31:
+ 204:layer1/prim_tch.c **** 		uint8_t t2_norm = rx_time.t2 - tch_sub;
+ 1135              		.loc 1 204 0
+ 1136 016c 0E20DDE5 		ldrb	r2, [sp, #14]	@ zero_extendqisi2
+ 1137              	.LVL117:
+ 1138 0170 1C30DDE5 		ldrb	r3, [sp, #28]	@ zero_extendqisi2
+ 1139              	.LVL118:
+ 1140 0174 023063E0 		rsb	r3, r3, r2
+ 1141              	.LVL119:
+ 1142 0178 FF3003E2 		and	r3, r3, #255
+ 1143              	.LVL120:
+ 205:layer1/prim_tch.c **** 		facch_rx_now = (t2_norm == 15) ||
+ 1144              		.loc 1 205 0
+ 1145 017c 0F0053E3 		cmp	r3, #15
+ 1146 0180 17005313 		cmpne	r3, #23
+ 1147 0184 0100000A 		beq	.L62
+ 206:layer1/prim_tch.c **** 		               (t2_norm == 23) ||
+ 1148              		.loc 1 206 0
+ 1149 0188 060053E3 		cmp	r3, #6
+ 1150              	.LVL121:
+ 1151              	.L81:
+ 1152 018c 6A00001A 		bne	.L63
+ 1153              	.L62:
+ 1154              	.LBE31:
+ 210:layer1/prim_tch.c **** 	if (facch_rx_now && (dsp_api.ndb->a_fd[0] & (1<<B_BLUD))) {
+ 1155              		.loc 1 210 0 discriminator 1
+ 1156 0190 CC329FE5 		ldr	r3, .L82+16
+ 1157 0194 002093E5 		ldr	r2, [r3, #0]
+ 1158 0198 CC329FE5 		ldr	r3, .L82+24
+ 1159 019c F33092E1 		ldrsh	r3, [r2, r3]
+ 1160 01a0 000053E3 		cmp	r3, #0
+ 1161 01a4 640000AA 		bge	.L63
+ 1162              	.LVL122:
+ 1163              	.LBB32:
+ 221:layer1/prim_tch.c **** 		msg = l1ctl_msgb_alloc(L1CTL_DATA_IND);
+ 1164              		.loc 1 221 0
+ 1165 01a8 0300A0E3 		mov	r0, #3
+ 1166 01ac FEFFFFEB 		bl	l1ctl_msgb_alloc
+ 1167              	.LVL123:
+ 222:layer1/prim_tch.c **** 		if(!msg) {
+ 1168              		.loc 1 222 0
+ 1169 01b0 004050E2 		subs	r4, r0, #0
+ 1170 01b4 0200001A 		bne	.L64
+ 223:layer1/prim_tch.c **** 			printf("TCH FACCH: unable to allocate msgb\n");
+ 1171              		.loc 1 223 0
+ 1172 01b8 B0029FE5 		ldr	r0, .L82+28
+ 1173              	.LVL124:
+ 1174 01bc FEFFFFEB 		bl	puts
+ 224:layer1/prim_tch.c **** 			goto skip_rx_facch;
+ 1175              		.loc 1 224 0
+ 1176 01c0 490000EA 		b	.L65
+ 1177              	.L64:
+ 227:layer1/prim_tch.c **** 		dl = (struct l1ctl_info_dl *) msgb_put(msg, sizeof(*dl));
+ 1178              		.loc 1 227 0
+ 1179 01c4 0C10A0E3 		mov	r1, #12
+ 1180 01c8 FEFFFFEB 		bl	msgb_put
+ 228:layer1/prim_tch.c **** 		di = (struct l1ctl_data_ind *) msgb_put(msg, sizeof(*di));
+ 1181              		.loc 1 228 0
+ 1182 01cc 1710A0E3 		mov	r1, #23
+ 227:layer1/prim_tch.c **** 		dl = (struct l1ctl_info_dl *) msgb_put(msg, sizeof(*dl));
+ 1183              		.loc 1 227 0
+ 1184 01d0 0060A0E1 		mov	r6, r0
+ 1185              	.LVL125:
+ 228:layer1/prim_tch.c **** 		di = (struct l1ctl_data_ind *) msgb_put(msg, sizeof(*di));
+ 1186              		.loc 1 228 0
+ 1187 01d4 0400A0E1 		mov	r0, r4
+ 1188              	.LVL126:
+ 1189 01d8 FEFFFFEB 		bl	msgb_put
+ 232:layer1/prim_tch.c **** 		dl->link_id = 0x00;	/* FACCH */
+ 1190              		.loc 1 232 0
+ 1191 01dc 0070A0E3 		mov	r7, #0
+ 231:layer1/prim_tch.c **** 		dl->chan_nr = chan_nr;
+ 1192              		.loc 1 231 0
+ 1193 01e0 0050C6E5 		strb	r5, [r6, #0]
+ 232:layer1/prim_tch.c **** 		dl->link_id = 0x00;	/* FACCH */
+ 1194              		.loc 1 232 0
+ 1195 01e4 0170C6E5 		strb	r7, [r6, #1]
+ 1196              	.LVL127:
+ 233:layer1/prim_tch.c **** 		dl->band_arfcn = htons(arfcn);
+ 1197              		.loc 1 233 0
+ 1198 01e8 BA31DDE1 		ldrh	r3, [sp, #26]
+ 1199              	.LBB33:
+ 1200              	.LBB34:
+  51:include/swab.h **** 	return ___constant_swab16(val);
+ 1201              		.loc 2 51 0
+ 1202 01ec 2324A0E1 		mov	r2, r3, lsr #8
+ 1203 01f0 033482E1 		orr	r3, r2, r3, asl #8
+ 1204              	.LBE34:
+ 1205              	.LBE33:
+ 233:layer1/prim_tch.c **** 		dl->band_arfcn = htons(arfcn);
+ 1206              		.loc 1 233 0
+ 1207 01f4 0230C6E5 		strb	r3, [r6, #2]
+ 1208 01f8 2334A0E1 		mov	r3, r3, lsr #8
+ 1209 01fc 0330C6E5 		strb	r3, [r6, #3]
+ 228:layer1/prim_tch.c **** 		di = (struct l1ctl_data_ind *) msgb_put(msg, sizeof(*di));
+ 1210              		.loc 1 228 0
+ 1211 0200 0080A0E1 		mov	r8, r0
+ 1212              	.LVL128:
+ 234:layer1/prim_tch.c **** 		dl->frame_nr = htonl(rx_time.fn);
+ 1213              		.loc 1 234 0
+ 1214 0204 08009DE5 		ldr	r0, [sp, #8]
+ 1215              	.LVL129:
+ 1216 0208 FEFFFFEB 		bl	__fswab32
+ 1217 020c 2034A0E1 		mov	r3, r0, lsr #8
+ 1218 0210 0400C6E5 		strb	r0, [r6, #4]
+ 1219 0214 0530C6E5 		strb	r3, [r6, #5]
+ 1220 0218 2038A0E1 		mov	r3, r0, lsr #16
+ 1221 021c 200CA0E1 		mov	r0, r0, lsr #24
+ 1222 0220 0630C6E5 		strb	r3, [r6, #6]
+ 1223 0224 0700C6E5 		strb	r0, [r6, #7]
+ 1224              	.LBB35:
+ 239:layer1/prim_tch.c **** 			int j = (meas_id + FACCH_MEAS_HIST - i) % FACCH_MEAS_HIST;
+ 1225              		.loc 1 239 0
+ 1226 0228 30129FE5 		ldr	r1, .L82+12
+ 1227              	.LVL130:
+ 1228              	.LBE35:
+ 237:layer1/prim_tch.c **** 		n = tch_f_hn ? 8 : 6;
+ 1229              		.loc 1 237 0
+ 1230 022c 1D50DDE5 		ldrb	r5, [sp, #29]	@ zero_extendqisi2
+ 1231              	.LVL131:
+ 1232              	.LBB36:
+ 239:layer1/prim_tch.c **** 			int j = (meas_id + FACCH_MEAS_HIST - i) % FACCH_MEAS_HIST;
+ 1233              		.loc 1 239 0
+ 1234 0230 3020D1E5 		ldrb	r2, [r1, #48]	@ zero_extendqisi2
+ 1235              	.LBE36:
+ 237:layer1/prim_tch.c **** 		n = tch_f_hn ? 8 : 6;
+ 1236              		.loc 1 237 0
+ 1237 0234 070055E1 		cmp	r5, r7
+ 1238              	.LVL132:
+ 1239 0238 0650A003 		moveq	r5, #6
+ 1240              	.LVL133:
+ 1241 023c 0850A013 		movne	r5, #8
+ 1242              	.LVL134:
+ 1243              	.LBB37:
+ 239:layer1/prim_tch.c **** 			int j = (meas_id + FACCH_MEAS_HIST - i) % FACCH_MEAS_HIST;
+ 1244              		.loc 1 239 0
+ 1245 0240 082082E2 		add	r2, r2, #8
+ 238:layer1/prim_tch.c **** 		for (i=0; i<n; i++) {
+ 1246              		.loc 1 238 0
+ 1247 0244 0730A0E1 		mov	r3, r7
+ 215:layer1/prim_tch.c **** 		uint32_t avg_snr = 0;
+ 1248              		.loc 1 215 0
+ 1249 0248 0700A0E1 		mov	r0, r7
+ 1250              	.LVL135:
+ 1251              	.L67:
+ 239:layer1/prim_tch.c **** 			int j = (meas_id + FACCH_MEAS_HIST - i) % FACCH_MEAS_HIST;
+ 1252              		.loc 1 239 0 discriminator 2
+ 1253 024c 07C002E2 		and	ip, r2, #7
+ 1254              	.LVL136:
+ 240:layer1/prim_tch.c **** 			avg_snr += rx_tch.meas[j].snr;
+ 1255              		.loc 1 240 0 discriminator 2
+ 1256 0250 8CC181E0 		add	ip, r1, ip, asl #3
+ 1257              	.LVL137:
+ 1258 0254 B4E3DCE1 		ldrh	lr, [ip, #52]
+ 1259              	.LBE37:
+ 238:layer1/prim_tch.c **** 		for (i=0; i<n; i++) {
+ 1260              		.loc 1 238 0 discriminator 2
+ 1261 0258 013083E2 		add	r3, r3, #1
+ 1262              	.LBB38:
+ 241:layer1/prim_tch.c **** 			avg_dbm8 += rx_tch.meas[j].pm_dbm8;
+ 1263              		.loc 1 241 0 discriminator 2
+ 1264 025c F8C3DCE1 		ldrsh	ip, [ip, #56]
+ 1265              	.LBE38:
+ 238:layer1/prim_tch.c **** 		for (i=0; i<n; i++) {
+ 1266              		.loc 1 238 0 discriminator 2
+ 1267 0260 050053E1 		cmp	r3, r5
+ 1268              	.LBB39:
+ 240:layer1/prim_tch.c **** 			avg_snr += rx_tch.meas[j].snr;
+ 1269              		.loc 1 240 0 discriminator 2
+ 1270 0264 0E0080E0 		add	r0, r0, lr
+ 1271              	.LVL138:
+ 241:layer1/prim_tch.c **** 			avg_dbm8 += rx_tch.meas[j].pm_dbm8;
+ 1272              		.loc 1 241 0 discriminator 2
+ 1273 0268 0C7087E0 		add	r7, r7, ip
+ 1274              	.LVL139:
+ 1275              	.LBE39:
+ 238:layer1/prim_tch.c **** 		for (i=0; i<n; i++) {
+ 1276              		.loc 1 238 0 discriminator 2
+ 1277 026c 012042E2 		sub	r2, r2, #1
+ 1278 0270 F5FFFFBA 		blt	.L67
+ 244:layer1/prim_tch.c **** 		dl->snr = avg_snr / n;
+ 1279              		.loc 1 244 0
+ 1280 0274 0510A0E1 		mov	r1, r5
+ 1281 0278 FEFFFFEB 		bl	__udivsi3
+ 1282              	.LVL140:
+ 245:layer1/prim_tch.c **** 		dl->rx_level = dbm2rxlev(avg_dbm8 / (8*n));
+ 1283              		.loc 1 245 0
+ 1284 027c 8511A0E1 		mov	r1, r5, asl #3
+ 244:layer1/prim_tch.c **** 		dl->snr = avg_snr / n;
+ 1285              		.loc 1 244 0
+ 1286 0280 0900C6E5 		strb	r0, [r6, #9]
+ 245:layer1/prim_tch.c **** 		dl->rx_level = dbm2rxlev(avg_dbm8 / (8*n));
+ 1287              		.loc 1 245 0
+ 1288 0284 0700A0E1 		mov	r0, r7
+ 1289 0288 FEFFFFEB 		bl	__divsi3
+ 1290 028c FEFFFFEB 		bl	dbm2rxlev
+ 248:layer1/prim_tch.c **** 		num_biterr = dsp_api.ndb->a_fd[2] & 0xffff;
+ 1291              		.loc 1 248 0
+ 1292 0290 CC319FE5 		ldr	r3, .L82+16
+ 245:layer1/prim_tch.c **** 		dl->rx_level = dbm2rxlev(avg_dbm8 / (8*n));
+ 1293              		.loc 1 245 0
+ 1294 0294 0800C6E5 		strb	r0, [r6, #8]
+ 248:layer1/prim_tch.c **** 		num_biterr = dsp_api.ndb->a_fd[2] & 0xffff;
+ 1295              		.loc 1 248 0
+ 1296 0298 D4219FE5 		ldr	r2, .L82+32
+ 1297 029c 003093E5 		ldr	r3, [r3, #0]
+ 1298 02a0 B22093E1 		ldrh	r2, [r3, r2]
+ 1299              	.LVL141:
+ 249:layer1/prim_tch.c **** 		if (num_biterr > 0xff)
+ 1300              		.loc 1 249 0
+ 1301 02a4 FF0052E3 		cmp	r2, #255
+ 250:layer1/prim_tch.c **** 			dl->num_biterr = 0xff;
+ 1302              		.loc 1 250 0
+ 1303 02a8 0020E083 		mvnhi	r2, #0
+ 1304              	.LVL142:
+ 252:layer1/prim_tch.c **** 			dl->num_biterr = num_biterr;
+ 1305              		.loc 1 252 0
+ 1306 02ac 0A20C6E5 		strb	r2, [r6, #10]
+ 254:layer1/prim_tch.c **** 		dl->fire_crc = ((dsp_api.ndb->a_fd[0] & 0xffff) & ((1 << B_FIRE1) | (1 << B_FIRE0))) >> B_FIRE0;
+ 1307              		.loc 1 254 0
+ 1308 02b0 B4219FE5 		ldr	r2, .L82+24
+ 1309 02b4 B23093E1 		ldrh	r3, [r3, r2]
+ 1310 02b8 603003E2 		and	r3, r3, #96
+ 1311 02bc C332A0E1 		mov	r3, r3, asr #5
+ 1312 02c0 0B30C6E5 		strb	r3, [r6, #11]
+ 257:layer1/prim_tch.c **** 		pu_update_rx_level(dl->rx_level);
+ 1313              		.loc 1 257 0
+ 1314 02c4 FEFFFFEB 		bl	pu_update_rx_level
+ 260:layer1/prim_tch.c **** 		dsp_memcpy_from_api(di->data, &dsp_api.ndb->a_fd[3], 23, 0);
+ 1315              		.loc 1 260 0
+ 1316 02c8 94319FE5 		ldr	r3, .L82+16
+ 1317 02cc 001093E5 		ldr	r1, [r3, #0]
+ 1318 02d0 0800A0E1 		mov	r0, r8
+ 1319 02d4 221E81E2 		add	r1, r1, #544
+ 1320 02d8 1720A0E3 		mov	r2, #23
+ 1321 02dc 0030A0E3 		mov	r3, #0
+ 1322 02e0 FEFFFFEB 		bl	dsp_memcpy_from_api
+ 263:layer1/prim_tch.c **** 		l1_queue_for_l2(msg);
+ 1323              		.loc 1 263 0
+ 1324 02e4 0400A0E1 		mov	r0, r4
+ 1325 02e8 FEFFFFEB 		bl	l1_queue_for_l2
+ 1326              	.LVL143:
+ 1327              	.L65:
+ 268:layer1/prim_tch.c **** 		dsp_api.ndb->a_fd[0] = (1<<B_FIRE1);
+ 1328              		.loc 1 268 0
+ 1329 02ec 70319FE5 		ldr	r3, .L82+16
+ 1330 02f0 74219FE5 		ldr	r2, .L82+24
+ 1331 02f4 003093E5 		ldr	r3, [r3, #0]
+ 1332 02f8 4010A0E3 		mov	r1, #64	@ movhi
+ 1333 02fc B21083E1 		strh	r1, [r3, r2]	@ movhi
+ 269:layer1/prim_tch.c **** 		dsp_api.ndb->a_fd[2] = 0xffff;
+ 1334              		.loc 1 269 0
+ 1335 0300 042082E2 		add	r2, r2, #4
+ 1336 0304 0010E0E3 		mvn	r1, #0	@ movhi
+ 1337 0308 B21083E1 		strh	r1, [r3, r2]	@ movhi
+ 272:layer1/prim_tch.c **** 		dsp_api.ndb->a_dd_0[0] = 0;
+ 1338              		.loc 1 272 0
+ 1339 030c 1A2082E2 		add	r2, r2, #26
+ 1340 0310 0010A0E3 		mov	r1, #0	@ movhi
+ 1341 0314 B21083E1 		strh	r1, [r3, r2]	@ movhi
+ 273:layer1/prim_tch.c **** 		dsp_api.ndb->a_dd_0[2] = 0xffff;
+ 1342              		.loc 1 273 0
+ 1343 0318 042082E2 		add	r2, r2, #4
+ 1344 031c 0010E0E3 		mvn	r1, #0	@ movhi
+ 1345 0320 B21083E1 		strh	r1, [r3, r2]	@ movhi
+ 276:layer1/prim_tch.c **** 		dsp_api.ndb->a_dd_1[0] = 0;
+ 1346              		.loc 1 276 0
+ 1347 0324 4D2F42E2 		sub	r2, r2, #308
+ 1348 0328 0010A0E3 		mov	r1, #0	@ movhi
+ 1349 032c B21083E1 		strh	r1, [r3, r2]	@ movhi
+ 277:layer1/prim_tch.c **** 		dsp_api.ndb->a_dd_1[2] = 0xffff;
+ 1350              		.loc 1 277 0
+ 1351 0330 042082E2 		add	r2, r2, #4
+ 1352 0334 0010E0E3 		mvn	r1, #0	@ movhi
+ 1353 0338 B21083E1 		strh	r1, [r3, r2]	@ movhi
+ 1354              	.LVL144:
+ 1355              	.L63:
+ 1356              	.LBE32:
+ 281:layer1/prim_tch.c **** 	if (tch_f_hn) {
+ 1357              		.loc 1 281 0
+ 1358 033c 1D30DDE5 		ldrb	r3, [sp, #29]	@ zero_extendqisi2
+ 1359              	.LVL145:
+ 1360 0340 000053E3 		cmp	r3, #0
+ 1361              	.LVL146:
+ 1362 0344 08009DE5 		ldr	r0, [sp, #8]
+ 1363 0348 0600000A 		beq	.L70
+ 283:layer1/prim_tch.c **** 		traffic_rx_now = ((rx_time.fn % 13) % 4) == 3;
+ 1364              		.loc 1 283 0
+ 1365 034c 0D10A0E3 		mov	r1, #13
+ 1366 0350 FEFFFFEB 		bl	__umodsi3
+ 1367              	.LVL147:
+ 1368 0354 030000E2 		and	r0, r0, #3
+ 1369 0358 030050E3 		cmp	r0, #3
+ 1370 035c 0000A013 		movne	r0, #0
+ 1371 0360 0100A003 		moveq	r0, #1
+ 1372              	.LVL148:
+ 1373 0364 080000EA 		b	.L71
+ 1374              	.LVL149:
+ 1375              	.L70:
+ 287:layer1/prim_tch.c **** 		traffic_rx_now = (((rx_time.fn - tch_sub + 13) % 13) % 4) == 2;
+ 1376              		.loc 1 287 0
+ 1377 0368 1C30DDE5 		ldrb	r3, [sp, #28]	@ zero_extendqisi2
+ 1378              	.LVL150:
+ 1379 036c 0D0080E2 		add	r0, r0, #13
+ 1380 0370 000063E0 		rsb	r0, r3, r0
+ 1381              	.LVL151:
+ 1382 0374 0D10A0E3 		mov	r1, #13
+ 1383 0378 FEFFFFEB 		bl	__umodsi3
+ 1384              	.LVL152:
+ 1385 037c 030000E2 		and	r0, r0, #3
+ 1386 0380 020050E3 		cmp	r0, #2
+ 1387 0384 0000A013 		movne	r0, #0
+ 1388 0388 0100A003 		moveq	r0, #1
+ 1389              	.LVL153:
+ 1390              	.L71:
+ 290:layer1/prim_tch.c **** 	if (traffic_rx_now) {
+ 1391              		.loc 1 290 0
+ 1392 038c 000050E3 		cmp	r0, #0
+ 1393 0390 2900000A 		beq	.L72
+ 1394              	.LVL154:
+ 1395              	.LBB40:
+ 293:layer1/prim_tch.c **** 		traffic_buf = tch_sub ? dsp_api.ndb->a_dd_1 : dsp_api.ndb->a_dd_0;
+ 1396              		.loc 1 293 0
+ 1397 0394 1C30DDE5 		ldrb	r3, [sp, #28]	@ zero_extendqisi2
+ 1398              	.LVL155:
+ 1399 0398 000053E3 		cmp	r3, #0
+ 1400              	.LVL156:
+ 1401 039c C0309FE5 		ldr	r3, .L82+16
+ 1402              	.LVL157:
+ 1403 03a0 00409315 		ldrne	r4, [r3, #0]
+ 1404 03a4 00409305 		ldreq	r4, [r3, #0]
+ 1405 03a8 424F8412 		addne	r4, r4, #264
+ 1406 03ac 8E4F8402 		addeq	r4, r4, #568
+ 1407              	.LVL158:
+ 295:layer1/prim_tch.c **** 		if (traffic_buf[0] & (1<<B_BLUD)) {
+ 1408              		.loc 1 295 0
+ 1409 03b0 B030D4E1 		ldrh	r3, [r4, #0]
+ 1410 03b4 020913E3 		tst	r3, #32768
+ 1411 03b8 1F00000A 		beq	.L72
+ 297:layer1/prim_tch.c **** 			if ((l1s.audio_mode & AUDIO_RX_TRAFFIC_IND) &&
+ 1412              		.loc 1 297 0
+ 1413 03bc 90309FE5 		ldr	r3, .L82
+ 1414 03c0 4C3AD3E5 		ldrb	r3, [r3, #2636]	@ zero_extendqisi2
+ 1415 03c4 080013E3 		tst	r3, #8
+ 1416 03c8 1700000A 		beq	.L75
+ 298:layer1/prim_tch.c **** 			    !(dsp_api.ndb->a_dd_0[0] & (1<<B_BFI))) {
+ 1417              		.loc 1 298 0 discriminator 1
+ 1418 03cc 90309FE5 		ldr	r3, .L82+16
+ 1419 03d0 002093E5 		ldr	r2, [r3, #0]
+ 1420 03d4 8E3FA0E3 		mov	r3, #568
+ 1421 03d8 B33092E1 		ldrh	r3, [r2, r3]
+ 297:layer1/prim_tch.c **** 			if ((l1s.audio_mode & AUDIO_RX_TRAFFIC_IND) &&
+ 1422              		.loc 1 297 0 discriminator 1
+ 1423 03dc 040013E3 		tst	r3, #4
+ 1424 03e0 1100001A 		bne	.L75
+ 1425              	.LBB41:
+ 305:layer1/prim_tch.c **** 				msg = l1ctl_msgb_alloc(L1CTL_TRAFFIC_IND);
+ 1426              		.loc 1 305 0
+ 1427 03e4 1E00A0E3 		mov	r0, #30
+ 1428              	.LVL159:
+ 1429 03e8 FEFFFFEB 		bl	l1ctl_msgb_alloc
+ 1430              	.LVL160:
+ 306:layer1/prim_tch.c **** 				if(!msg) {
+ 1431              		.loc 1 306 0
+ 1432 03ec 005050E2 		subs	r5, r0, #0
+ 1433 03f0 0200001A 		bne	.L76
+ 307:layer1/prim_tch.c **** 					printf("TCH traffic: unable to allocate msgb\n");
+ 1434              		.loc 1 307 0
+ 1435 03f4 7C009FE5 		ldr	r0, .L82+36
+ 1436              	.LVL161:
+ 1437 03f8 FEFFFFEB 		bl	puts
+ 308:layer1/prim_tch.c **** 					goto skip_rx_traffic;
+ 1438              		.loc 1 308 0
+ 1439 03fc 0A0000EA 		b	.L75
+ 1440              	.L76:
+ 311:layer1/prim_tch.c **** 				dl = (struct l1ctl_info_dl *) msgb_put(msg, sizeof(*dl));
+ 1441              		.loc 1 311 0
+ 1442 0400 0C10A0E3 		mov	r1, #12
+ 1443 0404 FEFFFFEB 		bl	msgb_put
+ 312:layer1/prim_tch.c **** 				ti = (struct l1ctl_traffic_ind *) msgb_put(msg, sizeof(*ti));
+ 1444              		.loc 1 312 0
+ 1445 0408 2810A0E3 		mov	r1, #40
+ 1446 040c 0500A0E1 		mov	r0, r5
+ 1447 0410 FEFFFFEB 		bl	msgb_put
+ 315:layer1/prim_tch.c **** 				dsp_memcpy_from_api(ti->data, &traffic_buf[3], 33, 1);
+ 1448              		.loc 1 315 0
+ 1449 0414 061084E2 		add	r1, r4, #6
+ 1450 0418 2120A0E3 		mov	r2, #33
+ 1451 041c 0130A0E3 		mov	r3, #1
+ 1452 0420 FEFFFFEB 		bl	dsp_memcpy_from_api
+ 318:layer1/prim_tch.c **** 				l1_queue_for_l2(msg);
+ 1453              		.loc 1 318 0
+ 1454 0424 0500A0E1 		mov	r0, r5
+ 1455 0428 FEFFFFEB 		bl	l1_queue_for_l2
+ 1456              	.LVL162:
+ 1457              	.L75:
+ 1458              	.LBE41:
+ 323:layer1/prim_tch.c **** 			traffic_buf[0] = 0;
+ 1459              		.loc 1 323 0
+ 1460 042c 0020A0E3 		mov	r2, #0	@ movhi
+ 324:layer1/prim_tch.c **** 			traffic_buf[2] = 0xffff;
+ 1461              		.loc 1 324 0
+ 1462 0430 0030E0E3 		mvn	r3, #0	@ movhi
+ 323:layer1/prim_tch.c **** 			traffic_buf[0] = 0;
+ 1463              		.loc 1 323 0
+ 1464 0434 B020C4E1 		strh	r2, [r4, #0]	@ movhi
+ 324:layer1/prim_tch.c **** 			traffic_buf[2] = 0xffff;
+ 1465              		.loc 1 324 0
+ 1466 0438 B430C4E1 		strh	r3, [r4, #4]	@ movhi
+ 1467              	.LVL163:
+ 1468              	.L72:
+ 1469              	.LBE40:
+ 329:layer1/prim_tch.c **** 	dsp_api.r_page_used = 1;
+ 1470              		.loc 1 329 0
+ 1471 043c 20309FE5 		ldr	r3, .L82+16
+ 1472 0440 0120A0E3 		mov	r2, #1
+ 1473 0444 182083E5 		str	r2, [r3, #24]
+ 332:layer1/prim_tch.c **** }
+ 1474              		.loc 1 332 0
+ 1475 0448 0000A0E3 		mov	r0, #0
+ 1476 044c 20D08DE2 		add	sp, sp, #32
+ 1477 0450 F081BDE8 		ldmfd	sp!, {r4, r5, r6, r7, r8, pc}
+ 1478              	.L83:
+ 1479              		.align	2
+ 1480              	.L82:
+ 1481 0454 00000000 		.word	l1s
+ 1482 0458 FF6F2900 		.word	2715647
+ 1483 045c 00702900 		.word	2715648
+ 1484 0460 00000000 		.word	.LANCHOR0
+ 1485 0464 00000000 		.word	dsp_api
+ 1486 0468 C0500100 		.word	86208
+ 1487 046c 1A020000 		.word	538
+ 1488 0470 59000000 		.word	.LC2
+ 1489 0474 1E020000 		.word	542
+ 1490 0478 7C000000 		.word	.LC3
+ 1491              		.cfi_endproc
+ 1492              	.LFE62:
+ 1494              		.section	.text.l1s_tch_cmd,"ax",%progbits
+ 1495              		.align	2
+ 1497              	l1s_tch_cmd:
+ 1498              	.LFB63:
+ 335:layer1/prim_tch.c **** {
+ 1499              		.loc 1 335 0
+ 1500              		.cfi_startproc
+ 1501              		@ args = 0, pretend = 0, frame = 12
+ 1502              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1503              	.LVL164:
+ 1504 0000 F0402DE9 		stmfd	sp!, {r4, r5, r6, r7, lr}
+ 1505              	.LCFI11:
+ 1506              		.cfi_def_cfa_offset 20
+ 1507 0004 0228A0E1 		mov	r2, r2, asl #16
+ 1508              	.LVL165:
+ 1509 0008 18D04DE2 		sub	sp, sp, #24
+ 1510              	.LCFI12:
+ 1511              		.cfi_def_cfa_offset 44
+ 347:layer1/prim_tch.c **** 	rfch_get_params(&l1s.next_time, &arfcn, &tsc, &tn);
+ 1512              		.loc 1 347 0
+ 1513 000c 16308DE2 		add	r3, sp, #22
+ 335:layer1/prim_tch.c **** {
+ 1514              		.loc 1 335 0
+ 1515 0010 2248A0E1 		mov	r4, r2, lsr #16
+ 1516              		.cfi_offset 14, -4
+ 1517              		.cfi_offset 7, -8
+ 1518              		.cfi_offset 6, -12
+ 1519              		.cfi_offset 5, -16
+ 1520              		.cfi_offset 4, -20
+ 1521              	.LVL166:
+ 347:layer1/prim_tch.c **** 	rfch_get_params(&l1s.next_time, &arfcn, &tsc, &tn);
+ 1522              		.loc 1 347 0
+ 1523 0014 FC029FE5 		ldr	r0, .L103
+ 1524              	.LVL167:
+ 1525 0018 17208DE2 		add	r2, sp, #23
+ 1526 001c 10108DE2 		add	r1, sp, #16
+ 1527              	.LVL168:
+ 1528 0020 FEFFFFEB 		bl	rfch_get_params
+ 1529              	.LVL169:
+ 348:layer1/prim_tch.c **** 	chan_nr = mframe_task2chan_nr(mf_task_id, tn);
+ 1530              		.loc 1 348 0
+ 1531 0024 1610DDE5 		ldrb	r1, [sp, #22]	@ zero_extendqisi2
+ 1532 0028 FF0004E2 		and	r0, r4, #255
+ 1533 002c FEFFFFEB 		bl	mframe_task2chan_nr
+ 349:layer1/prim_tch.c **** 	tch_get_params(&l1s.next_time, chan_nr, &fn_report, &tch_f_hn, &tch_sub, &tch_mode);
+ 1534              		.loc 1 349 0
+ 1535 0030 14308DE2 		add	r3, sp, #20
+ 1536 0034 00308DE5 		str	r3, [sp, #0]
+ 1537 0038 13308DE2 		add	r3, sp, #19
+ 348:layer1/prim_tch.c **** 	chan_nr = mframe_task2chan_nr(mf_task_id, tn);
+ 1538              		.loc 1 348 0
+ 1539 003c 0010A0E1 		mov	r1, r0
+ 1540              	.LVL170:
+ 349:layer1/prim_tch.c **** 	tch_get_params(&l1s.next_time, chan_nr, &fn_report, &tch_f_hn, &tch_sub, &tch_mode);
+ 1541              		.loc 1 349 0
+ 1542 0040 04308DE5 		str	r3, [sp, #4]
+ 1543 0044 CC029FE5 		ldr	r0, .L103
+ 1544              	.LVL171:
+ 1545 0048 15308DE2 		add	r3, sp, #21
+ 1546 004c 0C208DE2 		add	r2, sp, #12
+ 1547 0050 FEFFFFEB 		bl	tch_get_params.clone.0
+ 1548              	.LVL172:
+ 352:layer1/prim_tch.c **** 	if (l1s.tch_sync) {
+ 1549              		.loc 1 352 0
+ 1550 0054 C0129FE5 		ldr	r1, .L103+4
+ 1551 0058 4B5AD1E5 		ldrb	r5, [r1, #2635]	@ zero_extendqisi2
+ 1552 005c 000055E3 		cmp	r5, #0
+ 1553 0060 B8329FE5 		ldr	r3, .L103+8
+ 353:layer1/prim_tch.c **** 		l1s.tch_sync = 0;
+ 1554              		.loc 1 353 0
+ 1555 0064 0020A013 		movne	r2, #0
+ 1556 0068 4B2AC115 		strneb	r2, [r1, #2635]
+ 1557              	.LVL173:
+ 355:layer1/prim_tch.c **** 		icnt = 0;
+ 1558              		.loc 1 355 0
+ 1559 006c 74208315 		strne	r2, [r3, #116]
+ 354:layer1/prim_tch.c **** 		sync = 1;
+ 1560              		.loc 1 354 0
+ 1561 0070 0150A013 		movne	r5, #1
+ 1562 0074 0300001A 		bne	.L86
+ 1563              	.LVL174:
+ 1564              	.L85:
+ 356:layer1/prim_tch.c **** 	} else if (icnt <= 26)
+ 1565              		.loc 1 356 0
+ 1566 0078 742093E5 		ldr	r2, [r3, #116]
+ 1567 007c 1A0052E3 		cmp	r2, #26
+ 357:layer1/prim_tch.c **** 		icnt++;
+ 1568              		.loc 1 357 0
+ 1569 0080 012082D2 		addle	r2, r2, #1
+ 1570 0084 742083D5 		strle	r2, [r3, #116]
+ 1571              	.LVL175:
+ 1572              	.L86:
+ 362:layer1/prim_tch.c **** 	if (tch_f_hn) {
+ 1573              		.loc 1 362 0
+ 1574 0088 1530DDE5 		ldrb	r3, [sp, #21]	@ zero_extendqisi2
+ 1575              	.LVL176:
+ 1576 008c 000053E3 		cmp	r3, #0
+ 1577              	.LVL177:
+ 1578 0090 84329FE5 		ldr	r3, .L103+4
+ 1579              	.LVL178:
+ 1580 0094 0500000A 		beq	.L87
+ 364:layer1/prim_tch.c **** 		facch_tx_now = ((l1s.next_time.fn % 13) % 4) == 3;
+ 1581              		.loc 1 364 0
+ 1582 0098 0C0093E5 		ldr	r0, [r3, #12]
+ 1583 009c 0D10A0E3 		mov	r1, #13
+ 1584 00a0 FEFFFFEB 		bl	__umodsi3
+ 1585 00a4 030000E2 		and	r0, r0, #3
+ 373:layer1/prim_tch.c **** 	if (facch_tx_now) {
+ 1586              		.loc 1 373 0
+ 1587 00a8 030050E3 		cmp	r0, #3
+ 1588 00ac 070000EA 		b	.L102
+ 1589              	.LVL179:
+ 1590              	.L87:
+ 1591              	.LBB42:
+ 367:layer1/prim_tch.c **** 		uint8_t t2_norm = l1s.next_time.t2 - tch_sub;
+ 1592              		.loc 1 367 0
+ 1593 00b0 1220D3E5 		ldrb	r2, [r3, #18]	@ zero_extendqisi2
+ 1594              	.LVL180:
+ 1595 00b4 1430DDE5 		ldrb	r3, [sp, #20]	@ zero_extendqisi2
+ 1596              	.LVL181:
+ 1597 00b8 023063E0 		rsb	r3, r3, r2
+ 1598              	.LVL182:
+ 1599 00bc FF3003E2 		and	r3, r3, #255
+ 1600              	.LVL183:
+ 368:layer1/prim_tch.c **** 		facch_tx_now = (t2_norm == 23) ||
+ 1601              		.loc 1 368 0
+ 1602 00c0 170053E3 		cmp	r3, #23
+ 1603 00c4 06005313 		cmpne	r3, #6
+ 1604 00c8 0100000A 		beq	.L88
+ 369:layer1/prim_tch.c **** 		               (t2_norm ==  6) ||
+ 1605              		.loc 1 369 0
+ 1606 00cc 0F0053E3 		cmp	r3, #15
+ 1607              	.LVL184:
+ 1608              	.L102:
+ 1609 00d0 2A00001A 		bne	.L89
+ 1610              	.L88:
+ 1611              	.LBE42:
+ 1612              	.LBB43:
+ 374:layer1/prim_tch.c **** 		uint16_t *info_ptr = dsp_api.ndb->a_fu;
+ 1613              		.loc 1 374 0
+ 1614 00d4 48329FE5 		ldr	r3, .L103+12
+ 1615 00d8 006093E5 		ldr	r6, [r3, #0]
+ 1616              	.LVL185:
+ 379:layer1/prim_tch.c **** 		if (icnt > 26)
+ 1617              		.loc 1 379 0
+ 1618 00dc 3C329FE5 		ldr	r3, .L103+8
+ 1619              	.LVL186:
+ 1620 00e0 743093E5 		ldr	r3, [r3, #116]
+ 1621 00e4 1A0053E3 		cmp	r3, #26
+ 1622 00e8 040000DA 		ble	.L90
+ 380:layer1/prim_tch.c **** 			msg = msgb_dequeue(&l1s.tx_queue[L1S_CHAN_MAIN]);
+ 1623              		.loc 1 380 0
+ 1624 00ec 34029FE5 		ldr	r0, .L103+16
+ 1625 00f0 FEFFFFEB 		bl	msgb_dequeue
+ 1626              	.LVL187:
+ 385:layer1/prim_tch.c **** 		if (msg)
+ 1627              		.loc 1 385 0
+ 1628 00f4 004050E2 		subs	r4, r0, #0
+ 1629              	.LVL188:
+ 386:layer1/prim_tch.c **** 			data = msg->l3h;
+ 1630              		.loc 1 386 0
+ 1631 00f8 18109415 		ldrne	r1, [r4, #24]
+ 385:layer1/prim_tch.c **** 		if (msg)
+ 1632              		.loc 1 385 0
+ 1633 00fc 0400001A 		bne	.L91
+ 1634              	.LVL189:
+ 1635              	.L90:
+ 387:layer1/prim_tch.c **** 		else if (tch_mode == SIG_ONLY_MODE)
+ 1636              		.loc 1 387 0
+ 1637 0100 1340DDE5 		ldrb	r4, [sp, #19]	@ zero_extendqisi2
+ 1638              	.LVL190:
+ 1639 0104 000054E3 		cmp	r4, #0
+ 1640              	.LVL191:
+ 1641 0108 1C00001A 		bne	.L89
+ 388:layer1/prim_tch.c **** 			data = pu_get_idle_frame();
+ 1642              		.loc 1 388 0
+ 1643 010c FEFFFFEB 		bl	pu_get_idle_frame
+ 1644 0110 0010A0E1 		mov	r1, r0
+ 1645              	.LVL192:
+ 1646              	.L91:
+ 393:layer1/prim_tch.c **** 		if (data) {
+ 1647              		.loc 1 393 0
+ 1648 0114 000051E3 		cmp	r1, #0
+ 1649 0118 0B00000A 		beq	.L92
+ 395:layer1/prim_tch.c **** 			info_ptr[0] = (1 << B_BLUD);	/* 1st word: Set B_BLU bit. */
+ 1650              		.loc 1 395 0
+ 1651 011c 08329FE5 		ldr	r3, .L103+20
+ 1652 0120 0229A0E3 		mov	r2, #32768
+ 1653 0124 B32086E1 		strh	r2, [r6, r3]	@ movhi
+ 396:layer1/prim_tch.c **** 			info_ptr[1] = 0;		/* 2nd word: cleared. */
+ 1654              		.loc 1 396 0
+ 1655 0128 0020A0E3 		mov	r2, #0	@ movhi
+ 1656 012c 023083E2 		add	r3, r3, #2
+ 1657 0130 B32086E1 		strh	r2, [r6, r3]	@ movhi
+ 397:layer1/prim_tch.c **** 			info_ptr[2] = 0;		/* 3nd word: cleared. */
+ 1658              		.loc 1 397 0
+ 1659 0134 023083E2 		add	r3, r3, #2
+ 1660 0138 B32086E1 		strh	r2, [r6, r3]	@ movhi
+ 400:layer1/prim_tch.c **** 			dsp_memcpy_to_api(&info_ptr[3], data, 23, 0);
+ 1661              		.loc 1 400 0
+ 1662 013c A20F86E2 		add	r0, r6, #648
+ 1663 0140 1720A0E3 		mov	r2, #23
+ 1664 0144 0030A0E3 		mov	r3, #0
+ 1665 0148 FEFFFFEB 		bl	dsp_memcpy_to_api
+ 1666              	.LVL193:
+ 1667              	.L92:
+ 404:layer1/prim_tch.c **** 		if (msg) {
+ 1668              		.loc 1 404 0
+ 1669 014c 000054E3 		cmp	r4, #0
+ 1670 0150 0A00000A 		beq	.L89
+ 405:layer1/prim_tch.c **** 			last_tx_tch_fn = l1s.next_time.fn;
+ 1671              		.loc 1 405 0
+ 1672 0154 C0219FE5 		ldr	r2, .L103+4
+ 1673 0158 C0319FE5 		ldr	r3, .L103+8
+ 1674 015c BC20D2E1 		ldrh	r2, [r2, #12]
+ 1675 0160 B220C3E1 		strh	r2, [r3, #2]	@ movhi
+ 406:layer1/prim_tch.c **** 			last_tx_tch_type |= TX_TYPE_FACCH;
+ 1676              		.loc 1 406 0
+ 1677 0164 B020D3E1 		ldrh	r2, [r3, #0]
+ 1678 0168 022082E3 		orr	r2, r2, #2
+ 407:layer1/prim_tch.c **** 			l1s_compl_sched(L1_COMPL_TX_TCH);
+ 1679              		.loc 1 407 0
+ 1680 016c 0300A0E3 		mov	r0, #3
+ 406:layer1/prim_tch.c **** 			last_tx_tch_type |= TX_TYPE_FACCH;
+ 1681              		.loc 1 406 0
+ 1682 0170 B020C3E1 		strh	r2, [r3, #0]	@ movhi
+ 407:layer1/prim_tch.c **** 			l1s_compl_sched(L1_COMPL_TX_TCH);
+ 1683              		.loc 1 407 0
+ 1684 0174 FEFFFFEB 		bl	l1s_compl_sched
+ 412:layer1/prim_tch.c **** 			msgb_free(msg);
+ 1685              		.loc 1 412 0
+ 1686 0178 0400A0E1 		mov	r0, r4
+ 1687 017c FEFFFFEB 		bl	msgb_free
+ 1688              	.LVL194:
+ 1689              	.L89:
+ 1690              	.LBE43:
+ 416:layer1/prim_tch.c **** 	if (tch_f_hn) {
+ 1691              		.loc 1 416 0
+ 1692 0180 1530DDE5 		ldrb	r3, [sp, #21]	@ zero_extendqisi2
+ 1693              	.LVL195:
+ 1694 0184 000053E3 		cmp	r3, #0
+ 1695              	.LVL196:
+ 1696 0188 8C319FE5 		ldr	r3, .L103+4
+ 1697              	.LVL197:
+ 1698 018c 0700000A 		beq	.L93
+ 418:layer1/prim_tch.c **** 		traffic_tx_now = ((l1s.next_time.fn % 13) % 4) == 3;
+ 1699              		.loc 1 418 0
+ 1700 0190 0C0093E5 		ldr	r0, [r3, #12]
+ 1701 0194 0D10A0E3 		mov	r1, #13
+ 1702 0198 FEFFFFEB 		bl	__umodsi3
+ 1703 019c 030000E2 		and	r0, r0, #3
+ 1704 01a0 030050E3 		cmp	r0, #3
+ 1705 01a4 0000A013 		movne	r0, #0
+ 1706 01a8 0100A003 		moveq	r0, #1
+ 1707              	.LVL198:
+ 1708 01ac 090000EA 		b	.L94
+ 1709              	.LVL199:
+ 1710              	.L93:
+ 422:layer1/prim_tch.c **** 		traffic_tx_now = (((l1s.next_time.fn - tch_sub + 13) % 13) % 4) == 2;
+ 1711              		.loc 1 422 0
+ 1712 01b0 0C0093E5 		ldr	r0, [r3, #12]
+ 1713              	.LVL200:
+ 1714 01b4 1430DDE5 		ldrb	r3, [sp, #20]	@ zero_extendqisi2
+ 1715              	.LVL201:
+ 1716 01b8 0D0080E2 		add	r0, r0, #13
+ 1717 01bc 000063E0 		rsb	r0, r3, r0
+ 1718              	.LVL202:
+ 1719 01c0 0D10A0E3 		mov	r1, #13
+ 1720 01c4 FEFFFFEB 		bl	__umodsi3
+ 1721              	.LVL203:
+ 1722 01c8 030000E2 		and	r0, r0, #3
+ 1723 01cc 020050E3 		cmp	r0, #2
+ 1724 01d0 0000A013 		movne	r0, #0
+ 1725 01d4 0100A003 		moveq	r0, #1
+ 1726              	.LVL204:
+ 1727              	.L94:
+ 425:layer1/prim_tch.c **** 	if (traffic_tx_now) {
+ 1728              		.loc 1 425 0
+ 1729 01d8 000050E3 		cmp	r0, #0
+ 1730 01dc 2A00000A 		beq	.L95
+ 1731              	.LBB44:
+ 431:layer1/prim_tch.c **** 		dsp_api.ndb->d_tch_mode &= ~B_PLAY_UL;
+ 1732              		.loc 1 431 0
+ 1733 01e0 3C319FE5 		ldr	r3, .L103+12
+ 1734 01e4 004093E5 		ldr	r4, [r3, #0]
+ 1735              	.LVL205:
+ 1736 01e8 B630D4E1 		ldrh	r3, [r4, #6]
+ 1737 01ec 0830C3E3 		bic	r3, r3, #8
+ 1738 01f0 B630C4E1 		strh	r3, [r4, #6]	@ movhi
+ 434:layer1/prim_tch.c **** 		if (!(l1s.audio_mode & AUDIO_TX_TRAFFIC_REQ))
+ 1739              		.loc 1 434 0
+ 1740 01f4 20319FE5 		ldr	r3, .L103+4
+ 1741 01f8 4C3AD3E5 		ldrb	r3, [r3, #2636]	@ zero_extendqisi2
+ 1742 01fc 020013E3 		tst	r3, #2
+ 1743 0200 2100000A 		beq	.L95
+ 1744              	.LVL206:
+ 438:layer1/prim_tch.c **** 		traffic_buf = tch_sub ? dsp_api.ndb->a_du_0 : dsp_api.ndb->a_du_1;
+ 1745              		.loc 1 438 0
+ 1746 0204 1430DDE5 		ldrb	r3, [sp, #20]	@ zero_extendqisi2
+ 1747              	.LVL207:
+ 441:layer1/prim_tch.c **** 		msg = msgb_dequeue(&l1s.tx_queue[L1S_CHAN_TRAFFIC]);
+ 1748              		.loc 1 441 0
+ 1749 0208 20719FE5 		ldr	r7, .L103+24
+ 438:layer1/prim_tch.c **** 		traffic_buf = tch_sub ? dsp_api.ndb->a_du_0 : dsp_api.ndb->a_du_1;
+ 1750              		.loc 1 438 0
+ 1751 020c 000053E3 		cmp	r3, #0
+ 1752              	.LVL208:
+ 441:layer1/prim_tch.c **** 		msg = msgb_dequeue(&l1s.tx_queue[L1S_CHAN_TRAFFIC]);
+ 1753              		.loc 1 441 0
+ 1754 0210 0700A0E1 		mov	r0, r7
+ 1755              	.LVL209:
+ 438:layer1/prim_tch.c **** 		traffic_buf = tch_sub ? dsp_api.ndb->a_du_0 : dsp_api.ndb->a_du_1;
+ 1756              		.loc 1 438 0
+ 1757 0214 2A4E8412 		addne	r4, r4, #672
+ 1758 0218 4D4F8402 		addeq	r4, r4, #308
+ 1759              	.LVL210:
+ 441:layer1/prim_tch.c **** 		msg = msgb_dequeue(&l1s.tx_queue[L1S_CHAN_TRAFFIC]);
+ 1760              		.loc 1 441 0
+ 1761 021c FEFFFFEB 		bl	msgb_dequeue
+ 1762              	.LVL211:
+ 444:layer1/prim_tch.c **** 		if (msg) {
+ 1763              		.loc 1 444 0
+ 1764 0220 006050E2 		subs	r6, r0, #0
+ 1765 0224 1800000A 		beq	.L95
+ 1766              	.LVL212:
+ 446:layer1/prim_tch.c **** 			dsp_memcpy_to_api(&traffic_buf[3], data, 33, 1);
+ 1767              		.loc 1 446 0
+ 1768 0228 060084E2 		add	r0, r4, #6
+ 1769              	.LVL213:
+ 1770 022c 141096E5 		ldr	r1, [r6, #20]
+ 1771 0230 2120A0E3 		mov	r2, #33
+ 1772 0234 0130A0E3 		mov	r3, #1
+ 1773 0238 FEFFFFEB 		bl	dsp_memcpy_to_api
+ 1774              	.LVL214:
+ 448:layer1/prim_tch.c **** 			traffic_buf[0] = (1 << B_BLUD);	/* 1st word: Set B_BLU bit. */
+ 1775              		.loc 1 448 0
+ 1776 023c 0239A0E3 		mov	r3, #32768
+ 1777 0240 B030C4E1 		strh	r3, [r4, #0]	@ movhi
+ 449:layer1/prim_tch.c **** 			traffic_buf[1] = 0;		/* 2nd word: cleared. */
+ 1778              		.loc 1 449 0
+ 1779 0244 0030A0E3 		mov	r3, #0	@ movhi
+ 1780 0248 B230C4E1 		strh	r3, [r4, #2]	@ movhi
+ 450:layer1/prim_tch.c **** 			traffic_buf[2] = 0;		/* 3nd word: cleared. */
+ 1781              		.loc 1 450 0
+ 1782 024c B430C4E1 		strh	r3, [r4, #4]	@ movhi
+ 454:layer1/prim_tch.c **** 			dsp_api.ndb->d_tch_mode |= B_PLAY_UL;
+ 1783              		.loc 1 454 0
+ 1784 0250 CC309FE5 		ldr	r3, .L103+12
+ 1785 0254 003093E5 		ldr	r3, [r3, #0]
+ 1786 0258 B620D3E1 		ldrh	r2, [r3, #6]
+ 1787 025c 082082E3 		orr	r2, r2, #8
+ 1788 0260 B620C3E1 		strh	r2, [r3, #6]	@ movhi
+ 458:layer1/prim_tch.c **** 			last_tx_tch_fn = l1s.next_time.fn;
+ 1789              		.loc 1 458 0
+ 1790 0264 B4309FE5 		ldr	r3, .L103+8
+ 1791 0268 542A17E5 		ldr	r2, [r7, #-2644]
+ 1792 026c B220C3E1 		strh	r2, [r3, #2]	@ movhi
+ 459:layer1/prim_tch.c **** 			last_tx_tch_type |= TX_TYPE_TRAFFIC;
+ 1793              		.loc 1 459 0
+ 1794 0270 B020D3E1 		ldrh	r2, [r3, #0]
+ 1795 0274 042082E3 		orr	r2, r2, #4
+ 460:layer1/prim_tch.c **** 			l1s_compl_sched(L1_COMPL_TX_TCH);
+ 1796              		.loc 1 460 0
+ 1797 0278 0300A0E3 		mov	r0, #3
+ 459:layer1/prim_tch.c **** 			last_tx_tch_type |= TX_TYPE_TRAFFIC;
+ 1798              		.loc 1 459 0
+ 1799 027c B020C3E1 		strh	r2, [r3, #0]	@ movhi
+ 460:layer1/prim_tch.c **** 			l1s_compl_sched(L1_COMPL_TX_TCH);
+ 1800              		.loc 1 460 0
+ 1801 0280 FEFFFFEB 		bl	l1s_compl_sched
+ 465:layer1/prim_tch.c **** 			msgb_free(msg);
+ 1802              		.loc 1 465 0
+ 1803 0284 0600A0E1 		mov	r0, r6
+ 1804 0288 FEFFFFEB 		bl	msgb_free
+ 1805              	.LVL215:
+ 1806              	.L95:
+ 1807              	.LBE44:
+ 470:layer1/prim_tch.c **** 	l1s_tx_apc_helper(arfcn);
+ 1808              		.loc 1 470 0
+ 1809 028c B001DDE1 		ldrh	r0, [sp, #16]
+ 1810 0290 FEFFFFEB 		bl	l1s_tx_apc_helper
+ 1811              	.LVL216:
+ 472:layer1/prim_tch.c **** 	dsp_load_tch_param(
+ 1812              		.loc 1 472 0
+ 1813 0294 1520DDE5 		ldrb	r2, [sp, #21]	@ zero_extendqisi2
+ 1814              	.LVL217:
+ 1815 0298 0040A0E3 		mov	r4, #0
+ 1816              	.LVL218:
+ 1817 029c 1600DDE5 		ldrb	r0, [sp, #22]	@ zero_extendqisi2
+ 1818              	.LVL219:
+ 1819 02a0 040052E1 		cmp	r2, r4
+ 1820              	.LVL220:
+ 1821 02a4 0220A003 		moveq	r2, #2
+ 1822              	.LVL221:
+ 1823 02a8 0120A013 		movne	r2, #1
+ 1824              	.LVL222:
+ 1825 02ac 1430DDE5 		ldrb	r3, [sp, #20]	@ zero_extendqisi2
+ 1826              	.LVL223:
+ 1827 02b0 1310DDE5 		ldrb	r1, [sp, #19]	@ zero_extendqisi2
+ 1828 02b4 08008DE5 		str	r0, [sp, #8]
+ 1829              	.LVL224:
+ 1830 02b8 58009FE5 		ldr	r0, .L103
+ 1831              	.LVL225:
+ 1832 02bc 30008DE8 		stmia	sp, {r4, r5}	@ phole stm
+ 1833 02c0 FEFFFFEB 		bl	dsp_load_tch_param
+ 478:layer1/prim_tch.c **** 	dsp_load_rx_task(TCHT_DSP_TASK, 0, tsc); /* burst_id unused for TCH */
+ 1834              		.loc 1 478 0
+ 1835 02c4 0410A0E1 		mov	r1, r4
+ 1836              	.LVL226:
+ 1837 02c8 1720DDE5 		ldrb	r2, [sp, #23]	@ zero_extendqisi2
+ 1838 02cc 0D00A0E3 		mov	r0, #13
+ 1839 02d0 FEFFFFEB 		bl	dsp_load_rx_task
+ 479:layer1/prim_tch.c **** 	l1s_rx_win_ctrl(arfcn, L1_RXWIN_NB, 0);
+ 1840              		.loc 1 479 0
+ 1841 02d4 B001DDE1 		ldrh	r0, [sp, #16]
+ 1842 02d8 0420A0E1 		mov	r2, r4
+ 1843 02dc 0310A0E3 		mov	r1, #3
+ 1844 02e0 FEFFFFEB 		bl	l1s_rx_win_ctrl
+ 481:layer1/prim_tch.c **** 	dsp_load_tx_task(TCHT_DSP_TASK, 0, tsc); /* burst_id unused for TCH */
+ 1845              		.loc 1 481 0
+ 1846 02e4 0410A0E1 		mov	r1, r4
+ 1847 02e8 1720DDE5 		ldrb	r2, [sp, #23]	@ zero_extendqisi2
+ 1848 02ec 0D00A0E3 		mov	r0, #13
+ 1849 02f0 FEFFFFEB 		bl	dsp_load_tx_task
+ 482:layer1/prim_tch.c **** 	l1s_tx_win_ctrl(arfcn | ARFCN_UPLINK, L1_TXWIN_NB, 0, 3);
+ 1850              		.loc 1 482 0
+ 1851 02f4 B001DDE1 		ldrh	r0, [sp, #16]
+ 1852              	.LVL227:
+ 1853 02f8 0410A0E1 		mov	r1, r4
+ 1854 02fc 010980E3 		orr	r0, r0, #16384
+ 1855              	.LVL228:
+ 1856 0300 0420A0E1 		mov	r2, r4
+ 1857 0304 0330A0E3 		mov	r3, #3
+ 1858 0308 FEFFFFEB 		bl	l1s_tx_win_ctrl
+ 485:layer1/prim_tch.c **** }
+ 1859              		.loc 1 485 0
+ 1860 030c 0400A0E1 		mov	r0, r4
+ 1861 0310 18D08DE2 		add	sp, sp, #24
+ 1862 0314 F080BDE8 		ldmfd	sp!, {r4, r5, r6, r7, pc}
+ 1863              	.L104:
+ 1864              		.align	2
+ 1865              	.L103:
+ 1866 0318 0C000000 		.word	l1s+12
+ 1867 031c 00000000 		.word	l1s
+ 1868 0320 00000000 		.word	.LANCHOR0
+ 1869 0324 00000000 		.word	dsp_api
+ 1870 0328 500A0000 		.word	l1s+2640
+ 1871 032c 82020000 		.word	642
+ 1872 0330 600A0000 		.word	l1s+2656
+ 1873              		.cfi_endproc
+ 1874              	.LFE63:
+ 1876              		.section	.text.prim_tch_init,"ax",%progbits
+ 1877              		.align	2
+ 1879              	prim_tch_init:
+ 1880              	.LFB61:
+ 132:layer1/prim_tch.c **** {
+ 1881              		.loc 1 132 0
+ 1882              		.cfi_startproc
+ 1883              		@ args = 0, pretend = 0, frame = 0
+ 1884              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1885              		@ link register save eliminated.
+ 133:layer1/prim_tch.c **** 	l1s.completion[L1_COMPL_TX_TCH]  = &l1a_tx_tch_compl;
+ 1886              		.loc 1 133 0
+ 1887 0000 08209FE5 		ldr	r2, .L106
+ 1888 0004 08309FE5 		ldr	r3, .L106+4
+ 1889 0008 7C2A83E5 		str	r2, [r3, #2684]
+ 134:layer1/prim_tch.c **** }
+ 1890              		.loc 1 134 0
+ 1891 000c 1EFF2FE1 		bx	lr
+ 1892              	.L107:
+ 1893              		.align	2
+ 1894              	.L106:
+ 1895 0010 00000000 		.word	l1a_tx_tch_compl
+ 1896 0014 00000000 		.word	l1s
+ 1897              		.cfi_endproc
+ 1898              	.LFE61:
+ 1900              		.section	.ctors,"aw",%progbits
+ 1901              		.align	2
+ 1902 0000 00000000 		.word	prim_tch_init
+ 1903              		.global	tch_sched_set
+ 1904              		.global	tch_d_sched_set
+ 1905              		.global	tch_a_sched_set
+ 1906              		.section	.rodata
+ 1907              		.align	2
+ 1910              	tch_sched_set:
+ 1911 0000 00000000 		.word	l1s_tch_cmd
+ 1912 0004 00       		.byte	0
+ 1913 0005 00       		.byte	0
+ 1914 0006 0000     		.space	2
+ 1915 0008 0000     		.short	0
+ 1916 000a 0300     		.short	3
+ 1917 000c 00000000 		.word	0
+ 1918 0010 00       		.byte	0
+ 1919 0011 00       		.byte	0
+ 1920 0012 00000000 		.space	6
+ 1920      0000
+ 1921 0018 00000000 		.word	0
+ 1922 001c 00       		.byte	0
+ 1923 001d 00       		.byte	0
+ 1924 001e 00000000 		.space	6
+ 1924      0000
+ 1925 0024 00000000 		.word	l1s_tch_resp
+ 1926 0028 00       		.byte	0
+ 1927 0029 FC       		.byte	-4
+ 1928 002a 0000     		.space	2
+ 1929 002c 0000     		.short	0
+ 1930 002e 0000     		.short	0
+ 1931 0030 00000000 		.word	0
+ 1932 0034 00       		.byte	0
+ 1933 0035 00       		.byte	0
+ 1934 0036 00000000 		.space	6
+ 1934      0000
+ 1935 003c 00000000 		.word	tdma_end_set
+ 1936 0040 00       		.byte	0
+ 1937 0041 00       		.byte	0
+ 1938 0042 00000000 		.space	6
+ 1938      0000
+ 1941              	tch_d_sched_set:
+ 1942 0048 00000000 		.word	l1s_tch_d_cmd
+ 1943 004c 00       		.byte	0
+ 1944 004d 00       		.byte	0
+ 1945 004e 0000     		.space	2
+ 1946 0050 0000     		.short	0
+ 1947 0052 0300     		.short	3
+ 1948 0054 00000000 		.word	0
+ 1949 0058 00       		.byte	0
+ 1950 0059 00       		.byte	0
+ 1951 005a 00000000 		.space	6
+ 1951      0000
+ 1952 0060 00000000 		.word	0
+ 1953 0064 00       		.byte	0
+ 1954 0065 00       		.byte	0
+ 1955 0066 00000000 		.space	6
+ 1955      0000
+ 1956 006c 00000000 		.word	l1s_tch_d_resp
+ 1957 0070 00       		.byte	0
+ 1958 0071 FC       		.byte	-4
+ 1959 0072 0000     		.space	2
+ 1960 0074 0000     		.short	0
+ 1961 0076 0000     		.short	0
+ 1962 0078 00000000 		.word	0
+ 1963 007c 00       		.byte	0
+ 1964 007d 00       		.byte	0
+ 1965 007e 00000000 		.space	6
+ 1965      0000
+ 1966 0084 00000000 		.word	tdma_end_set
+ 1967 0088 00       		.byte	0
+ 1968 0089 00       		.byte	0
+ 1969 008a 00000000 		.space	6
+ 1969      0000
+ 1972              	tch_a_sched_set:
+ 1973 0090 00000000 		.word	l1s_tch_a_cmd
+ 1974 0094 00       		.byte	0
+ 1975 0095 00       		.byte	0
+ 1976 0096 0000     		.space	2
+ 1977 0098 0000     		.short	0
+ 1978 009a 0300     		.short	3
+ 1979 009c 00000000 		.word	0
+ 1980 00a0 00       		.byte	0
+ 1981 00a1 00       		.byte	0
+ 1982 00a2 00000000 		.space	6
+ 1982      0000
+ 1983 00a8 00000000 		.word	0
+ 1984 00ac 00       		.byte	0
+ 1985 00ad 00       		.byte	0
+ 1986 00ae 00000000 		.space	6
+ 1986      0000
+ 1987 00b4 00000000 		.word	l1s_tch_a_resp
+ 1988 00b8 00       		.byte	0
+ 1989 00b9 FC       		.byte	-4
+ 1990 00ba 0000     		.space	2
+ 1991 00bc 0000     		.short	0
+ 1992 00be 0000     		.short	0
+ 1993 00c0 00000000 		.word	0
+ 1994 00c4 00       		.byte	0
+ 1995 00c5 00       		.byte	0
+ 1996 00c6 00000000 		.space	6
+ 1996      0000
+ 1997 00cc 00000000 		.word	tdma_end_set
+ 1998 00d0 00       		.byte	0
+ 1999 00d1 00       		.byte	0
+ 2000 00d2 00000000 		.space	6
+ 2000      0000
+ 2001              		.section	.rodata.str1.1,"aMS",%progbits,1
+ 2002              	.LC0:
+ 2003 0000 6D736762 		.ascii	"msgb(%p): Not enough tailroom msgb_push (%u < %u)\012"
+ 2003      28257029 
+ 2003      3A204E6F 
+ 2003      7420656E 
+ 2003      6F756768 
+ 2004 0032 00       		.ascii	"\000"
+ 2005              	.LC1:
+ 2006 0033 7463685F 		.ascii	"tch_a_cmd(0): unable to allocate msgb\000"
+ 2006      615F636D 
+ 2006      64283029 
+ 2006      3A20756E 
+ 2006      61626C65 
+ 2007              	.LC2:
+ 2008 0059 54434820 		.ascii	"TCH FACCH: unable to allocate msgb\000"
+ 2008      46414343 
+ 2008      483A2075 
+ 2008      6E61626C 
+ 2008      6520746F 
+ 2009              	.LC3:
+ 2010 007c 54434820 		.ascii	"TCH traffic: unable to allocate msgb\000"
+ 2010      74726166 
+ 2010      6669633A 
+ 2010      20756E61 
+ 2010      626C6520 
+ 2011              		.bss
+ 2012              		.align	2
+ 2013              		.set	.LANCHOR0,. + 0
+ 2016              	last_tx_tch_type:
+ 2017 0000 0000     		.space	2
+ 2020              	last_tx_tch_fn:
+ 2021 0002 0000     		.space	2
+ 2024              	rx_tch_a:
+ 2025 0004 00000000 		.space	44
+ 2025      00000000 
+ 2025      00000000 
+ 2025      00000000 
+ 2025      00000000 
+ 2028              	meas_id.3992:
+ 2029 0030 00       		.space	1
+ 2030 0031 000000   		.space	3
+ 2033              	rx_tch:
+ 2034 0034 00000000 		.space	64
+ 2034      00000000 
+ 2034      00000000 
+ 2034      00000000 
+ 2034      00000000 
+ 2037              	icnt.4038:
+ 2038 0074 00000000 		.space	4
+ 2039              		.text
+ 2040              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 prim_tch.c
+     /tmp/cccvipTr.s:12     .text.l1s_tch_d_resp:0000000000000000 $a
+     /tmp/cccvipTr.s:14     .text.l1s_tch_d_resp:0000000000000000 l1s_tch_d_resp
+     /tmp/cccvipTr.s:35     .text.l1s_tch_d_resp:0000000000000014 $d
+     /tmp/cccvipTr.s:40     .text.__fswab32:0000000000000000 $a
+     /tmp/cccvipTr.s:42     .text.__fswab32:0000000000000000 __fswab32
+     /tmp/cccvipTr.s:75     .text.msgb_put:0000000000000000 $a
+     /tmp/cccvipTr.s:77     .text.msgb_put:0000000000000000 msgb_put
+     /tmp/cccvipTr.s:142    .text.msgb_put:0000000000000054 $d
+     /tmp/cccvipTr.s:147    .text.l1a_tx_tch_compl:0000000000000000 $a
+     /tmp/cccvipTr.s:149    .text.l1a_tx_tch_compl:0000000000000000 l1a_tx_tch_compl
+     /tmp/cccvipTr.s:200    .text.l1a_tx_tch_compl:0000000000000064 $d
+     /tmp/cccvipTr.s:206    .text.tch_get_params.clone.0:0000000000000000 $a
+     /tmp/cccvipTr.s:208    .text.tch_get_params.clone.0:0000000000000000 tch_get_params.clone.0
+     /tmp/cccvipTr.s:319    .text.tch_get_params.clone.0:00000000000000d8 $d
+     /tmp/cccvipTr.s:325    .text.l1s_tch_a_resp:0000000000000000 $a
+     /tmp/cccvipTr.s:327    .text.l1s_tch_a_resp:0000000000000000 l1s_tch_a_resp
+     /tmp/cccvipTr.s:595    .text.l1s_tch_a_resp:0000000000000268 $d
+     /tmp/cccvipTr.s:605    .text.l1s_tch_d_cmd:0000000000000000 $a
+     /tmp/cccvipTr.s:607    .text.l1s_tch_d_cmd:0000000000000000 l1s_tch_d_cmd
+     /tmp/cccvipTr.s:697    .text.l1s_tch_d_cmd:00000000000000b4 $d
+     /tmp/cccvipTr.s:702    .text.l1s_tch_a_cmd:0000000000000000 $a
+     /tmp/cccvipTr.s:704    .text.l1s_tch_a_cmd:0000000000000000 l1s_tch_a_cmd
+     /tmp/cccvipTr.s:959    .text.l1s_tch_a_cmd:0000000000000234 $d
+     /tmp/cccvipTr.s:970    .text.l1s_tch_resp:0000000000000000 $a
+     /tmp/cccvipTr.s:972    .text.l1s_tch_resp:0000000000000000 l1s_tch_resp
+     /tmp/cccvipTr.s:1481   .text.l1s_tch_resp:0000000000000454 $d
+     /tmp/cccvipTr.s:1495   .text.l1s_tch_cmd:0000000000000000 $a
+     /tmp/cccvipTr.s:1497   .text.l1s_tch_cmd:0000000000000000 l1s_tch_cmd
+     /tmp/cccvipTr.s:1866   .text.l1s_tch_cmd:0000000000000318 $d
+     /tmp/cccvipTr.s:1877   .text.prim_tch_init:0000000000000000 $a
+     /tmp/cccvipTr.s:1879   .text.prim_tch_init:0000000000000000 prim_tch_init
+     /tmp/cccvipTr.s:1895   .text.prim_tch_init:0000000000000010 $d
+     /tmp/cccvipTr.s:1901   .ctors:0000000000000000 $d
+     /tmp/cccvipTr.s:1910   .rodata:0000000000000000 tch_sched_set
+     /tmp/cccvipTr.s:1941   .rodata:0000000000000048 tch_d_sched_set
+     /tmp/cccvipTr.s:1972   .rodata:0000000000000090 tch_a_sched_set
+     /tmp/cccvipTr.s:1907   .rodata:0000000000000000 $d
+     /tmp/cccvipTr.s:2012   .bss:0000000000000000 $d
+     /tmp/cccvipTr.s:2016   .bss:0000000000000000 last_tx_tch_type
+     /tmp/cccvipTr.s:2020   .bss:0000000000000002 last_tx_tch_fn
+     /tmp/cccvipTr.s:2024   .bss:0000000000000004 rx_tch_a
+     /tmp/cccvipTr.s:2028   .bss:0000000000000030 meas_id.3992
+     /tmp/cccvipTr.s:2033   .bss:0000000000000034 rx_tch
+     /tmp/cccvipTr.s:2037   .bss:0000000000000074 icnt.4038
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+dsp_api
+osmo_panic
+l1_create_l2_msg
+l1_queue_for_l2
+__umodsi3
+l1s
+__udivsi3
+gsm_fn2gsmtime
+rfch_get_params
+mframe_task2chan_nr
+agc_inp_dbm8_by_pm
+afc_input
+toa_input
+rffe_compute_gain
+dbm2rxlev
+pu_update_rx_level
+dsp_memcpy_from_api
+dsp_load_tch_param
+dsp_load_rx_task
+dsp_load_tx_task
+msgb_dequeue
+pu_get_meas_frame
+dsp_memcpy_to_api
+l1s_compl_sched
+msgb_free
+l1ctl_msgb_alloc
+puts
+l1s_tx_apc_helper
+l1s_rx_win_ctrl
+l1s_tx_win_ctrl
+__divsi3
+pu_get_idle_frame
+tdma_end_set

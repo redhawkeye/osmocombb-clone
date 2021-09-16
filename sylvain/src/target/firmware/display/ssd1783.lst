@@ -1,0 +1,939 @@
+   1              		.file	"ssd1783.c"
+   9              	.Ltext0:
+  10              		.cfi_sections	.debug_frame
+  11              		.section	.text.ssd1783_set_attr,"ax",%progbits
+  12              		.align	2
+  14              	ssd1783_set_attr:
+  15              	.LFB12:
+  16              		.file 1 "display/ssd1783.c"
+   1:display/ssd1783.c **** /* Solomon SSD1783 LCD Driver (Epson S1D15G10D08B000 clone) */
+   2:display/ssd1783.c **** 
+   3:display/ssd1783.c **** /* (C) 2010 by Steve Markgraf <steve@steve-m.de>
+   4:display/ssd1783.c ****  * (C) 2010 by Harald Welte <laforge@gnumonks.org>
+   5:display/ssd1783.c ****  *
+   6:display/ssd1783.c ****  * All Rights Reserved
+   7:display/ssd1783.c ****  *
+   8:display/ssd1783.c ****  * This program is free software; you can redistribute it and/or modify
+   9:display/ssd1783.c ****  * it under the terms of the GNU General Public License as published by
+  10:display/ssd1783.c ****  * the Free Software Foundation; either version 2 of the License, or
+  11:display/ssd1783.c ****  * (at your option) any later version.
+  12:display/ssd1783.c ****  *
+  13:display/ssd1783.c ****  * This program is distributed in the hope that it will be useful,
+  14:display/ssd1783.c ****  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  15:display/ssd1783.c ****  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  16:display/ssd1783.c ****  * GNU General Public License for more details.
+  17:display/ssd1783.c ****  *
+  18:display/ssd1783.c ****  * You should have received a copy of the GNU General Public License along
+  19:display/ssd1783.c ****  * with this program; if not, write to the Free Software Foundation, Inc.,
+  20:display/ssd1783.c ****  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  21:display/ssd1783.c ****  *
+  22:display/ssd1783.c ****  */
+  23:display/ssd1783.c **** 
+  24:display/ssd1783.c **** #include <stdint.h>
+  25:display/ssd1783.c **** #include <stdio.h>
+  26:display/ssd1783.c **** //#define DEBUG
+  27:display/ssd1783.c **** #include <debug.h>
+  28:display/ssd1783.c **** #include <delay.h>
+  29:display/ssd1783.c **** #include <uwire.h>
+  30:display/ssd1783.c **** #include <display.h>
+  31:display/ssd1783.c **** #include <display/ssd1783.h>
+  32:display/ssd1783.c **** #include <calypso/clock.h>
+  33:display/ssd1783.c **** 
+  34:display/ssd1783.c **** #define LCD_COLUMNS		98
+  35:display/ssd1783.c **** #define LCD_ROWS		67
+  36:display/ssd1783.c **** #define LCD_TOP_FREE_ROWS	3
+  37:display/ssd1783.c **** #define LCD_LEFT_FREE_COLS	0
+  38:display/ssd1783.c **** #define	PIXEL_BYTES		3
+  39:display/ssd1783.c **** #define SSD1783_UWIRE_BITLEN 	9
+  40:display/ssd1783.c **** #define SSD1783_DEV_ID		0
+  41:display/ssd1783.c **** #define FONT_HEIGHT		8
+  42:display/ssd1783.c **** #define FONT_WIDTH		8
+  43:display/ssd1783.c **** 
+  44:display/ssd1783.c **** static const uint8_t rgb8_palette[] ={
+  45:display/ssd1783.c **** 	0x00,	//P01	Intermediate red tone 000
+  46:display/ssd1783.c **** 	0x03,	//P02	Intermediate red tone 001
+  47:display/ssd1783.c **** 	0x05,	//P03	Intermediate red tone 010
+  48:display/ssd1783.c **** 	0x07,	//P04	Intermediate red tone 011
+  49:display/ssd1783.c **** 	0x09,	//P05	Intermediate red tone 100
+  50:display/ssd1783.c **** 	0x0b,	//P06	Intermediate red tone 101
+  51:display/ssd1783.c **** 	0x0d,	//P07	Intermediate red tone 110
+  52:display/ssd1783.c **** 	0x0f,	//P08	Intermediate red tone 111
+  53:display/ssd1783.c **** 	0x00,	//P09	Intermediate green tone 000
+  54:display/ssd1783.c **** 	0x03,	//P10	Intermediate green tone 001
+  55:display/ssd1783.c **** 	0x05,	//P11	Intermediate green tone 010
+  56:display/ssd1783.c **** 	0x07,	//P12	Intermediate green tone 011
+  57:display/ssd1783.c **** 	0x09,	//P13	Intermediate green tone 100
+  58:display/ssd1783.c **** 	0x0b,	//P14	Intermediate green tone 101
+  59:display/ssd1783.c **** 	0x0d,	//P15	Intermediate green tone 110
+  60:display/ssd1783.c **** 	0x0f,	//P16	Intermediate green tone 111
+  61:display/ssd1783.c **** 	0x00,	//P17	Intermediate blue tone 00
+  62:display/ssd1783.c **** 	0x05,	//P18	Intermediate blue tone 01
+  63:display/ssd1783.c **** 	0x0a,	//P19	Intermediate blue tone 10
+  64:display/ssd1783.c **** 	0x0f,	//P20	Intermediate blue tone 11
+  65:display/ssd1783.c **** };
+  66:display/ssd1783.c **** 
+  67:display/ssd1783.c **** static void ssd1783_cmd_write(const uint8_t cmd)
+  68:display/ssd1783.c **** {
+  69:display/ssd1783.c **** 	uint16_t cmd_out = cmd;
+  70:display/ssd1783.c **** 	uwire_xfer(SSD1783_DEV_ID, SSD1783_UWIRE_BITLEN, &cmd_out, NULL);
+  71:display/ssd1783.c **** }
+  72:display/ssd1783.c **** 
+  73:display/ssd1783.c **** static void ssd1783_data_write(const uint8_t data)
+  74:display/ssd1783.c **** {
+  75:display/ssd1783.c **** 	uint16_t data_out = ((0x01 << 8) + data);
+  76:display/ssd1783.c **** 	uwire_xfer(SSD1783_DEV_ID, SSD1783_UWIRE_BITLEN, &data_out, NULL);
+  77:display/ssd1783.c **** }
+  78:display/ssd1783.c **** 
+  79:display/ssd1783.c **** static void ssd1783_clrscr(void)
+  80:display/ssd1783.c **** {
+  81:display/ssd1783.c **** 	uint16_t i;
+  82:display/ssd1783.c **** 
+  83:display/ssd1783.c **** 	/* Select the whole display area for clearing */
+  84:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_PASET);		/* Page address set [2] */
+  85:display/ssd1783.c **** 	ssd1783_data_write(0x00);		/* Start page: 0x00 */
+  86:display/ssd1783.c **** 	ssd1783_data_write(LCD_ROWS-1);		/* End page */
+  87:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_CASET);		/* Column address set [2] */
+  88:display/ssd1783.c **** 	ssd1783_data_write(0x00);		/* Start column: 0x00 */
+  89:display/ssd1783.c **** 	ssd1783_data_write((LCD_COLUMNS/2)-1);	/* End column (2 pixels per column) */
+  90:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_RAMWR);		/* Write to memory */
+  91:display/ssd1783.c **** 
+  92:display/ssd1783.c **** 	/* Fill the display with white */
+  93:display/ssd1783.c **** 	for(i=0; i < (LCD_ROWS * (LCD_COLUMNS/2) * PIXEL_BYTES); i++){
+  94:display/ssd1783.c **** 		ssd1783_data_write(0xff);
+  95:display/ssd1783.c **** 	}
+  96:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_NOP);		/* Terminate RAMWR with NOP */
+  97:display/ssd1783.c **** }
+  98:display/ssd1783.c **** 
+  99:display/ssd1783.c **** static void ssd1783_init(void)
+ 100:display/ssd1783.c **** {
+ 101:display/ssd1783.c **** 	unsigned int i;
+ 102:display/ssd1783.c **** 
+ 103:display/ssd1783.c **** 	calypso_reset_set(RESET_EXT, 0);
+ 104:display/ssd1783.c **** 	uwire_init();
+ 105:display/ssd1783.c **** 	delay_ms(3);
+ 106:display/ssd1783.c **** 
+ 107:display/ssd1783.c **** 	/* Begin SSD1783 initialization sequence */
+ 108:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_OSCON);		/* Internal OSC on */
+ 109:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_SLPOUT);		/* Sleep out (Leave sleep mode) */
+ 110:display/ssd1783.c **** 
+ 111:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_COMSCN);		/* Common scan direction [1] */
+ 112:display/ssd1783.c **** 	ssd1783_data_write(0x01);		/* Scan 1 -> 68, 132 <- 69 */
+ 113:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_DATCTL);		/* Data Scan Direction [3] */
+ 114:display/ssd1783.c **** 	ssd1783_data_write(0x00);		/* Normal page address, normal rotation,
+ 115:display/ssd1783.c **** 						 * scan direction in column direction */
+ 116:display/ssd1783.c **** 	ssd1783_data_write(0x00);		/* RGB arrangement: RGB-RGB */
+ 117:display/ssd1783.c **** 	ssd1783_data_write(0x02);		/* Gray-scale setup: 16 gray-scale Type A, 8-bit mode */
+ 118:display/ssd1783.c **** 
+ 119:display/ssd1783.c **** 	/* Initialize RGB8 palette for 8-Bit color mode */
+ 120:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_RGBSET8);		/* 256-color position set [20] */
+ 121:display/ssd1783.c **** 	for(i=0; i < sizeof(rgb8_palette); i++){
+ 122:display/ssd1783.c **** 		ssd1783_data_write(rgb8_palette[i]);
+ 123:display/ssd1783.c **** 	}
+ 124:display/ssd1783.c **** 
+ 125:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_DISCTL);		/* Display control [3] */
+ 126:display/ssd1783.c **** 	ssd1783_data_write(0xff);		/* no clock division, F1, F2 switching period = field */
+ 127:display/ssd1783.c **** 	ssd1783_data_write(0x10);		/* Drive duty, P24 = 1 */
+ 128:display/ssd1783.c **** 	ssd1783_data_write(0x01);		/* FR inverse set, P30=1 */
+ 129:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_SCSTART);		/* Scroll start set [1] */
+ 130:display/ssd1783.c **** 	ssd1783_data_write(0x00);		/* Start block address 0x00 */
+ 131:display/ssd1783.c **** 
+ 132:display/ssd1783.c **** 	/* Turn on the power regulator which generates VLCD */
+ 133:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_PWRCTR);		/* Power Control [1] */
+ 134:display/ssd1783.c **** 	ssd1783_data_write(0x0b);		/* Booster, follower and regulator circuit on */
+ 135:display/ssd1783.c **** 
+ 136:display/ssd1783.c **** 	/* FIXME: put this in a separate function (ssd1783_set_contrast) */
+ 137:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_VOLCTR);		/* Electronic Volume Control [2] */
+ 138:display/ssd1783.c **** 	ssd1783_data_write(0x29);		/* Set contrast */
+ 139:display/ssd1783.c **** 	ssd1783_data_write(0x05);		/* Set contrast */
+ 140:display/ssd1783.c **** 
+ 141:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_DISINV);		/* Invert Display */
+ 142:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_TMPGRD);		/* Temperature gradient set */
+ 143:display/ssd1783.c **** 	ssd1783_data_write(0x00);		/* default temperature gradient (-0.05% / °C) */
+ 144:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_BIASSET);		/* Set biasing ratio [1] */
+ 145:display/ssd1783.c **** 	ssd1783_data_write(0x03);		/* 1/10 bias */
+ 146:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_FREQSET);		/* Set frequency and n-line inversion [2] */
+ 147:display/ssd1783.c **** 	ssd1783_data_write(0x08);		/* frequency: 75Hz (POR) */
+ 148:display/ssd1783.c **** 	ssd1783_data_write(0x06);		/* n-line inversion: 6 lines */
+ 149:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_RESCMD);		/* reserved command in datasheet? */
+ 150:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_PWMSEL);		/* Select PWM/FRC, Full/8 color mode [3] */
+ 151:display/ssd1783.c **** 	ssd1783_data_write(0x28);		/* fixed */
+ 152:display/ssd1783.c **** 	ssd1783_data_write(0x2c);		/* 5 bits PWM + 1 bit FRC (POR) */
+ 153:display/ssd1783.c **** 	ssd1783_data_write(0x05);		/* Full color mode (0x45 would be 8 color powersaving) */
+ 154:display/ssd1783.c **** 
+ 155:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_DISON);		/* Display ON */
+ 156:display/ssd1783.c **** 	ssd1783_clrscr();			/* Clear the display */
+ 157:display/ssd1783.c **** }
+ 158:display/ssd1783.c **** 
+ 159:display/ssd1783.c **** extern const unsigned char fontdata_r8x8_horiz[];
+ 160:display/ssd1783.c **** 
+ 161:display/ssd1783.c **** /*
+ 162:display/ssd1783.c ****  * Pixel format for 8-bit mode, 12-bit color, 2 Pixel per 3 byte
+ 163:display/ssd1783.c ****  * D7, D6, D5, D4, D3, D2, D1, D0: RRRRGGGG (8 bits) 1st write
+ 164:display/ssd1783.c ****  * D7, D6, D5, D4, D3, D2, D1, D0: BBBBRRRR (8 bits) 2nd write
+ 165:display/ssd1783.c ****  * D7, D6, D5, D4, D3, D2, D1, D0: GGGGBBBB (8 bits) 3rd write
+ 166:display/ssd1783.c **** */
+ 167:display/ssd1783.c **** 
+ 168:display/ssd1783.c **** static void ssd1783_goto_xy(int xpos, int ypos)
+ 169:display/ssd1783.c **** {
+ 170:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_PASET);
+ 171:display/ssd1783.c **** 	ssd1783_data_write(xpos);
+ 172:display/ssd1783.c **** 	ssd1783_data_write(xpos + (FONT_HEIGHT-1));
+ 173:display/ssd1783.c **** 
+ 174:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_CASET);
+ 175:display/ssd1783.c **** 	ssd1783_data_write(ypos);
+ 176:display/ssd1783.c **** 	ssd1783_data_write(ypos + ((FONT_WIDTH/2)-1));
+ 177:display/ssd1783.c **** 
+ 178:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_NOP);
+ 179:display/ssd1783.c **** }
+ 180:display/ssd1783.c **** 
+ 181:display/ssd1783.c **** static int ssd1783_putc_col(unsigned char c, int fColor, int bColor)
+ 182:display/ssd1783.c **** {
+ 183:display/ssd1783.c **** 	int i, j;
+ 184:display/ssd1783.c **** 	uint8_t cols = FONT_WIDTH;
+ 185:display/ssd1783.c **** 	uint8_t rows = FONT_HEIGHT;
+ 186:display/ssd1783.c **** 	uint8_t row_slice;
+ 187:display/ssd1783.c **** 	uint8_t rowmask;
+ 188:display/ssd1783.c **** 	uint16_t pixel0;	/* left pixel */
+ 189:display/ssd1783.c **** 	uint16_t pixel1;	/* right pixel */
+ 190:display/ssd1783.c **** 
+ 191:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_RAMWR);
+ 192:display/ssd1783.c **** 
+ 193:display/ssd1783.c **** 	for (i = 0; i < rows; i++) {
+ 194:display/ssd1783.c **** 		row_slice = fontdata_r8x8_horiz[(FONT_WIDTH * c)+i];
+ 195:display/ssd1783.c **** 		printd("\nSSD1783 FontData=0x%02hx", row_slice);
+ 196:display/ssd1783.c **** 		rowmask = 0x80;
+ 197:display/ssd1783.c **** 		for (j = 0; j < cols; j += 2) {
+ 198:display/ssd1783.c **** 			if (!(row_slice & rowmask))
+ 199:display/ssd1783.c **** 				pixel0 = bColor;
+ 200:display/ssd1783.c **** 			else
+ 201:display/ssd1783.c **** 				pixel0 = fColor;
+ 202:display/ssd1783.c **** 			rowmask = rowmask >> 1;
+ 203:display/ssd1783.c **** 			if (!(row_slice & rowmask))
+ 204:display/ssd1783.c **** 				pixel1 = bColor;
+ 205:display/ssd1783.c **** 			else
+ 206:display/ssd1783.c **** 				pixel1 = fColor;
+ 207:display/ssd1783.c **** 			rowmask = rowmask >> 1;
+ 208:display/ssd1783.c **** 			/* Write the RGB-RGB pixel data */
+ 209:display/ssd1783.c **** 			ssd1783_data_write((pixel0 >> 4) & 0xff);
+ 210:display/ssd1783.c **** 			ssd1783_data_write(((pixel0 & 0x00f) << 4) | ((pixel1 >> 8) & 0x00f));
+ 211:display/ssd1783.c **** 			ssd1783_data_write(pixel1 & 0xff);
+ 212:display/ssd1783.c **** 		}
+ 213:display/ssd1783.c **** 	}
+ 214:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_NOP);
+ 215:display/ssd1783.c **** 
+ 216:display/ssd1783.c **** 	return c;
+ 217:display/ssd1783.c **** }
+ 218:display/ssd1783.c **** 
+ 219:display/ssd1783.c **** static int ssd1783_puts_col(const char *str, int txtline, int fColor, int bColor)
+ 220:display/ssd1783.c **** {
+ 221:display/ssd1783.c **** 	int i;
+ 222:display/ssd1783.c **** 	for (i = 0; *str != 0x00; i += (FONT_WIDTH/2)) {
+ 223:display/ssd1783.c **** 		ssd1783_goto_xy(((txtline*FONT_HEIGHT)+LCD_TOP_FREE_ROWS),
+ 224:display/ssd1783.c **** 				(i + LCD_LEFT_FREE_COLS));
+ 225:display/ssd1783.c **** 		ssd1783_putc_col(*str++, fColor, bColor);
+ 226:display/ssd1783.c **** 	}
+ 227:display/ssd1783.c **** 
+ 228:display/ssd1783.c **** 	return 0;
+ 229:display/ssd1783.c **** }
+ 230:display/ssd1783.c **** 
+ 231:display/ssd1783.c **** /* interface to display driver core */
+ 232:display/ssd1783.c **** 
+ 233:display/ssd1783.c **** static void ssd1783_set_attr(unsigned long attr)
+ 234:display/ssd1783.c **** {
+  17              		.loc 1 234 0
+  18              		.cfi_startproc
+  19              		@ args = 0, pretend = 0, frame = 0
+  20              		@ frame_needed = 0, uses_anonymous_args = 0
+  21              		@ link register save eliminated.
+  22              	.LVL0:
+ 235:display/ssd1783.c **** 	/* FIXME */
+ 236:display/ssd1783.c **** }
+  23              		.loc 1 236 0
+  24 0000 1EFF2FE1 		bx	lr
+  25              		.cfi_endproc
+  26              	.LFE12:
+  28              		.section	.text.ssd1783_data_write,"ax",%progbits
+  29              		.align	2
+  31              	ssd1783_data_write:
+  32              	.LFB6:
+  74:display/ssd1783.c **** {
+  33              		.loc 1 74 0
+  34              		.cfi_startproc
+  35              		@ args = 0, pretend = 0, frame = 4
+  36              		@ frame_needed = 0, uses_anonymous_args = 0
+  37              	.LVL1:
+  38 0000 01402DE9 		stmfd	sp!, {r0, lr}
+  39              	.LCFI0:
+  40              		.cfi_def_cfa_offset 8
+  75:display/ssd1783.c **** 	uint16_t data_out = ((0x01 << 8) + data);
+  41              		.loc 1 75 0
+  42 0004 010C80E2 		add	r0, r0, #256
+  43              		.cfi_offset 14, -4
+  44              		.cfi_offset 0, -8
+  45              	.LVL2:
+  46 0008 04208DE2 		add	r2, sp, #4
+  47 000c B20062E1 		strh	r0, [r2, #-2]!	@ movhi
+  48              	.LVL3:
+  76:display/ssd1783.c **** 	uwire_xfer(SSD1783_DEV_ID, SSD1783_UWIRE_BITLEN, &data_out, NULL);
+  49              		.loc 1 76 0
+  50 0010 0000A0E3 		mov	r0, #0
+  51 0014 0910A0E3 		mov	r1, #9
+  52 0018 0030A0E1 		mov	r3, r0
+  53 001c FEFFFFEB 		bl	uwire_xfer
+  77:display/ssd1783.c **** }
+  54              		.loc 1 77 0
+  55 0020 0880BDE8 		ldmfd	sp!, {r3, pc}
+  56              		.cfi_endproc
+  57              	.LFE6:
+  59              		.section	.text.ssd1783_cmd_write,"ax",%progbits
+  60              		.align	2
+  62              	ssd1783_cmd_write:
+  63              	.LFB5:
+  68:display/ssd1783.c **** {
+  64              		.loc 1 68 0
+  65              		.cfi_startproc
+  66              		@ args = 0, pretend = 0, frame = 4
+  67              		@ frame_needed = 0, uses_anonymous_args = 0
+  68              	.LVL4:
+  69 0000 01402DE9 		stmfd	sp!, {r0, lr}
+  70              	.LCFI1:
+  71              		.cfi_def_cfa_offset 8
+  69:display/ssd1783.c **** 	uint16_t cmd_out = cmd;
+  72              		.loc 1 69 0
+  73 0004 04208DE2 		add	r2, sp, #4
+  74 0008 B20062E1 		strh	r0, [r2, #-2]!	@ movhi
+  75              	.LVL5:
+  70:display/ssd1783.c **** 	uwire_xfer(SSD1783_DEV_ID, SSD1783_UWIRE_BITLEN, &cmd_out, NULL);
+  76              		.loc 1 70 0
+  77 000c 0000A0E3 		mov	r0, #0
+  78              		.cfi_offset 14, -4
+  79              		.cfi_offset 0, -8
+  80              	.LVL6:
+  81 0010 0910A0E3 		mov	r1, #9
+  82 0014 0030A0E1 		mov	r3, r0
+  83 0018 FEFFFFEB 		bl	uwire_xfer
+  71:display/ssd1783.c **** }
+  84              		.loc 1 71 0
+  85 001c 0880BDE8 		ldmfd	sp!, {r3, pc}
+  86              		.cfi_endproc
+  87              	.LFE5:
+  89              		.section	.text.ssd1783_goto_xy,"ax",%progbits
+  90              		.align	2
+  92              	ssd1783_goto_xy:
+  93              	.LFB9:
+ 169:display/ssd1783.c **** {
+  94              		.loc 1 169 0
+  95              		.cfi_startproc
+  96              		@ args = 0, pretend = 0, frame = 0
+  97              		@ frame_needed = 0, uses_anonymous_args = 0
+  98              	.LVL7:
+  99 0000 30402DE9 		stmfd	sp!, {r4, r5, lr}
+ 100              	.LCFI2:
+ 101              		.cfi_def_cfa_offset 12
+ 169:display/ssd1783.c **** {
+ 102              		.loc 1 169 0
+ 103 0004 0040A0E1 		mov	r4, r0
+ 104              		.cfi_offset 14, -4
+ 105              		.cfi_offset 5, -8
+ 106              		.cfi_offset 4, -12
+ 171:display/ssd1783.c **** 	ssd1783_data_write(xpos);
+ 107              		.loc 1 171 0
+ 108 0008 FF4004E2 		and	r4, r4, #255
+ 170:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_PASET);
+ 109              		.loc 1 170 0
+ 110 000c 7500A0E3 		mov	r0, #117
+ 111              	.LVL8:
+ 169:display/ssd1783.c **** {
+ 112              		.loc 1 169 0
+ 113 0010 0150A0E1 		mov	r5, r1
+ 170:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_PASET);
+ 114              		.loc 1 170 0
+ 115 0014 FEFFFFEB 		bl	ssd1783_cmd_write
+ 116              	.LVL9:
+ 171:display/ssd1783.c **** 	ssd1783_data_write(xpos);
+ 117              		.loc 1 171 0
+ 118 0018 0400A0E1 		mov	r0, r4
+ 172:display/ssd1783.c **** 	ssd1783_data_write(xpos + (FONT_HEIGHT-1));
+ 119              		.loc 1 172 0
+ 120 001c 074084E2 		add	r4, r4, #7
+ 171:display/ssd1783.c **** 	ssd1783_data_write(xpos);
+ 121              		.loc 1 171 0
+ 122 0020 FEFFFFEB 		bl	ssd1783_data_write
+ 172:display/ssd1783.c **** 	ssd1783_data_write(xpos + (FONT_HEIGHT-1));
+ 123              		.loc 1 172 0
+ 124 0024 FF0004E2 		and	r0, r4, #255
+ 125 0028 FEFFFFEB 		bl	ssd1783_data_write
+ 175:display/ssd1783.c **** 	ssd1783_data_write(ypos);
+ 126              		.loc 1 175 0
+ 127 002c FF4005E2 		and	r4, r5, #255
+ 174:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_CASET);
+ 128              		.loc 1 174 0
+ 129 0030 1500A0E3 		mov	r0, #21
+ 130 0034 FEFFFFEB 		bl	ssd1783_cmd_write
+ 175:display/ssd1783.c **** 	ssd1783_data_write(ypos);
+ 131              		.loc 1 175 0
+ 132 0038 0400A0E1 		mov	r0, r4
+ 133 003c FEFFFFEB 		bl	ssd1783_data_write
+ 176:display/ssd1783.c **** 	ssd1783_data_write(ypos + ((FONT_WIDTH/2)-1));
+ 134              		.loc 1 176 0
+ 135 0040 030084E2 		add	r0, r4, #3
+ 136 0044 FF0000E2 		and	r0, r0, #255
+ 137 0048 FEFFFFEB 		bl	ssd1783_data_write
+ 178:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_NOP);
+ 138              		.loc 1 178 0
+ 139 004c 2500A0E3 		mov	r0, #37
+ 179:display/ssd1783.c **** }
+ 140              		.loc 1 179 0
+ 141 0050 3040BDE8 		ldmfd	sp!, {r4, r5, lr}
+ 178:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_NOP);
+ 142              		.loc 1 178 0
+ 143 0054 FEFFFFEA 		b	ssd1783_cmd_write
+ 144              		.cfi_endproc
+ 145              	.LFE9:
+ 147              		.section	.text.ssd1783_clrscr,"ax",%progbits
+ 148              		.align	2
+ 150              	ssd1783_clrscr:
+ 151              	.LFB7:
+  80:display/ssd1783.c **** {
+ 152              		.loc 1 80 0
+ 153              		.cfi_startproc
+ 154              		@ args = 0, pretend = 0, frame = 0
+ 155              		@ frame_needed = 0, uses_anonymous_args = 0
+ 156 0000 10402DE9 		stmfd	sp!, {r4, lr}
+ 157              	.LCFI3:
+ 158              		.cfi_def_cfa_offset 8
+  84:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_PASET);		/* Page address set [2] */
+ 159              		.loc 1 84 0
+ 160 0004 7500A0E3 		mov	r0, #117
+ 161              		.cfi_offset 14, -4
+ 162              		.cfi_offset 4, -8
+ 163 0008 FEFFFFEB 		bl	ssd1783_cmd_write
+  85:display/ssd1783.c **** 	ssd1783_data_write(0x00);		/* Start page: 0x00 */
+ 164              		.loc 1 85 0
+ 165 000c 0000A0E3 		mov	r0, #0
+ 166 0010 FEFFFFEB 		bl	ssd1783_data_write
+  86:display/ssd1783.c **** 	ssd1783_data_write(LCD_ROWS-1);		/* End page */
+ 167              		.loc 1 86 0
+ 168 0014 4200A0E3 		mov	r0, #66
+ 169 0018 FEFFFFEB 		bl	ssd1783_data_write
+  87:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_CASET);		/* Column address set [2] */
+ 170              		.loc 1 87 0
+ 171 001c 1500A0E3 		mov	r0, #21
+ 172 0020 FEFFFFEB 		bl	ssd1783_cmd_write
+  88:display/ssd1783.c **** 	ssd1783_data_write(0x00);		/* Start column: 0x00 */
+ 173              		.loc 1 88 0
+ 174 0024 0000A0E3 		mov	r0, #0
+ 175 0028 FEFFFFEB 		bl	ssd1783_data_write
+  89:display/ssd1783.c **** 	ssd1783_data_write((LCD_COLUMNS/2)-1);	/* End column (2 pixels per column) */
+ 176              		.loc 1 89 0
+ 177 002c 3000A0E3 		mov	r0, #48
+ 178 0030 FEFFFFEB 		bl	ssd1783_data_write
+  90:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_RAMWR);		/* Write to memory */
+ 179              		.loc 1 90 0
+ 180 0034 5C00A0E3 		mov	r0, #92
+ 181 0038 FEFFFFEB 		bl	ssd1783_cmd_write
+ 182              	.LVL10:
+ 183 003c 20409FE5 		ldr	r4, .L8
+ 184              	.LVL11:
+ 185              	.L6:
+  94:display/ssd1783.c **** 		ssd1783_data_write(0xff);
+ 186              		.loc 1 94 0 discriminator 2
+ 187 0040 014044E2 		sub	r4, r4, #1
+ 188 0044 FF00A0E3 		mov	r0, #255
+ 189 0048 0448A0E1 		mov	r4, r4, asl #16
+ 190 004c FEFFFFEB 		bl	ssd1783_data_write
+  93:display/ssd1783.c **** 	for(i=0; i < (LCD_ROWS * (LCD_COLUMNS/2) * PIXEL_BYTES); i++){
+ 191              		.loc 1 93 0 discriminator 2
+ 192 0050 2448B0E1 		movs	r4, r4, lsr #16
+ 193 0054 F9FFFF1A 		bne	.L6
+  96:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_NOP);		/* Terminate RAMWR with NOP */
+ 194              		.loc 1 96 0
+ 195 0058 2500A0E3 		mov	r0, #37
+  97:display/ssd1783.c **** }
+ 196              		.loc 1 97 0
+ 197 005c 1040BDE8 		ldmfd	sp!, {r4, lr}
+  96:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_NOP);		/* Terminate RAMWR with NOP */
+ 198              		.loc 1 96 0
+ 199 0060 FEFFFFEA 		b	ssd1783_cmd_write
+ 200              	.L9:
+ 201              		.align	2
+ 202              	.L8:
+ 203 0064 79260000 		.word	9849
+ 204              		.cfi_endproc
+ 205              	.LFE7:
+ 207              		.section	.text.ssd1783_init,"ax",%progbits
+ 208              		.align	2
+ 210              	ssd1783_init:
+ 211              	.LFB8:
+ 100:display/ssd1783.c **** {
+ 212              		.loc 1 100 0
+ 213              		.cfi_startproc
+ 214              		@ args = 0, pretend = 0, frame = 0
+ 215              		@ frame_needed = 0, uses_anonymous_args = 0
+ 216 0000 30402DE9 		stmfd	sp!, {r4, r5, lr}
+ 217              	.LCFI4:
+ 218              		.cfi_def_cfa_offset 12
+ 103:display/ssd1783.c **** 	calypso_reset_set(RESET_EXT, 0);
+ 219              		.loc 1 103 0
+ 220 0004 0010A0E3 		mov	r1, #0
+ 221 0008 0400A0E3 		mov	r0, #4
+ 222              		.cfi_offset 14, -4
+ 223              		.cfi_offset 5, -8
+ 224              		.cfi_offset 4, -12
+ 225 000c FEFFFFEB 		bl	calypso_reset_set
+ 104:display/ssd1783.c **** 	uwire_init();
+ 226              		.loc 1 104 0
+ 227 0010 FEFFFFEB 		bl	uwire_init
+ 105:display/ssd1783.c **** 	delay_ms(3);
+ 228              		.loc 1 105 0
+ 229 0014 0300A0E3 		mov	r0, #3
+ 230 0018 FEFFFFEB 		bl	delay_ms
+ 108:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_OSCON);		/* Internal OSC on */
+ 231              		.loc 1 108 0
+ 232 001c D100A0E3 		mov	r0, #209
+ 233 0020 FEFFFFEB 		bl	ssd1783_cmd_write
+ 109:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_SLPOUT);		/* Sleep out (Leave sleep mode) */
+ 234              		.loc 1 109 0
+ 235 0024 9400A0E3 		mov	r0, #148
+ 236 0028 FEFFFFEB 		bl	ssd1783_cmd_write
+ 111:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_COMSCN);		/* Common scan direction [1] */
+ 237              		.loc 1 111 0
+ 238 002c BB00A0E3 		mov	r0, #187
+ 239 0030 FEFFFFEB 		bl	ssd1783_cmd_write
+ 112:display/ssd1783.c **** 	ssd1783_data_write(0x01);		/* Scan 1 -> 68, 132 <- 69 */
+ 240              		.loc 1 112 0
+ 241 0034 0100A0E3 		mov	r0, #1
+ 242 0038 FEFFFFEB 		bl	ssd1783_data_write
+ 113:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_DATCTL);		/* Data Scan Direction [3] */
+ 243              		.loc 1 113 0
+ 244 003c BC00A0E3 		mov	r0, #188
+ 245 0040 FEFFFFEB 		bl	ssd1783_cmd_write
+ 114:display/ssd1783.c **** 	ssd1783_data_write(0x00);		/* Normal page address, normal rotation,
+ 246              		.loc 1 114 0
+ 247 0044 0000A0E3 		mov	r0, #0
+ 248 0048 FEFFFFEB 		bl	ssd1783_data_write
+ 116:display/ssd1783.c **** 	ssd1783_data_write(0x00);		/* RGB arrangement: RGB-RGB */
+ 249              		.loc 1 116 0
+ 250 004c 0000A0E3 		mov	r0, #0
+ 251 0050 FEFFFFEB 		bl	ssd1783_data_write
+ 117:display/ssd1783.c **** 	ssd1783_data_write(0x02);		/* Gray-scale setup: 16 gray-scale Type A, 8-bit mode */
+ 252              		.loc 1 117 0
+ 253 0054 0200A0E3 		mov	r0, #2
+ 254 0058 FEFFFFEB 		bl	ssd1783_data_write
+ 120:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_RGBSET8);		/* 256-color position set [20] */
+ 255              		.loc 1 120 0
+ 256 005c CE00A0E3 		mov	r0, #206
+ 257 0060 FEFFFFEB 		bl	ssd1783_cmd_write
+ 258              	.LVL12:
+ 259 0064 E0409FE5 		ldr	r4, .L13
+  99:display/ssd1783.c **** static void ssd1783_init(void)
+ 260              		.loc 1 99 0
+ 261 0068 145084E2 		add	r5, r4, #20
+ 262              	.LVL13:
+ 263              	.L11:
+ 122:display/ssd1783.c **** 		ssd1783_data_write(rgb8_palette[i]);
+ 264              		.loc 1 122 0 discriminator 2
+ 265 006c 0100F4E5 		ldrb	r0, [r4, #1]!	@ zero_extendqisi2
+ 266 0070 FEFFFFEB 		bl	ssd1783_data_write
+ 121:display/ssd1783.c **** 	for(i=0; i < sizeof(rgb8_palette); i++){
+ 267              		.loc 1 121 0 discriminator 2
+ 268 0074 050054E1 		cmp	r4, r5
+ 269 0078 FBFFFF1A 		bne	.L11
+ 125:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_DISCTL);		/* Display control [3] */
+ 270              		.loc 1 125 0
+ 271 007c CA00A0E3 		mov	r0, #202
+ 272 0080 FEFFFFEB 		bl	ssd1783_cmd_write
+ 126:display/ssd1783.c **** 	ssd1783_data_write(0xff);		/* no clock division, F1, F2 switching period = field */
+ 273              		.loc 1 126 0
+ 274 0084 FF00A0E3 		mov	r0, #255
+ 275 0088 FEFFFFEB 		bl	ssd1783_data_write
+ 127:display/ssd1783.c **** 	ssd1783_data_write(0x10);		/* Drive duty, P24 = 1 */
+ 276              		.loc 1 127 0
+ 277 008c 1000A0E3 		mov	r0, #16
+ 278 0090 FEFFFFEB 		bl	ssd1783_data_write
+ 128:display/ssd1783.c **** 	ssd1783_data_write(0x01);		/* FR inverse set, P30=1 */
+ 279              		.loc 1 128 0
+ 280 0094 0100A0E3 		mov	r0, #1
+ 281 0098 FEFFFFEB 		bl	ssd1783_data_write
+ 129:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_SCSTART);		/* Scroll start set [1] */
+ 282              		.loc 1 129 0
+ 283 009c AB00A0E3 		mov	r0, #171
+ 284 00a0 FEFFFFEB 		bl	ssd1783_cmd_write
+ 130:display/ssd1783.c **** 	ssd1783_data_write(0x00);		/* Start block address 0x00 */
+ 285              		.loc 1 130 0
+ 286 00a4 0000A0E3 		mov	r0, #0
+ 287 00a8 FEFFFFEB 		bl	ssd1783_data_write
+ 133:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_PWRCTR);		/* Power Control [1] */
+ 288              		.loc 1 133 0
+ 289 00ac 2000A0E3 		mov	r0, #32
+ 290 00b0 FEFFFFEB 		bl	ssd1783_cmd_write
+ 134:display/ssd1783.c **** 	ssd1783_data_write(0x0b);		/* Booster, follower and regulator circuit on */
+ 291              		.loc 1 134 0
+ 292 00b4 0B00A0E3 		mov	r0, #11
+ 293 00b8 FEFFFFEB 		bl	ssd1783_data_write
+ 137:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_VOLCTR);		/* Electronic Volume Control [2] */
+ 294              		.loc 1 137 0
+ 295 00bc 8100A0E3 		mov	r0, #129
+ 296 00c0 FEFFFFEB 		bl	ssd1783_cmd_write
+ 138:display/ssd1783.c **** 	ssd1783_data_write(0x29);		/* Set contrast */
+ 297              		.loc 1 138 0
+ 298 00c4 2900A0E3 		mov	r0, #41
+ 299 00c8 FEFFFFEB 		bl	ssd1783_data_write
+ 139:display/ssd1783.c **** 	ssd1783_data_write(0x05);		/* Set contrast */
+ 300              		.loc 1 139 0
+ 301 00cc 0500A0E3 		mov	r0, #5
+ 302 00d0 FEFFFFEB 		bl	ssd1783_data_write
+ 141:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_DISINV);		/* Invert Display */
+ 303              		.loc 1 141 0
+ 304 00d4 A700A0E3 		mov	r0, #167
+ 305 00d8 FEFFFFEB 		bl	ssd1783_cmd_write
+ 142:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_TMPGRD);		/* Temperature gradient set */
+ 306              		.loc 1 142 0
+ 307 00dc 8200A0E3 		mov	r0, #130
+ 308 00e0 FEFFFFEB 		bl	ssd1783_cmd_write
+ 143:display/ssd1783.c **** 	ssd1783_data_write(0x00);		/* default temperature gradient (-0.05% / °C) */
+ 309              		.loc 1 143 0
+ 310 00e4 0000A0E3 		mov	r0, #0
+ 311 00e8 FEFFFFEB 		bl	ssd1783_data_write
+ 144:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_BIASSET);		/* Set biasing ratio [1] */
+ 312              		.loc 1 144 0
+ 313 00ec FB00A0E3 		mov	r0, #251
+ 314 00f0 FEFFFFEB 		bl	ssd1783_cmd_write
+ 145:display/ssd1783.c **** 	ssd1783_data_write(0x03);		/* 1/10 bias */
+ 315              		.loc 1 145 0
+ 316 00f4 0300A0E3 		mov	r0, #3
+ 317 00f8 FEFFFFEB 		bl	ssd1783_data_write
+ 146:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_FREQSET);		/* Set frequency and n-line inversion [2] */
+ 318              		.loc 1 146 0
+ 319 00fc F200A0E3 		mov	r0, #242
+ 320 0100 FEFFFFEB 		bl	ssd1783_cmd_write
+ 147:display/ssd1783.c **** 	ssd1783_data_write(0x08);		/* frequency: 75Hz (POR) */
+ 321              		.loc 1 147 0
+ 322 0104 0800A0E3 		mov	r0, #8
+ 323 0108 FEFFFFEB 		bl	ssd1783_data_write
+ 148:display/ssd1783.c **** 	ssd1783_data_write(0x06);		/* n-line inversion: 6 lines */
+ 324              		.loc 1 148 0
+ 325 010c 0600A0E3 		mov	r0, #6
+ 326 0110 FEFFFFEB 		bl	ssd1783_data_write
+ 149:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_RESCMD);		/* reserved command in datasheet? */
+ 327              		.loc 1 149 0
+ 328 0114 A200A0E3 		mov	r0, #162
+ 329 0118 FEFFFFEB 		bl	ssd1783_cmd_write
+ 150:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_PWMSEL);		/* Select PWM/FRC, Full/8 color mode [3] */
+ 330              		.loc 1 150 0
+ 331 011c F700A0E3 		mov	r0, #247
+ 332 0120 FEFFFFEB 		bl	ssd1783_cmd_write
+ 151:display/ssd1783.c **** 	ssd1783_data_write(0x28);		/* fixed */
+ 333              		.loc 1 151 0
+ 334 0124 2800A0E3 		mov	r0, #40
+ 335 0128 FEFFFFEB 		bl	ssd1783_data_write
+ 152:display/ssd1783.c **** 	ssd1783_data_write(0x2c);		/* 5 bits PWM + 1 bit FRC (POR) */
+ 336              		.loc 1 152 0
+ 337 012c 2C00A0E3 		mov	r0, #44
+ 338 0130 FEFFFFEB 		bl	ssd1783_data_write
+ 153:display/ssd1783.c **** 	ssd1783_data_write(0x05);		/* Full color mode (0x45 would be 8 color powersaving) */
+ 339              		.loc 1 153 0
+ 340 0134 0500A0E3 		mov	r0, #5
+ 341 0138 FEFFFFEB 		bl	ssd1783_data_write
+ 155:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_DISON);		/* Display ON */
+ 342              		.loc 1 155 0
+ 343 013c AF00A0E3 		mov	r0, #175
+ 344 0140 FEFFFFEB 		bl	ssd1783_cmd_write
+ 157:display/ssd1783.c **** }
+ 345              		.loc 1 157 0
+ 346 0144 3040BDE8 		ldmfd	sp!, {r4, r5, lr}
+ 156:display/ssd1783.c **** 	ssd1783_clrscr();			/* Clear the display */
+ 347              		.loc 1 156 0
+ 348 0148 FEFFFFEA 		b	ssd1783_clrscr
+ 349              	.L14:
+ 350              		.align	2
+ 351              	.L13:
+ 352 014c FFFFFFFF 		.word	.LANCHOR0-1
+ 353              		.cfi_endproc
+ 354              	.LFE8:
+ 356              		.section	.text.ssd1783_putc_col.clone.0,"ax",%progbits
+ 357              		.align	2
+ 359              	ssd1783_putc_col.clone.0:
+ 360              	.LFB15:
+ 181:display/ssd1783.c **** static int ssd1783_putc_col(unsigned char c, int fColor, int bColor)
+ 361              		.loc 1 181 0
+ 362              		.cfi_startproc
+ 363              		@ args = 0, pretend = 0, frame = 4
+ 364              		@ frame_needed = 0, uses_anonymous_args = 0
+ 365              	.LVL14:
+ 366 0000 F14F2DE9 		stmfd	sp!, {r0, r4, r5, r6, r7, r8, r9, sl, fp, lr}
+ 367              	.LCFI5:
+ 368              		.cfi_def_cfa_offset 40
+ 181:display/ssd1783.c **** static int ssd1783_putc_col(unsigned char c, int fColor, int bColor)
+ 369              		.loc 1 181 0
+ 370 0004 0060A0E1 		mov	r6, r0
+ 371              		.cfi_offset 14, -4
+ 372              		.cfi_offset 11, -8
+ 373              		.cfi_offset 10, -12
+ 374              		.cfi_offset 9, -16
+ 375              		.cfi_offset 8, -20
+ 376              		.cfi_offset 7, -24
+ 377              		.cfi_offset 6, -28
+ 378              		.cfi_offset 5, -32
+ 379              		.cfi_offset 4, -36
+ 380              		.cfi_offset 0, -40
+ 191:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_RAMWR);
+ 381              		.loc 1 191 0
+ 382 0008 5C00A0E3 		mov	r0, #92
+ 383              	.LVL15:
+ 384 000c FEFFFFEB 		bl	ssd1783_cmd_write
+ 385              	.LVL16:
+ 181:display/ssd1783.c **** static int ssd1783_putc_col(unsigned char c, int fColor, int bColor)
+ 386              		.loc 1 181 0
+ 387 0010 88809FE5 		ldr	r8, .L24
+ 201:display/ssd1783.c **** 				pixel0 = fColor;
+ 388              		.loc 1 201 0
+ 389 0014 88709FE5 		ldr	r7, .L24+4
+ 181:display/ssd1783.c **** static int ssd1783_putc_col(unsigned char c, int fColor, int bColor)
+ 390              		.loc 1 181 0
+ 391 0018 868188E0 		add	r8, r8, r6, asl #3
+ 392 001c 018048E2 		sub	r8, r8, #1
+ 193:display/ssd1783.c **** 	for (i = 0; i < rows; i++) {
+ 393              		.loc 1 193 0
+ 394 0020 0040A0E3 		mov	r4, #0
+ 395              	.LVL17:
+ 396              	.L20:
+ 194:display/ssd1783.c **** 		row_slice = fontdata_r8x8_horiz[(FONT_WIDTH * c)+i];
+ 397              		.loc 1 194 0
+ 398 0024 01A0F8E5 		ldrb	sl, [r8, #1]!	@ zero_extendqisi2
+ 399              	.LVL18:
+ 197:display/ssd1783.c **** 		for (j = 0; j < cols; j += 2) {
+ 400              		.loc 1 197 0
+ 401 0028 0050A0E3 		mov	r5, #0
+ 196:display/ssd1783.c **** 		rowmask = 0x80;
+ 402              		.loc 1 196 0
+ 403 002c 8090A0E3 		mov	r9, #128
+ 404              	.LVL19:
+ 405              	.L19:
+ 201:display/ssd1783.c **** 				pixel0 = fColor;
+ 406              		.loc 1 201 0
+ 407 0030 0A0019E1 		tst	r9, sl
+ 408 0034 0730A001 		moveq	r3, r7
+ 409 0038 0030A013 		movne	r3, #0
+ 410              	.LVL20:
+ 202:display/ssd1783.c **** 			rowmask = rowmask >> 1;
+ 411              		.loc 1 202 0
+ 412 003c A990A0E1 		mov	r9, r9, lsr #1
+ 413              	.LVL21:
+ 206:display/ssd1783.c **** 				pixel1 = fColor;
+ 414              		.loc 1 206 0
+ 415 0040 0A0019E1 		tst	r9, sl
+ 209:display/ssd1783.c **** 			ssd1783_data_write((pixel0 >> 4) & 0xff);
+ 416              		.loc 1 209 0
+ 417 0044 2302A0E1 		mov	r0, r3, lsr #4
+ 206:display/ssd1783.c **** 				pixel1 = fColor;
+ 418              		.loc 1 206 0
+ 419 0048 07B0A001 		moveq	fp, r7
+ 420 004c 00B0A013 		movne	fp, #0
+ 421              	.LVL22:
+ 209:display/ssd1783.c **** 			ssd1783_data_write((pixel0 >> 4) & 0xff);
+ 422              		.loc 1 209 0
+ 423 0050 00308DE5 		str	r3, [sp, #0]
+ 424 0054 FEFFFFEB 		bl	ssd1783_data_write
+ 425              	.LVL23:
+ 210:display/ssd1783.c **** 			ssd1783_data_write(((pixel0 & 0x00f) << 4) | ((pixel1 >> 8) & 0x00f));
+ 426              		.loc 1 210 0
+ 427 0058 00309DE5 		ldr	r3, [sp, #0]
+ 428 005c 0302A0E1 		mov	r0, r3, asl #4
+ 429 0060 2B0480E1 		orr	r0, r0, fp, lsr #8
+ 430 0064 FF0000E2 		and	r0, r0, #255
+ 431 0068 FEFFFFEB 		bl	ssd1783_data_write
+ 197:display/ssd1783.c **** 		for (j = 0; j < cols; j += 2) {
+ 432              		.loc 1 197 0
+ 433 006c 025085E2 		add	r5, r5, #2
+ 211:display/ssd1783.c **** 			ssd1783_data_write(pixel1 & 0xff);
+ 434              		.loc 1 211 0
+ 435 0070 FF000BE2 		and	r0, fp, #255
+ 436 0074 FEFFFFEB 		bl	ssd1783_data_write
+ 437              	.LVL24:
+ 197:display/ssd1783.c **** 		for (j = 0; j < cols; j += 2) {
+ 438              		.loc 1 197 0
+ 439 0078 080055E3 		cmp	r5, #8
+ 207:display/ssd1783.c **** 			rowmask = rowmask >> 1;
+ 440              		.loc 1 207 0
+ 441 007c A990A011 		movne	r9, r9, lsr #1
+ 442              	.LVL25:
+ 443 0080 EAFFFF1A 		bne	.L19
+ 444              	.LVL26:
+ 445              	.L18:
+ 193:display/ssd1783.c **** 	for (i = 0; i < rows; i++) {
+ 446              		.loc 1 193 0
+ 447 0084 014084E2 		add	r4, r4, #1
+ 448              	.LVL27:
+ 449 0088 080054E3 		cmp	r4, #8
+ 450 008c E4FFFF1A 		bne	.L20
+ 214:display/ssd1783.c **** 	ssd1783_cmd_write(CMD_NOP);
+ 451              		.loc 1 214 0
+ 452 0090 2500A0E3 		mov	r0, #37
+ 453 0094 FEFFFFEB 		bl	ssd1783_cmd_write
+ 217:display/ssd1783.c **** }
+ 454              		.loc 1 217 0
+ 455 0098 0600A0E1 		mov	r0, r6
+ 456 009c F88FBDE8 		ldmfd	sp!, {r3, r4, r5, r6, r7, r8, r9, sl, fp, pc}
+ 457              	.L25:
+ 458              		.align	2
+ 459              	.L24:
+ 460 00a0 00000000 		.word	fontdata_r8x8_horiz
+ 461 00a4 FF0F0000 		.word	4095
+ 462              		.cfi_endproc
+ 463              	.LFE15:
+ 465              		.section	.text.ssd1783_puts,"ax",%progbits
+ 466              		.align	2
+ 468              	ssd1783_puts:
+ 469              	.LFB14:
+ 237:display/ssd1783.c **** 
+ 238:display/ssd1783.c **** static int ssd1783_putc(unsigned int c)
+ 239:display/ssd1783.c **** {
+ 240:display/ssd1783.c **** 	return ssd1783_putc_col(c, BLACK, WHITE);
+ 241:display/ssd1783.c **** }
+ 242:display/ssd1783.c **** 
+ 243:display/ssd1783.c **** static int ssd1783_puts(const char *str)
+ 244:display/ssd1783.c **** {
+ 470              		.loc 1 244 0
+ 471              		.cfi_startproc
+ 472              		@ args = 0, pretend = 0, frame = 0
+ 473              		@ frame_needed = 0, uses_anonymous_args = 0
+ 474              	.LVL28:
+ 475 0000 30402DE9 		stmfd	sp!, {r4, r5, lr}
+ 476              	.LCFI6:
+ 477              		.cfi_def_cfa_offset 12
+ 478              		.loc 1 244 0
+ 479 0004 0050A0E1 		mov	r5, r0
+ 480              		.cfi_offset 14, -4
+ 481              		.cfi_offset 5, -8
+ 482              		.cfi_offset 4, -12
+ 222:display/ssd1783.c **** 	for (i = 0; *str != 0x00; i += (FONT_WIDTH/2)) {
+ 483              		.loc 1 222 0
+ 484 0008 0040A0E3 		mov	r4, #0
+ 485 000c 050000EA 		b	.L27
+ 486              	.LVL29:
+ 487              	.L28:
+ 488              	.LBB4:
+ 489              	.LBB5:
+ 223:display/ssd1783.c **** 		ssd1783_goto_xy(((txtline*FONT_HEIGHT)+LCD_TOP_FREE_ROWS),
+ 490              		.loc 1 223 0
+ 491 0010 0410A0E1 		mov	r1, r4
+ 492 0014 0300A0E3 		mov	r0, #3
+ 493 0018 FEFFFFEB 		bl	ssd1783_goto_xy
+ 225:display/ssd1783.c **** 		ssd1783_putc_col(*str++, fColor, bColor);
+ 494              		.loc 1 225 0
+ 495 001c 010055E5 		ldrb	r0, [r5, #-1]	@ zero_extendqisi2
+ 496 0020 FEFFFFEB 		bl	ssd1783_putc_col.clone.0
+ 222:display/ssd1783.c **** 	for (i = 0; *str != 0x00; i += (FONT_WIDTH/2)) {
+ 497              		.loc 1 222 0
+ 498 0024 044084E2 		add	r4, r4, #4
+ 499              	.LVL30:
+ 500              	.L27:
+ 501 0028 0100D5E4 		ldrb	r0, [r5], #1	@ zero_extendqisi2
+ 502 002c 000050E3 		cmp	r0, #0
+ 503 0030 F6FFFF1A 		bne	.L28
+ 504              	.LBE5:
+ 505              	.LBE4:
+ 245:display/ssd1783.c **** 	return ssd1783_puts_col(str, 0, BLACK, WHITE);
+ 246:display/ssd1783.c **** }
+ 506              		.loc 1 246 0
+ 507 0034 3080BDE8 		ldmfd	sp!, {r4, r5, pc}
+ 508              		.cfi_endproc
+ 509              	.LFE14:
+ 511              		.section	.text.ssd1783_putc,"ax",%progbits
+ 512              		.align	2
+ 514              	ssd1783_putc:
+ 515              	.LFB13:
+ 239:display/ssd1783.c **** {
+ 516              		.loc 1 239 0
+ 517              		.cfi_startproc
+ 518              		@ args = 0, pretend = 0, frame = 0
+ 519              		@ frame_needed = 0, uses_anonymous_args = 0
+ 520              		@ link register save eliminated.
+ 521              	.LVL31:
+ 240:display/ssd1783.c **** 	return ssd1783_putc_col(c, BLACK, WHITE);
+ 522              		.loc 1 240 0
+ 523 0000 FF0000E2 		and	r0, r0, #255
+ 524              	.LVL32:
+ 241:display/ssd1783.c **** }
+ 525              		.loc 1 241 0
+ 240:display/ssd1783.c **** 	return ssd1783_putc_col(c, BLACK, WHITE);
+ 526              		.loc 1 240 0
+ 527 0004 FEFFFFEA 		b	ssd1783_putc_col.clone.0
+ 528              		.cfi_endproc
+ 529              	.LFE13:
+ 531              		.global	ssd1783_display
+ 532              		.section	.rodata
+ 533              		.align	2
+ 534              		.set	.LANCHOR0,. + 0
+ 537              	rgb8_palette:
+ 538 0000 00       		.byte	0
+ 539 0001 03       		.byte	3
+ 540 0002 05       		.byte	5
+ 541 0003 07       		.byte	7
+ 542 0004 09       		.byte	9
+ 543 0005 0B       		.byte	11
+ 544 0006 0D       		.byte	13
+ 545 0007 0F       		.byte	15
+ 546 0008 00       		.byte	0
+ 547 0009 03       		.byte	3
+ 548 000a 05       		.byte	5
+ 549 000b 07       		.byte	7
+ 550 000c 09       		.byte	9
+ 551 000d 0B       		.byte	11
+ 552 000e 0D       		.byte	13
+ 553 000f 0F       		.byte	15
+ 554 0010 00       		.byte	0
+ 555 0011 05       		.byte	5
+ 556 0012 0A       		.byte	10
+ 557 0013 0F       		.byte	15
+ 560              	ssd1783_display:
+ 561 0014 00000000 		.word	.LC0
+ 562 0018 00000000 		.word	ssd1783_init
+ 563 001c 00000000 		.word	ssd1783_set_attr
+ 564 0020 00000000 		.word	ssd1783_set_attr
+ 565 0024 00000000 		.word	ssd1783_clrscr
+ 566 0028 00000000 		.word	ssd1783_goto_xy
+ 567 002c 00000000 		.space	4
+ 568 0030 00000000 		.word	ssd1783_putc
+ 569 0034 00000000 		.word	ssd1783_puts
+ 570              		.section	.rodata.str1.1,"aMS",%progbits,1
+ 571              	.LC0:
+ 572 0000 73736431 		.ascii	"ssd1783\000"
+ 572      37383300 
+ 573              		.text
+ 574              	.Letext0:
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 ssd1783.c
+     /tmp/cc5rXI4s.s:12     .text.ssd1783_set_attr:0000000000000000 $a
+     /tmp/cc5rXI4s.s:14     .text.ssd1783_set_attr:0000000000000000 ssd1783_set_attr
+     /tmp/cc5rXI4s.s:29     .text.ssd1783_data_write:0000000000000000 $a
+     /tmp/cc5rXI4s.s:31     .text.ssd1783_data_write:0000000000000000 ssd1783_data_write
+     /tmp/cc5rXI4s.s:60     .text.ssd1783_cmd_write:0000000000000000 $a
+     /tmp/cc5rXI4s.s:62     .text.ssd1783_cmd_write:0000000000000000 ssd1783_cmd_write
+     /tmp/cc5rXI4s.s:90     .text.ssd1783_goto_xy:0000000000000000 $a
+     /tmp/cc5rXI4s.s:92     .text.ssd1783_goto_xy:0000000000000000 ssd1783_goto_xy
+     /tmp/cc5rXI4s.s:148    .text.ssd1783_clrscr:0000000000000000 $a
+     /tmp/cc5rXI4s.s:150    .text.ssd1783_clrscr:0000000000000000 ssd1783_clrscr
+     /tmp/cc5rXI4s.s:203    .text.ssd1783_clrscr:0000000000000064 $d
+     /tmp/cc5rXI4s.s:208    .text.ssd1783_init:0000000000000000 $a
+     /tmp/cc5rXI4s.s:210    .text.ssd1783_init:0000000000000000 ssd1783_init
+     /tmp/cc5rXI4s.s:352    .text.ssd1783_init:000000000000014c $d
+     /tmp/cc5rXI4s.s:357    .text.ssd1783_putc_col.clone.0:0000000000000000 $a
+     /tmp/cc5rXI4s.s:359    .text.ssd1783_putc_col.clone.0:0000000000000000 ssd1783_putc_col.clone.0
+     /tmp/cc5rXI4s.s:460    .text.ssd1783_putc_col.clone.0:00000000000000a0 $d
+     /tmp/cc5rXI4s.s:466    .text.ssd1783_puts:0000000000000000 $a
+     /tmp/cc5rXI4s.s:468    .text.ssd1783_puts:0000000000000000 ssd1783_puts
+     /tmp/cc5rXI4s.s:512    .text.ssd1783_putc:0000000000000000 $a
+     /tmp/cc5rXI4s.s:514    .text.ssd1783_putc:0000000000000000 ssd1783_putc
+     /tmp/cc5rXI4s.s:560    .rodata:0000000000000014 ssd1783_display
+     /tmp/cc5rXI4s.s:533    .rodata:0000000000000000 $d
+     /tmp/cc5rXI4s.s:537    .rodata:0000000000000000 rgb8_palette
+                     .debug_frame:0000000000000010 $d
+
+UNDEFINED SYMBOLS
+uwire_xfer
+calypso_reset_set
+uwire_init
+delay_ms
+fontdata_r8x8_horiz
